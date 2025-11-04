@@ -128,4 +128,4 @@ alias dclog='docker compose logs -f'
 alias dcps='docker compose ps'
 
 # Homebrew configuration (will be added by Ansible)
-# eval "$(/home/niu/.linuxbrew/bin/brew shellenv)"
+# eval "$(/home/your_user_name/.linuxbrew/bin/brew shellenv)"
