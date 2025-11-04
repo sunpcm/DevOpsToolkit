@@ -1,0 +1,50 @@
+# Ansible 传输时忽略的文件
+# ================================
+
+# 版本控制
+.git/
+.gitignore
+
+# 文档和说明
+README.md
+*.md
+docs/
+
+# 示例和模板文件
+*.example
+*.template
+host.ini.examples
+
+# 开发和调试文件
+fix-homebrew.sh
+debug_*
+test_*
+
+# 编辑器和系统文件
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# 备份文件
+*.bak
+*.backup
+*.orig
+
+# 日志文件
+*.log
+ansible.log
+
+# 敏感文件
+.vault_pass
+vault_pass.txt
+*.pem
+*.key
+id_rsa*
+
+# 临时文件
+*.tmp
+*.temp
+.env*

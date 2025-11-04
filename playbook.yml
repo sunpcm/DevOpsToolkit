@@ -1,0 +1,375 @@
+---
+- name: 1. Setup New Ubuntu Server
+  hosts: servers        # 对应 hosts.ini 里的 [servers] 组
+  become: true          # 'become: true' 意味着 "切换到 root (sudo)" 来执行任务
+
+  # -----------------------------------------------------------
+  # 变量：请修改这里的用户名为你服务器上的用户名
+  # -----------------------------------------------------------
+  vars:
+    # 这个用户名是你要为之配置 Zsh、Homebrew 的用户
+    # 它通常和你的 ansible_user (SSH登录用户) 是同一个
+    target_user: "your_username"
+    target_port: 9527
+    # 注意：如果服务器只有 root 用户，请在 host.ini 中设置 ansible_user=root
+    # playbook 会自动创建 target_user 并配置相关权限 
+
+  # -----------------------------------------------------------
+  # 任务列表：Ansible 会按顺序执行
+  # -----------------------------------------------------------
+  tasks:
+    - name: "任务 0: 创建普通用户 {{ target_user }}"
+      user:
+        name: "{{ target_user }}"
+        password: "*"  # 禁用密码登录，只允许密钥认证
+        shell: /bin/bash  # 临时使用 bash，后面会改为 zsh
+        create_home: yes
+        home: "/home/{{ target_user }}"
+        groups: sudo
+        append: yes
+      when: ansible_user == "root"  # 只有通过 root 登录时才创建用户
+
+    - name: "任务 0.1: 配置 {{ target_user }} 用户免密 sudo"
+      lineinfile:
+        path: /etc/sudoers.d/{{ target_user }}
+        line: "{{ target_user }} ALL=(ALL) NOPASSWD: ALL"
+        create: yes
+        mode: '0440'
+        validate: 'visudo -cf %s'
+      when: ansible_user == "root"  # 只有通过 root 登录时才配置
+
+    - name: "任务 1: 配置免密登录 (将你的 Mac 公钥复制到服务器，后续无需密码)"
+      authorized_key:
+        user: "{{ target_user }}"    # 为哪个用户配置
+        state: present               # 确保密钥存在
+        key: "{{ lookup('file', '~/.ssh/id_rsa.pub') }}" # 自动查找你 Mac 上的公钥
+
+    - name: "任务 2: 更新 APT 缓存并安装基础包 (Zsh, Git, Build-Essential)"
+      apt:
+        name:
+          - zsh
+          - git
+          - curl
+          - build-essential   # 编译 Homebrew 依赖需要
+          - apt-transport-https
+          - ca-certificates
+          - gnupg
+          - lsb-release
+          - ufw              # 防火墙
+          - nginx            # Web 服务器
+        state: present
+        update_cache: yes
+
+    - name: "任务 3: 创建 Docker GPG 密钥目录"
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: "任务 4: 下载并添加 Docker 官方 GPG 密钥"
+      shell: |
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+        chmod a+r /etc/apt/keyrings/docker.gpg
+      args:
+        creates: /etc/apt/keyrings/docker.gpg
+
+    - name: "任务 5: 添加 Docker APT 源"
+      apt_repository:
+        repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+        update_cache: yes
+
+    - name: "任务 6: 安装 Docker CE"
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+        update_cache: yes
+
+    - name: "任务 7: 启动并启用 Docker 服务"
+      systemd:
+        name: docker
+        enabled: yes
+        state: started
+
+    - name: "任务 8: 将用户添加到 docker 组 (免 sudo 使用 Docker)"
+      user:
+        name: "{{ target_user }}"
+        groups: docker
+        append: yes
+
+    - name: "任务 8.1: 提示 Docker 组权限说明"
+      debug:
+        msg: 
+          - "用户 {{ target_user }} 已添加到 docker 组"
+          - "注意：用户需要重新登录后才能使用 docker 命令而无需 sudo"
+          - "部署完成后请重新 SSH 连接以获得 docker 组权限"
+
+    - name: "任务 9: 启动并启用 Nginx 服务"
+      systemd:
+        name: nginx
+        enabled: yes
+        state: started
+
+    - name: "任务 10: 配置防火墙 - 先允许当前 SSH 端口 (自动检测)"
+      ufw:
+        rule: allow
+        # ansible_port 会自动获取当前 Ansible SSH 连接所用的端口号
+        port: "{{ ansible_port | default('22') }}"
+        proto: tcp
+
+    - name: "任务 11: 配置防火墙 - 允许新 SSH 端口 ({{ target_port }})"
+      ufw:
+        rule: allow
+        port: '{{ target_port }}'
+        proto: tcp
+
+    - name: "任务 12: 配置防火墙 - 允许 HTTP (端口 80)"
+      ufw:
+        rule: allow
+        port: '80'
+        proto: tcp
+
+    - name: "任务 13: 配置防火墙 - 允许 HTTPS (端口 443)"
+      ufw:
+        rule: allow
+        port: '443'
+        proto: tcp
+
+    - name: "任务 14: 配置防火墙 - 允许开发端口 (8000-8999)"
+      ufw:
+        rule: allow
+        port: '8000:8999'
+        proto: tcp
+
+    - name: "任务 15: 检查 Homebrew 是否已安装 (用户路径)"
+      stat:
+        path: "/home/{{ target_user }}/.linuxbrew/bin/brew"
+      register: brew_stat_user
+      become: true
+      become_user: "{{ target_user }}"
+
+    # - name: "任务 16: 安装 Homebrew (如果未安装)"
+    #   shell: |
+    #     cd /home/{{ target_user }}
+    #     git clone https://github.com/Homebrew/brew.git .linuxbrew/Homebrew
+    #     mkdir -p .linuxbrew/bin
+    #     ln -sf ../Homebrew/bin/brew .linuxbrew/bin/brew
+    #     eval "$(.linuxbrew/bin/brew shellenv)"
+    #     .linuxbrew/bin/brew update --force --quiet
+    #   args:
+    #     creates: "/home/{{ target_user }}/.linuxbrew/bin/brew"
+    #   when: not brew_stat_user.stat.exists
+    #   become: true
+    #   become_user: "{{ target_user }}"
+    - name: "任务 16: 官方安装器安装 Homebrew（推荐方法）"
+      shell: |
+        NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+      args:
+        creates: "/home/{{ target_user }}/.linuxbrew/bin/brew"
+      when: not brew_stat_user.stat.exists
+      become: true
+      become_user: "{{ target_user }}"
+
+    - name: "任务 16.1: 验证 Homebrew 安装并获取实际安装路径"
+      shell: |
+        # 查找 Homebrew 的实际安装位置
+        if [ -f "/home/linuxbrew/.linuxbrew/bin/brew" ]; then
+          echo "SYSTEM_BREW_PATH=/home/linuxbrew/.linuxbrew/bin/brew"
+        elif [ -f "/home/{{ target_user }}/.linuxbrew/bin/brew" ]; then
+          echo "USER_BREW_PATH=/home/{{ target_user }}/.linuxbrew/bin/brew"
+        elif command -v brew >/dev/null 2>&1; then
+          echo "EXISTING_BREW_PATH=$(which brew)"
+        else
+          echo "NO_BREW_FOUND"
+        fi
+      register: brew_path_check
+      become: true
+      become_user: "{{ target_user }}"
+
+    - name: "任务 16.2: 显示 Homebrew 安装状态"
+      debug:
+        msg: "{{ brew_path_check.stdout }}"
+
+    - name: "任务 16.3: 手动安装 Homebrew (如果官方安装器失败)"
+      shell: |
+        cd /home/{{ target_user }}
+        git clone https://github.com/Homebrew/brew.git .linuxbrew/Homebrew
+        mkdir -p .linuxbrew/bin
+        ln -sf ../Homebrew/bin/brew .linuxbrew/bin/brew
+        eval "$(.linuxbrew/bin/brew shellenv)"
+        .linuxbrew/bin/brew update --force --quiet
+      args:
+        creates: "/home/{{ target_user }}/.linuxbrew/bin/brew"
+      when: "'NO_BREW_FOUND' in brew_path_check.stdout"
+      become: true
+      become_user: "{{ target_user }}"
+
+
+    - name: "任务 17: 检查 Oh My Zsh 是否已安装"
+      stat:
+        path: "/home/{{ target_user }}/.oh-my-zsh"
+      register: omz_stat
+      become: true
+      become_user: "{{ target_user }}"
+
+    - name: "任务 18: 安装 Oh My Zsh (如果未安装)"
+      shell: 'sh -c "$(curl -fsSL https://raw.github.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended'
+      when: not omz_stat.stat.exists
+      become: true
+      become_user: "{{ target_user }}"
+
+    - name: "任务 19: 复制本地清理版 .zshrc 配置到服务器 (覆盖 Oh My Zsh 默认配置)"
+      copy:
+        src: ".zshrc.server"    # 使用清理过的版本
+        dest: "/home/{{ target_user }}/.zshrc"
+        owner: "{{ target_user }}"
+        group: "{{ target_user }}"
+        mode: '0644'
+        backup: yes      # 备份原有的 .zshrc 文件
+      become: true
+      become_user: "{{ target_user }}"
+
+    - name: "任务 19.1: 将 Homebrew 路径添加到 .zshrc"
+      lineinfile:
+        path: "/home/{{ target_user }}/.zshrc"
+        line: 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"'
+        regexp: '^.*eval.*brew shellenv.*'
+        state: present
+      become: true
+      become_user: "{{ target_user }}"
+      when: "'SYSTEM_BREW_PATH' in brew_path_check.stdout"
+
+    - name: "任务 19.2: 将用户 Homebrew 路径添加到 .zshrc (如果安装在用户目录)"
+      lineinfile:
+        path: "/home/{{ target_user }}/.zshrc"
+        line: 'eval "$(/home/{{ target_user }}/.linuxbrew/bin/brew shellenv)"'
+        regexp: '^.*eval.*brew shellenv.*'
+        state: present
+      become: true
+      become_user: "{{ target_user }}"
+      when: "'USER_BREW_PATH' in brew_path_check.stdout"
+
+    - name: "任务 20: 检查 zsh-autosuggestions 插件是否已安装"
+      stat:
+        path: "/home/{{ target_user }}/.oh-my-zsh/custom/plugins/zsh-autosuggestions"
+      register: zsh_autosuggestions_stat
+      become: true
+      become_user: "{{ target_user }}"
+
+    - name: "任务 21: 安装 zsh-autosuggestions 插件"
+      git:
+        repo: "https://github.com/zsh-users/zsh-autosuggestions"
+        dest: "/home/{{ target_user }}/.oh-my-zsh/custom/plugins/zsh-autosuggestions"
+        clone: yes
+        version: HEAD  # 避免重复 clone
+      when: not zsh_autosuggestions_stat.stat.exists
+      become: true
+      become_user: "{{ target_user }}"
+
+    - name: "任务 21.1: 检查 zsh-syntax-highlighting 插件是否已安装"
+      stat:
+        path: "/home/{{ target_user }}/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
+      register: zsh_syntax_highlighting_stat
+      become: true
+      become_user: "{{ target_user }}"
+
+    - name: "任务 21.2: 安装 zsh-syntax-highlighting 插件"
+      git:
+        repo: "https://github.com/zsh-users/zsh-syntax-highlighting"
+        dest: "/home/{{ target_user }}/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
+        clone: yes
+        version: HEAD
+      when: not zsh_syntax_highlighting_stat.stat.exists
+      become: true
+      become_user: "{{ target_user }}"
+
+    - name: "任务 22: 更改 {{ target_user }} 的默认 Shell 为 Zsh"
+      user:
+        name: "{{ target_user }}"
+        shell: /usr/bin/zsh
+        
+    - name: "任务 23: 安装必要的字体 (支持 agnoster 主题)"
+      apt:
+        name:
+          - fonts-powerline
+          - fonts-firacode  # 使用标准包名以确保兼容性
+        state: present
+        update_cache: no
+
+    - name: "任务 24: 修改 SSH 端口为 {{ target_port }}"
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?Port .+'
+        line: 'Port {{ target_port }}'
+        validate: 'sshd -t -f %s'
+      notify: "Restart sshd"
+      tags: [sshd_config]
+
+    - name: "任务 25: 禁用 root 用户 SSH 登录"
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PermitRootLogin .+'
+        line: 'PermitRootLogin no'
+        validate: 'sshd -t -f %s'
+      notify: "Restart sshd"
+      tags: [sshd_config]
+        
+    - name: "任务 26: 禁用密码登录"
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?PasswordAuthentication .+'
+        line: 'PasswordAuthentication no'
+        validate: 'sshd -t -f %s'
+      notify: "Restart sshd"
+      tags: [sshd_config]
+
+    # SSH 安全验证：确保新端口真正可用
+    - name: "任务 27: 强制执行 SSH 重启 (等待处理完成)"
+      meta: flush_handlers
+      
+    - name: "任务 28: 验证 SSH 端口 {{ target_port }} 是否正常监听"
+      wait_for:
+        port: "{{ target_port }}"
+        host: "{{ ansible_default_ipv4.address | default(ansible_all_ipv4_addresses[0]) }}"
+        delay: 3
+        timeout: 30
+        msg: "SSH 端口 {{ target_port }} 在 30 秒内未能正常启动，请检查配置"
+      register: wait_for_target_port  # 注册变量以供后续使用
+      delegate_to: localhost
+      when: ansible_connection != 'local'  # 本地执行时跳过
+
+    - name: "任务 29: 关闭 22 端口 (确认 {{ target_port }} 可用后)"
+      ufw:
+        rule: deny
+        port: '22'
+        proto: tcp
+        delete: yes
+      when: wait_for_target_port is succeeded and ansible_connection != 'local'
+
+    - name: "任务 30: SSH 端口切换完成提示"
+      debug:
+        msg:
+          - "✅ SSH 端口已成功切换到 {{ target_port }}"
+          - "⚠️  重要：下次连接请使用 ssh -p {{ target_port }} {{ target_user }}@{{ ansible_host }}"
+          - "🔒 安全：22 端口已自动关闭，只有 {{ target_port }} 端口可用"
+
+    # 最重要：UFW 启用必须放在最后，避免中断连接
+    - name: "任务 31: 配置防火墙 - 启用 UFW (所有配置完成后)"
+      ufw:
+        state: enabled
+        policy: deny
+        direction: incoming
+
+  # -----------------------------------------------------------
+  # Handlers：仅在被 'notify' 触发时运行
+  # -----------------------------------------------------------
+  handlers:
+    - name: "Restart sshd"
+      service:
+        name: sshd
+        state: restarted

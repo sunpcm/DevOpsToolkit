@@ -1,0 +1,71 @@
+# Ansible 敏感信息
+# ===================
+# 密码文件
+.vault_pass
+vault_pass.txt
+secrets.yml
+
+# 包含密码的配置文件
+host.ini
+host.ini.backup
+host.ini.prod
+host.ini.staging
+
+# SSH 密钥文件（如果意外复制到项目中）
+*.pem
+*.key
+id_rsa*
+*.pub
+
+# Ansible 运行时文件
+# ===================
+# 重试文件
+*.retry
+
+# Ansible 缓存
+.ansible/
+
+# 临时文件
+# ===================
+# 系统临时文件
+.DS_Store
+Thumbs.db
+
+# 编辑器临时文件
+*~
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# 备份文件
+*.bak
+*.backup
+*.orig
+
+# 日志文件
+# ===================
+ansible.log
+*.log
+
+# 环境文件
+# ===================
+.env
+.env.local
+.env.prod
+.env.staging
+
+# 用户自定义文件
+# ===================
+# 个人配置文件
+.zshrc.personal
+config.local.yml
+
+# 测试文件
+test_*
+debug_*
+
+# 文档临时文件
+# ===================
+*.tmp
+*.temp

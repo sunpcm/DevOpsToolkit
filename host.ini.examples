@@ -1,0 +1,96 @@
+# 多台服务器配置示例
+
+# ===========================================
+# 方法 1：每台服务器单独配置（推荐）
+# ===========================================
+[servers]
+74.48.83.222 ansible_ssh_pass=server1_password ansible_become_pass=server1_password
+192.168.1.100 ansible_ssh_pass=server2_password ansible_become_pass=server2_password
+10.0.0.50 ansible_ssh_pass=server3_password ansible_become_pass=server3_password
+
+[all:vars]
+ansible_user=root
+
+# ===========================================
+# 方法 2：按组分类配置
+# ===========================================
+[production]
+74.48.83.222
+192.168.1.100
+
+[staging]
+10.0.0.50
+10.0.0.51
+
+[production:vars]
+ansible_user=root
+ansible_ssh_pass=prod_password
+ansible_become_pass=prod_password
+
+[staging:vars]
+ansible_user=ubuntu
+ansible_ssh_pass=staging_password
+ansible_become_pass=staging_password
+# ansible_port=9527
+
+# ===========================================
+# 方法 3：混合配置（部分免密，部分密码）
+# ===========================================
+[servers]
+# 已配置免密登录的服务器（无需密码）
+74.48.83.222
+
+# 需要密码登录的新服务器
+192.168.1.100 ansible_ssh_pass=new_server_password ansible_become_pass=new_server_password
+10.0.0.50 ansible_ssh_pass=another_password ansible_become_pass=another_password
+
+[all:vars]
+ansible_user=root
+
+# ===========================================
+# 方法 4：使用不同用户名
+# ===========================================
+[servers]
+# root 用户登录
+74.48.83.222 ansible_user=root ansible_ssh_pass=root_password ansible_become_pass=root_password
+
+# ubuntu 用户登录
+192.168.1.100 ansible_user=ubuntu ansible_ssh_pass=ubuntu_password ansible_become_pass=ubuntu_password
+
+# centos 用户登录（如果有 CentOS 服务器）
+# 10.0.0.50 ansible_user=centos ansible_ssh_pass=centos_password ansible_become_pass=centos_password
+
+# ===========================================
+# 方法 5：使用主机别名
+# ===========================================
+[servers]
+web1 ansible_host=74.48.83.222 ansible_ssh_pass=web1_password ansible_become_pass=web1_password
+web2 ansible_host=192.168.1.100 ansible_ssh_pass=web2_password ansible_become_pass=web2_password
+db1 ansible_host=10.0.0.50 ansible_ssh_pass=db1_password ansible_become_pass=db1_password
+
+[all:vars]
+ansible_user=root
+
+# 运行时可以指定特定主机：
+# ansible-playbook -i host.ini playbook.yml --limit web1
+# ansible-playbook -i host.ini playbook.yml --limit web1,web2
+
+# ===========================================
+# 安全提示
+# ===========================================
+# 1. 生产环境建议：
+#    - 使用 Ansible Vault 加密密码
+#    - 尽快配置 SSH 密钥认证
+#    - 部署完成后删除密码配置
+#
+# 2. Ansible Vault 使用示例：
+#    ansible-vault create secrets.yml
+#    ansible-playbook -i host.ini playbook.yml --ask-vault-pass
+#
+# 3. SSH 密钥认证后的配置：
+#    [servers]
+#    74.48.83.222  # 无需密码参数
+#    192.168.1.100
+#    
+#    [all:vars]
+#    ansible_user=niu  # 使用创建的普通用户
