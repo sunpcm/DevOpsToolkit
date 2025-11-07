@@ -134,6 +134,7 @@ else
     chmod 0755 "$ACME_TEMP_SCRIPT"
     
     sudo -u "$ACME_USER" -H bash -c "
+        export HOME=$ACME_HOME/home
         cd $ACME_HOME/home
         # 确保加载安全配置
         if [[ -f $ACME_HOME/.profile ]]; then
@@ -172,6 +173,7 @@ fi
 # P10 - 设置默认 CA 为 Let's Encrypt
 log_info "配置默认 CA 为 Let's Encrypt..."
 sudo -u "$ACME_USER" -H bash -c "
+    export HOME=$ACME_HOME/home
     cd $ACME_HOME/home
     if [[ -f $ACME_HOME/.profile ]]; then
         . $ACME_HOME/.profile
@@ -385,6 +387,7 @@ ACME_CMD="$ACME_CMD --log $ACME_CONFIG_DIR/issue-$PRIMARY_DOMAIN.log"
 
 # 执行申请
 sudo -u "$ACME_USER" -H bash -c "
+    export HOME=$ACME_HOME/home
     cd $ACME_HOME/home
     if [[ -f $ACME_HOME/.profile ]]; then
         . $ACME_HOME/.profile
@@ -421,6 +424,7 @@ else
 fi
 
 sudo -u "$ACME_USER" -H bash -c "
+    export HOME=$ACME_HOME/home
     cd $ACME_HOME/home
     if [[ -f $ACME_HOME/.profile ]]; then
         . $ACME_HOME/.profile
@@ -564,6 +568,7 @@ if [[ $# -gt 0 ]]; then
     echo ""
     
     sudo -u "$ACME_USER" -H bash -c "
+        export HOME=$ACME_HOME/home
         cd $ACME_HOME/home
         if [[ -f $ACME_HOME/.profile ]]; then
             . $ACME_HOME/.profile
@@ -576,6 +581,7 @@ else
     echo ""
     
     sudo -u "$ACME_USER" -H bash -c "
+        export HOME=$ACME_HOME/home
         cd $ACME_HOME/home
         if [[ -f $ACME_HOME/.profile ]]; then
             . $ACME_HOME/.profile
@@ -696,6 +702,7 @@ fi
 echo ""
 log_info "吊销证书..."
 sudo -u "$ACME_USER" -H bash -c "
+    export HOME=$ACME_HOME/home
     cd $ACME_HOME/home
     if [[ -f $ACME_HOME/.profile ]]; then
         . $ACME_HOME/.profile

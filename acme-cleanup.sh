@@ -51,6 +51,12 @@ systemctl daemon-reload
 log_info "清理 acme.sh 安装..."
 if [[ -d "$ACME_HOME/home/.acme.sh" ]]; then
     rm -rf "$ACME_HOME/home/.acme.sh"
+    log_info "✓ 已清理 $ACME_HOME/home/.acme.sh"
+fi
+
+if [[ -d "$ACME_HOME/.acme.sh" ]]; then
+    rm -rf "$ACME_HOME/.acme.sh"
+    log_info "✓ 已清理 $ACME_HOME/.acme.sh"
 fi
 
 # 清理配置文件
