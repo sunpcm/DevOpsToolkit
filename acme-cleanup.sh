@@ -42,10 +42,14 @@ log_info "========================================"
 # 停止和禁用 systemd 服务
 log_info "停止 systemd 服务..."
 systemctl stop acme-renew.timer 2>/dev/null || true
+systemctl stop acme-renew.service 2>/dev/null || true
 systemctl disable acme-renew.timer 2>/dev/null || true
+systemctl disable acme-renew.service 2>/dev/null || true
 rm -f /etc/systemd/system/acme-renew.service
 rm -f /etc/systemd/system/acme-renew.timer
 systemctl daemon-reload
+systemctl reset-failed acme-renew.service 2>/dev/null || true
+systemctl reset-failed acme-renew.timer 2>/dev/null || true
 
 # 清理 acme.sh 安装
 log_info "清理 acme.sh 安装..."
@@ -59,11 +63,41 @@ if [[ -d "$ACME_HOME/.acme.sh" ]]; then
     log_info "✓ 已清理 $ACME_HOME/.acme.sh"
 fi
 
+if [[ -f "$ACME_HOME/home/acme-install.sh" ]]; then
+    rm -f "$ACME_HOME/home/acme-install.sh"
+    log_info "✓ 已删除 $ACME_HOME/home/acme-install.sh"
+fi
+
+declare -a backup_dirs=()
+shopt -s nullglob
+backup_dirs=("$ACME_HOME"/home/.acme.sh.backup.*)
+shopt -u nullglob
+if (( ${#backup_dirs[@]} )); then
+    rm -rf "${backup_dirs[@]}"
+    log_info "✓ 已清理 ${#backup_dirs[@]} 个 acme.sh 备份目录"
+fi
+
 # 清理配置文件
 log_info "清理配置文件..."
-rm -f "$ACME_HOME/.profile"
-rm -rf "$ACME_HOME/config"/*
-rm -rf "$ACME_HOME/certs"/*
+if [[ -f "$ACME_HOME/.profile" ]]; then
+    rm -f "$ACME_HOME/.profile"
+    log_info "✓ 已删除 $ACME_HOME/.profile"
+fi
+
+if [[ -d "$ACME_HOME/config" ]]; then
+    find "$ACME_HOME/config" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+    log_info "✓ 已清空 $ACME_HOME/config"
+fi
+
+if [[ -d "$ACME_HOME/certs" ]]; then
+    find "$ACME_HOME/certs" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+    log_info "✓ 已清空 $ACME_HOME/certs"
+fi
+
+if [[ -d "$ACME_HOME/logs" ]]; then
+    find "$ACME_HOME/logs" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+    log_info "✓ 已清空 $ACME_HOME/logs"
+fi
 
 # 清理 logrotate
 rm -f /etc/logrotate.d/acme

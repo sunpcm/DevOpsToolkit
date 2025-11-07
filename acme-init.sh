@@ -13,6 +13,7 @@ ACME_HOME="/var/lib/acme"
 ACME_CERTS_DIR="$ACME_HOME/certs"
 ACME_CONFIG_DIR="$ACME_HOME/config"
 ACME_EMAIL="${1:-admin@example.com}"  # 默认邮箱，可以第一个参数传入
+ACME_SHELL="$(command -v bash 2>/dev/null || echo /bin/bash)"
 
 # 颜色输出
 RED='\033[0;31m'
@@ -58,10 +59,15 @@ NOLOGIN_PATH=$(command -v nologin 2>/dev/null || echo "/usr/sbin/nologin")
 
 if id "$ACME_USER" &>/dev/null; then
     log_warn "用户 $ACME_USER 已存在，跳过创建"
+    CURRENT_SHELL="$(getent passwd "$ACME_USER" | cut -d: -f7)"
+    if [[ "$CURRENT_SHELL" != "$ACME_SHELL" ]]; then
+        log_info "更新 $ACME_USER 用户的登录 shell 为 $ACME_SHELL (仅供 sudo 执行脚本使用)"
+        usermod -s "$ACME_SHELL" "$ACME_USER"
+    fi
 else
     useradd -r \
         -d "$ACME_HOME" \
-        -s "$NOLOGIN_PATH" \
+        -s "$ACME_SHELL" \
         -c "ACME certificate management" \
         "$ACME_USER"
     log_info "✓ 用户 $ACME_USER 创建成功"
@@ -95,7 +101,12 @@ chown root:ssl-cert "$ACME_CERTS_DIR" 2>/dev/null || {
     groupadd -f ssl-cert
     chown root:ssl-cert "$ACME_CERTS_DIR"
 }
-chmod 0775 "$ACME_CERTS_DIR"
+chmod 2770 "$ACME_CERTS_DIR"
+
+# 确保 DNS 配置目录存在并具备安全权限
+mkdir -p /etc/acme
+chown root:ssl-cert /etc/acme
+chmod 2750 /etc/acme
 
 # 将 acme 用户加入 ssl-cert 组，使其能够写入证书目录
 usermod -aG ssl-cert "$ACME_USER"
@@ -148,7 +159,7 @@ else
     chown "$ACME_USER:$ACME_USER" "$ACME_TEMP_SCRIPT"
     chmod 0755 "$ACME_TEMP_SCRIPT"
     
-    sudo -u "$ACME_USER" -H bash -c "
+    sudo -u "$ACME_USER" -H $ACME_SHELL -c "
         export HOME=$ACME_HOME/home
         cd $ACME_HOME/home
         # 确保加载安全配置
@@ -187,7 +198,7 @@ fi
 
 # P10 - 设置默认 CA 为 Let's Encrypt
 log_info "配置默认 CA 为 Let's Encrypt..."
-sudo -u "$ACME_USER" -H bash -c "
+sudo -u "$ACME_USER" -H $ACME_SHELL -c "
     export HOME=$ACME_HOME/home
     cd $ACME_HOME/home
     if [[ -f $ACME_HOME/.profile ]]; then
@@ -415,13 +426,14 @@ if [[ "$METHOD" == "dns" ]]; then
         log_warn "export CF_Token='your_cloudflare_api_token'"
         log_warn "export CF_Account_ID='your_cloudflare_account_id'"
         log_warn "EOF"
-        log_warn "  sudo chmod 600 /etc/acme/dns-config"
+        log_warn "  sudo chown root:ssl-cert /etc/acme/dns-config"
+        log_warn "  sudo chmod 640 /etc/acme/dns-config"
         exit 1
     fi
 fi
 
 # 临时给 acme 用户写入权限，然后在安装后调整权限
-sudo -u "$ACME_USER" bash -c "
+sudo -u "$ACME_USER" -H "$ACME_SHELL" -c "
     export HOME=$ACME_HOME/home
     cd $ACME_HOME/home
     if [[ -f $ACME_HOME/.profile ]]; then
@@ -607,7 +619,7 @@ if [[ $# -gt 0 ]]; then
     echo -e "${YELLOW}查询域名: $DOMAIN${NC}"
     echo ""
     
-    sudo -u "$ACME_USER" -H bash -c "
+    sudo -u "$ACME_USER" -H $ACME_SHELL -c "
         export HOME=$ACME_HOME/home
         cd $ACME_HOME/home
         if [[ -f $ACME_HOME/.profile ]]; then
@@ -620,7 +632,7 @@ else
     echo -e "${YELLOW}所有已安装的证书:${NC}"
     echo ""
     
-    sudo -u "$ACME_USER" -H bash -c "
+    sudo -u "$ACME_USER" -H $ACME_SHELL -c "
         export HOME=$ACME_HOME/home
         cd $ACME_HOME/home
         if [[ -f $ACME_HOME/.profile ]]; then
@@ -741,7 +753,7 @@ fi
 # 执行吊销
 echo ""
 log_info "吊销证书..."
-sudo -u "$ACME_USER" -H bash -c "
+sudo -u "$ACME_USER" -H "$ACME_SHELL" -c "
     export HOME=$ACME_HOME/home
     cd $ACME_HOME/home
     if [[ -f $ACME_HOME/.profile ]]; then
