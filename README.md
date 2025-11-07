@@ -8,42 +8,6 @@
 - `host.ini` - 服务器清单文件（包含连接信息和密码配置）
 - `ansible.cfg` - Ansible 运行配置
 - `.zshrc.server` - 清理过的 zsh 配置文件（移除了敏感信息）
-- `.zshrc` - 原始的本地 zsh 配置文件（包含敏感信息，不会直接部署）
-
-## 🚀 快速开始
-
-### 1. 配置服务器连接信息
-
-编辑 `host.ini` 文件，替换服务器 IP 和密码：
-
-```ini
-[servers]
-your_server_ip_here
-
-[all:vars]
-ansible_user=root  # 你的服务器登录用户名
-ansible_ssh_pass=your_actual_password  # 替换为实际密码
-ansible_become_pass=your_actual_password  # sudo 密码
-```
-
-### 2. 配置目标用户
-
-编辑 `playbook.yml` 中的 `target_user` 变量：
-
-```yaml
-vars:
-  target_user: "your_user_name"  # 改为你想要的用户名
-```
-
-### 3. 运行部署
-
-```bash
-# 测试连接（首次使用密码）
-ansible -i host.ini servers -m ping
-
-# 运行完整部署
-ansible-playbook -i host.ini playbook.yml
-```
 
 ## 🚀 主要功能
 
@@ -52,7 +16,7 @@ ansible-playbook -i host.ini playbook.yml
 - ✅ 配置 SSH 密钥登录
 - ✅ 禁用密码登录
 - ✅ 禁用 root 用户 SSH 登录
-- ✅ 修改 SSH 默认端口为 6626
+- ✅ 修改 SSH 默认端口为 ansible_new_port（配置一里的端口）
 - ✅ 配置防火墙规则 (UFW)
 - ✅ 将用户添加到 sudo 组
 - ✅ 自动清理配置文件中的敏感信息
@@ -97,51 +61,7 @@ ansible-playbook -i host.ini playbook.yml
 
 ### 🚀 快速开始
 
-#### 步骤 0: 设置 SSH 密钥认证（必须先做）
-
-在运行 Ansible 之前，需要先配置免密登录：
-
-**如果服务器只有 root 用户**：
-```bash
-# 1. 检查是否已有 SSH 密钥
-ls -la ~/.ssh/id_rsa*
-
-# 2. 如果没有，生成新的 SSH 密钥
-ssh-keygen -t rsa -b 4096 -C "your-email@example.com"
-# 一路回车使用默认设置
-
-# 3. 手动复制公钥到服务器 root 用户（需要输入 root 密码）
-ssh-copy-id root@77.44.88.222
-
-# 4. 测试无密码登录
-ssh root@77.44.88.222
-# 如果能直接登录不需要密码，说明密钥配置成功
-```
-
-**如果服务器已有普通用户**：
-```bash
-# 3. 手动复制公钥到服务器普通用户（需要输入用户密码）
-ssh-copy-id username@77.44.88.222
-
-# 4. 测试无密码登录
-ssh username@77.44.88.222
-```
-
-⚠️ **重要**: 只有完成 SSH 密钥配置后，Ansible 才能正常连接服务器！
-
 #### 步骤 1: 克隆或下载配置文件
-```bash
-# 如果是 git 仓库
-git clone <repository-url>
-cd ansible_server_setup
-
-# 或者直接创建目录并复制文件
-mkdir ansible_server_setup
-cd ansible_server_setup
-# 复制所有配置文件到此目录
-```
-
-#### 步骤 2: 克隆或下载配置文件
 
 ```bash
 # 如果是 git 仓库
@@ -159,23 +79,23 @@ cd ansible_server_setup
 编辑 `host.ini` 文件，更新你的服务器信息：
 
 **情况 1: 服务器只有 root 用户**（新服务器常见情况）
+编辑 `host.ini` 文件，替换服务器 IP 和密码：
 ```ini
 [servers]
-# 替换为你的服务器 IP 地址
-your-server-ip-1
-your-server-ip-2
+your_server_ip_here ansible_ssh_pass=server1_password ansible_become_pass=server1_password
 
 [all:vars]
-# 使用 root 用户登录，playbook 会自动创建普通用户
-ansible_user=root
+ansible_user=root  # 你的服务器登录用户名
+ansible_new_user=username # 你想新创建的用户名 （目标用户）
+ansible_new_port=6626 # 你想开的端口，后面都以 6626 举例，请以实际为准
 ```
 
 **情况 2: 服务器已有普通用户**
 ```ini
 [servers]
 # 替换为你的服务器 IP 地址
-your-server-ip-1
-your-server-ip-2
+your-server-ip-1  ansible_ssh_pass=server1_password ansible_become_pass=server1_password
+your-server-ip-2  ansible_ssh_pass=server2_password ansible_become_pass=server2_password
 
 [all:vars]
 # 使用现有的普通用户登录
@@ -184,12 +104,13 @@ ansible_user=your-existing-username
 
 #### 步骤 4: 配置目标用户
 
-编辑 `playbook.yml` 文件，修改 `remote_user` 变量：
+可以无需编辑 `playbook.yml` 文件
 
 ```yaml
-vars:
-  # 替换为你要配置的用户名（通常和 ansible_user 相同）
-  remote_user: "your-username"
+  vars:
+    # 这个用户名是你要为之配置 Zsh、Homebrew 的用户，自动取ansible_new_user和ansible_new_port
+    target_user: "{{ ansible_new_user }}"
+    target_port: "{{ ansible_new_port }}"
 ```
 
 #### 步骤 5: 测试连接
@@ -343,40 +264,6 @@ sudo ufw status
 # 验证关键服务状态
 sudo systemctl status docker nginx ssh
 sudo ufw status
-```
-
-### 💡 完整操作示例
-
-```bash
-# 1. 准备工作
-mkdir ~/ansible_server_setup
-cd ~/ansible_server_setup
-
-# 2. 配置文件（示例）
-cat > host.ini << EOF
-[servers]
-192.168.1.100
-192.168.1.101
-
-[all:vars]
-ansible_user = ubuntu
-EOF
-
-# 3. 测试连接
-ansible -i host.ini servers -m ping
-
-# 4. 执行部署 (智能端口检测)
-# 如果通过端口 22 连接，会自动保护端口 22
-ansible-playbook -i host.ini playbook.yml
-
-# 如果已经改为端口 6626，会自动保护端口 6626
-ansible-playbook -i host.ini playbook.yml -e ansible_port=6626
-
-# 5. 验证结果
-ssh ubuntu@192.168.1.100
-docker --version && echo "Docker 安装成功"
-brew --version && echo "Homebrew 安装成功"
-echo $SHELL | grep zsh && echo "Zsh 配置成功"
 ```
 
 ### 🔧 进阶配置

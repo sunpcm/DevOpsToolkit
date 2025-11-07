@@ -17,7 +17,7 @@
 
 ```bash
 # 下载脚本
-wget https://raw.githubusercontent.com/sunpcm/UbuntuAutoConfig/main/acme-init.sh
+wget https://raw.githubusercontent.com/sunpcm/UbuntuAutoConfig/main/AcmeConfig/acme-init.sh
 
 # 使用默认邮箱初始化
 sudo bash acme-init.sh
@@ -44,7 +44,7 @@ sudo acme-add example.com
 # 多域名证书 (SAN)
 sudo acme-add example.com www.example.com api.example.com
 
-# 泛域名证书 (需要 DNS 验证)
+# 泛域名证书 (需要 DNS 验证) 👍👍👍
 sudo acme-add example.com '*.example.com' dns
 ```
 
