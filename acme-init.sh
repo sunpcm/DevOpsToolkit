@@ -100,6 +100,18 @@ chmod 0755 "$ACME_CERTS_DIR"
 # 将 acme 用户加入 ssl-cert 组，使其能够写入证书目录
 usermod -aG ssl-cert "$ACME_USER"
 
+# 验证权限设置
+log_info "验证权限设置..."
+if groups "$ACME_USER" | grep -q ssl-cert; then
+    log_info "✓ acme 用户已成功加入 ssl-cert 组"
+else
+    log_warn "! acme 用户组设置可能需要重新生效"
+fi
+
+# 检查证书目录权限
+CERT_DIR_PERMS=$(stat -c "%a" "$ACME_CERTS_DIR" 2>/dev/null || echo "unknown")
+log_info "✓ 证书目录权限: $CERT_DIR_PERMS"
+
 log_info "✓ 目录结构创建完成"
 log_info "  $ACME_HOME/home    -> acme 用户 HOME"
 log_info "  $ACME_CERTS_DIR    -> 证书存储目录"
@@ -408,14 +420,18 @@ if [[ "$METHOD" == "dns" ]]; then
     fi
 fi
 
-sudo -u "$ACME_USER" -H bash -c "
+# 使用 newgrp 确保 ssl-cert 组权限生效
+sudo -u "$ACME_USER" bash -c "
     export HOME=$ACME_HOME/home
     cd $ACME_HOME/home
     if [[ -f $ACME_HOME/.profile ]]; then
         . $ACME_HOME/.profile
     fi
     $DNS_CONFIG
+    # 使用 newgrp 激活 ssl-cert 组权限
+    newgrp ssl-cert <<EONG
     $ACME_CMD
+EONG
 " || {
     log_error "证书申请失败，请检查日志："
     log_error "  $ACME_CONFIG_DIR/issue-$PRIMARY_DOMAIN.log"
@@ -446,12 +462,14 @@ else
     log_warn "未检测到 nginx/openresty 服务，跳过自动重载配置"
 fi
 
-sudo -u "$ACME_USER" -H bash -c "
+sudo -u "$ACME_USER" bash -c "
     export HOME=$ACME_HOME/home
     cd $ACME_HOME/home
     if [[ -f $ACME_HOME/.profile ]]; then
         . $ACME_HOME/.profile
     fi
+    # 使用 newgrp 激活 ssl-cert 组权限
+    newgrp ssl-cert <<EONG
     $ACME_HOME/home/.acme.sh/acme.sh \
         --install-cert \
         -d $PRIMARY_DOMAIN \
@@ -460,6 +478,7 @@ sudo -u "$ACME_USER" -H bash -c "
         --ca-file $CERT_CA \
         --reloadcmd '$RELOAD_CMD' \
         --log $ACME_CONFIG_DIR/install-$PRIMARY_DOMAIN.log
+EONG
 " || {
     log_error "证书安装失败，请检查日志："
     log_error "  $ACME_CONFIG_DIR/install-$PRIMARY_DOMAIN.log"
@@ -788,3 +807,7 @@ log_info ""
 log_info "DNS 验证配置："
 log_info "  如需使用 DNS 验证（支持泛域名），请运行："
 log_info "  sudo bash acme-dns-setup.sh"
+log_info ""
+log_info "注意事项："
+log_info "  如果证书安装时遇到权限错误，请运行："
+log_info "  sudo bash acme-fix-permissions.sh"
