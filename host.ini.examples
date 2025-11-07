@@ -95,4 +95,4 @@ ansible_user=root
 #    192.168.1.100
 #    
 #    [all:vars]
-#    ansible_user=niu  # 使用创建的普通用户
+#    ansible_user=username  # 使用创建的普通用户
