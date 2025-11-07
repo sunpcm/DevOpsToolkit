@@ -95,7 +95,7 @@ chown root:ssl-cert "$ACME_CERTS_DIR" 2>/dev/null || {
     groupadd -f ssl-cert
     chown root:ssl-cert "$ACME_CERTS_DIR"
 }
-chmod 0755 "$ACME_CERTS_DIR"
+chmod 0775 "$ACME_CERTS_DIR"
 
 # 将 acme 用户加入 ssl-cert 组，使其能够写入证书目录
 usermod -aG ssl-cert "$ACME_USER"
@@ -420,7 +420,7 @@ if [[ "$METHOD" == "dns" ]]; then
     fi
 fi
 
-# 使用 newgrp 确保 ssl-cert 组权限生效
+# 临时给 acme 用户写入权限，然后在安装后调整权限
 sudo -u "$ACME_USER" bash -c "
     export HOME=$ACME_HOME/home
     cd $ACME_HOME/home
@@ -428,10 +428,7 @@ sudo -u "$ACME_USER" bash -c "
         . $ACME_HOME/.profile
     fi
     $DNS_CONFIG
-    # 使用 newgrp 激活 ssl-cert 组权限
-    newgrp ssl-cert <<EONG
     $ACME_CMD
-EONG
 " || {
     log_error "证书申请失败，请检查日志："
     log_error "  $ACME_CONFIG_DIR/issue-$PRIMARY_DOMAIN.log"
@@ -468,8 +465,6 @@ sudo -u "$ACME_USER" bash -c "
     if [[ -f $ACME_HOME/.profile ]]; then
         . $ACME_HOME/.profile
     fi
-    # 使用 newgrp 激活 ssl-cert 组权限
-    newgrp ssl-cert <<EONG
     $ACME_HOME/home/.acme.sh/acme.sh \
         --install-cert \
         -d $PRIMARY_DOMAIN \
@@ -478,7 +473,6 @@ sudo -u "$ACME_USER" bash -c "
         --ca-file $CERT_CA \
         --reloadcmd '$RELOAD_CMD' \
         --log $ACME_CONFIG_DIR/install-$PRIMARY_DOMAIN.log
-EONG
 " || {
     log_error "证书安装失败，请检查日志："
     log_error "  $ACME_CONFIG_DIR/install-$PRIMARY_DOMAIN.log"
@@ -491,11 +485,15 @@ log_info "✓ 证书安装成功"
 # 第四步：调整权限
 # ============================================================================
 log_step "调整文件权限..."
-chown root:ssl-cert "$CERT_KEY" "$CERT_CRT" "$CERT_CA"
-chmod 0640 "$CERT_KEY"
-chmod 0644 "$CERT_CRT" "$CERT_CA"
-
-log_info "✓ 权限调整完成"
+# 确保证书文件存在后再调整权限
+if [[ -f "$CERT_KEY" ]]; then
+    chown root:ssl-cert "$CERT_KEY" "$CERT_CRT" "$CERT_CA"
+    chmod 0640 "$CERT_KEY"
+    chmod 0644 "$CERT_CRT" "$CERT_CA"
+    log_info "✓ 权限调整完成"
+else
+    log_warn "证书文件未找到，跳过权限调整"
+fi
 
 # P12 - 证书安装后主动预检权限
 log_step "预检证书权限..."
