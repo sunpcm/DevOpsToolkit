@@ -5,8 +5,8 @@
 # ===========================================
 [servers]
 77.44.88.222 ansible_ssh_pass=server1_password ansible_become_pass=server1_password
-192.168.1.100 ansible_ssh_pass=server2_password ansible_become_pass=server2_password
-10.0.0.50 ansible_ssh_pass=server3_password ansible_become_pass=server3_password
+# 192.168.1.100 ansible_ssh_pass=server2_password ansible_become_pass=server2_password
+# 10.0.0.50 ansible_ssh_pass=server3_password ansible_become_pass=server3_password
 
 [all:vars]
 ansible_user=root
