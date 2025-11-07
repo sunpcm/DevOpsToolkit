@@ -95,7 +95,10 @@ chown root:ssl-cert "$ACME_CERTS_DIR" 2>/dev/null || {
     groupadd -f ssl-cert
     chown root:ssl-cert "$ACME_CERTS_DIR"
 }
-chmod 0750 "$ACME_CERTS_DIR"
+chmod 0755 "$ACME_CERTS_DIR"
+
+# 将 acme 用户加入 ssl-cert 组，使其能够写入证书目录
+usermod -aG ssl-cert "$ACME_USER"
 
 log_info "✓ 目录结构创建完成"
 log_info "  $ACME_HOME/home    -> acme 用户 HOME"
