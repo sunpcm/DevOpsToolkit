@@ -1,19 +1,35 @@
+---
 # ansible/roles/shell/tasks/main.yml
-- name: Inject .zshrc
-  blockinfile:
-    path: "{{ ansible_env.HOME }}/.zshrc"
-    create: yes
-    marker: "# {mark} WSL DEV"
-    block: |
-      eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
 
-      # uv
-      export PATH="$HOME/.cargo/bin:$PATH"
+- name: Check if Oh My Zsh is already installed
+  stat:
+    path: "{{ ansible_env.HOME }}/.oh-my-zsh"
+  register: omz_installed
 
-      alias cat="bat"
-      eval "$(zoxide init zsh)"
-      eval "$(starship init zsh)"
+- name: Install Oh My Zsh
+  shell: |
+    sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+  when: not omz_installed.stat.exists
+  args:
+    creates: "{{ ansible_env.HOME }}/.oh-my-zsh"
 
-      # nvm
-      export NVM_DIR="$HOME/.nvm"
-      [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+- name: Install zsh-autosuggestions plugin
+  git:
+    repo: https://github.com/zsh-users/zsh-autosuggestions
+    dest: "{{ ansible_env.HOME }}/.oh-my-zsh/custom/plugins/zsh-autosuggestions"
+    depth: 1
+    update: yes
+
+- name: Install zsh-syntax-highlighting plugin
+  git:
+    repo: https://github.com/zsh-users/zsh-syntax-highlighting
+    dest: "{{ ansible_env.HOME }}/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
+    depth: 1
+    update: yes
+
+- name: Deploy .zshrc configuration
+  template:
+    src: zshrc.j2
+    dest: "{{ ansible_env.HOME }}/.zshrc"
+    backup: yes
+    mode: '0644'

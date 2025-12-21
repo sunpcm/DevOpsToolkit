@@ -1,0 +1,58 @@
+---
+# ansible/roles/backup/tasks/main.yml
+
+- name: Create backup directory
+  file:
+    path: "{{ ansible_env.HOME }}/.wsl-dev-backup"
+    state: directory
+    mode: '0755'
+
+- name: Get current timestamp
+  command: date +%Y%m%d_%H%M%S
+  register: backup_timestamp
+  changed_when: false
+
+- name: Check if config files exist
+  stat:
+    path: "{{ ansible_env.HOME }}/{{ item }}"
+  register: config_files
+  loop:
+    - .zshrc
+    - .bashrc
+    - .gitconfig
+    - .profile
+    - .zprofile
+
+- name: Backup existing configuration files
+  copy:
+    src: "{{ ansible_env.HOME }}/{{ item.item }}"
+    dest: "{{ ansible_env.HOME }}/.wsl-dev-backup/{{ item.item }}.{{ backup_timestamp.stdout }}"
+    remote_src: yes
+    mode: preserve
+  when: item.stat.exists
+  loop: "{{ config_files.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Create backup manifest
+  copy:
+    dest: "{{ ansible_env.HOME }}/.wsl-dev-backup/manifest.{{ backup_timestamp.stdout }}.txt"
+    content: |
+      WSL Dev Environment Backup
+      Timestamp: {{ backup_timestamp.stdout }}
+      Backup Location: {{ ansible_env.HOME }}/.wsl-dev-backup
+      
+      Backed up files:
+      {% for item in config_files.results %}
+      {% if item.stat.exists %}
+      - {{ item.item }}
+      {% endif %}
+      {% endfor %}
+    mode: '0644'
+
+- name: Display backup information
+  debug:
+    msg:
+      - "✅ Configuration files backed up to ~/.wsl-dev-backup/"
+      - "Backup timestamp: {{ backup_timestamp.stdout }}"
+      - "To restore, copy files back from the backup directory"
