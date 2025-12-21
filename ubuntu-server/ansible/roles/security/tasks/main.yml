@@ -1,0 +1,76 @@
+---
+# ansible/roles/security/tasks/main.yml
+
+- name: Backup original sshd_config
+  copy:
+    src: /etc/ssh/sshd_config
+    dest: /etc/ssh/sshd_config.backup
+    remote_src: yes
+    force: no
+
+- name: Configure SSH port
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?Port '
+    line: "Port {{ ssh_port }}"
+    state: present
+  notify: restart sshd
+
+- name: Disable root login
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?PermitRootLogin '
+    line: 'PermitRootLogin no'
+    state: present
+  when: disable_root_login | default(true)
+  notify: restart sshd
+
+- name: Disable password authentication
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?PasswordAuthentication '
+    line: 'PasswordAuthentication no'
+    state: present
+  when: disable_password_auth | default(true)
+  notify: restart sshd
+
+- name: Enable public key authentication
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?PubkeyAuthentication '
+    line: 'PubkeyAuthentication yes'
+    state: present
+  notify: restart sshd
+
+- name: Disable empty passwords
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?PermitEmptyPasswords '
+    line: 'PermitEmptyPasswords no'
+    state: present
+  notify: restart sshd
+
+- name: Set SSH client alive interval
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?ClientAliveInterval '
+    line: 'ClientAliveInterval 300'
+    state: present
+  notify: restart sshd
+
+- name: Set SSH client alive count max
+  lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^#?ClientAliveCountMax '
+    line: 'ClientAliveCountMax 2'
+    state: present
+  notify: restart sshd
+
+- name: Display SSH security info
+  debug:
+    msg:
+      - "SSH security configured:"
+      - "  - SSH Port: {{ ssh_port }}"
+      - "  - Root login disabled: {{ disable_root_login }}"
+      - "  - Password auth disabled: {{ disable_password_auth }}"
+      - "⚠️  Make sure to test SSH connection before closing current session!"

@@ -19,6 +19,30 @@
 
 ---
 
+## 🔤 字体配置（Windows）
+
+### 安装 FiraCode Nerd Font
+```powershell
+# 在 Windows PowerShell 中执行
+winget install -e --id DEVCOM.FiraCodeNerdFont
+```
+
+### 配置 Windows Terminal
+1. 打开设置（`Ctrl + ,`）
+2. 配置文件 → Ubuntu → 外观
+3. 字体 → 选择 `FiraCode Nerd Font`
+4. 保存并重启终端
+
+### 验证图标显示
+```bash
+ls              # 应显示文件图标
+eza --icons
+```
+
+> ⚠️ 图标显示乱码？检查 Windows Terminal 字体设置
+
+---
+
 ## 🛠️ 常用工具
 
 ### Homebrew

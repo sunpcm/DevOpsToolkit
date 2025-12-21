@@ -1,0 +1,22 @@
+---
+# ansible/roles/nginx/tasks/main.yml
+
+- name: Install Nginx
+  apt:
+    name: nginx
+    state: present
+    update_cache: yes
+
+- name: Start and enable Nginx
+  systemd:
+    name: nginx
+    state: started
+    enabled: yes
+
+- name: Display Nginx info
+  debug:
+    msg:
+      - "Nginx installed and running"
+      - "Configuration: /etc/nginx/nginx.conf"
+      - "Sites available: /etc/nginx/sites-available/"
+      - "Sites enabled: /etc/nginx/sites-enabled/"

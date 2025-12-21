@@ -1,0 +1,39 @@
+---
+# ansible/roles/firewall/tasks/main.yml
+
+- name: Install UFW
+  apt:
+    name: ufw
+    state: present
+    update_cache: yes
+
+- name: Set UFW default incoming policy
+  ufw:
+    direction: incoming
+    policy: "{{ ufw_default_incoming }}"
+
+- name: Set UFW default outgoing policy
+  ufw:
+    direction: outgoing
+    policy: "{{ ufw_default_outgoing }}"
+
+- name: Allow specified ports
+  ufw:
+    rule: allow
+    port: "{{ item.port }}"
+    proto: "{{ item.proto }}"
+    comment: "{{ item.comment | default(omit) }}"
+  loop: "{{ allowed_ports }}"
+
+- name: Enable UFW
+  ufw:
+    state: enabled
+
+- name: Display firewall status
+  command: ufw status verbose
+  register: ufw_status
+  changed_when: false
+
+- name: Show firewall configuration
+  debug:
+    msg: "{{ ufw_status.stdout_lines }}"

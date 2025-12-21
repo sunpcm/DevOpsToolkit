@@ -1,0 +1,50 @@
+---
+# ansible/roles/user/tasks/main.yml
+
+- name: Create user group
+  group:
+    name: "{{ username }}"
+    state: present
+
+- name: Create user account
+  user:
+    name: "{{ username }}"
+    group: "{{ username }}"
+    groups: sudo
+    shell: "{{ user_shell }}"
+    createhome: yes
+    state: present
+    password: "{{ user_password | password_hash('sha512') if user_password else omit }}"
+
+- name: Set up .ssh directory
+  file:
+    path: "/home/{{ username }}/.ssh"
+    state: directory
+    owner: "{{ username }}"
+    group: "{{ username }}"
+    mode: '0700'
+
+- name: Add SSH authorized keys
+  authorized_key:
+    user: "{{ username }}"
+    key: "{{ item }}"
+    state: present
+  loop: "{{ ssh_authorized_keys }}"
+  when: ssh_authorized_keys | length > 0
+
+- name: Configure passwordless sudo
+  lineinfile:
+    path: /etc/sudoers.d/{{ username }}
+    line: "{{ username }} ALL=(ALL) NOPASSWD:ALL"
+    create: yes
+    mode: '0440'
+    validate: 'visudo -cf %s'
+  when: enable_passwordless_sudo | default(false)
+
+- name: Display user creation info
+  debug:
+    msg:
+      - "User '{{ username }}' created successfully"
+      - "Home directory: /home/{{ username }}"
+      - "Shell: {{ user_shell }}"
+      - "Passwordless sudo: {{ enable_passwordless_sudo }}"

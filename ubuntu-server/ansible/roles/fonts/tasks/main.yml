@@ -1,0 +1,18 @@
+---
+# ansible/roles/fonts/tasks/main.yml
+
+- name: Install fonts
+  apt:
+    name: "{{ fonts_to_install }}"
+    state: present
+    update_cache: yes
+
+- name: Update font cache
+  command: fc-cache -fv
+  changed_when: false
+
+- name: Display fonts info
+  debug:
+    msg:
+      - "Fonts installed: {{ fonts_to_install | join(', ') }}"
+      - "Font cache updated"

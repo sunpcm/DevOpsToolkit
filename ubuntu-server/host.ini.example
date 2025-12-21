@@ -1,0 +1,18 @@
+# Ubuntu Server Host Inventory Example
+# Copy this file to 'host.ini' and update with your server details
+
+[ubuntu_servers]
+# Production servers
+# prod-server ansible_host=192.168.1.100 ansible_user=root ansible_port=22
+
+# Development servers
+# dev-server ansible_host=192.168.1.200 ansible_user=root ansible_port=22
+
+# Example configurations:
+# server1 ansible_host=10.0.0.10 ansible_user=root ansible_port=22 ansible_python_interpreter=/usr/bin/python3
+# server2 ansible_host=example.com ansible_user=admin ansible_port=2222
+
+[ubuntu_servers:vars]
+# Global variables for all servers
+ansible_python_interpreter=/usr/bin/python3
+# ansible_ssh_private_key_file=~/.ssh/id_rsa
