@@ -1,0 +1,76 @@
+---
+# ansible/roles/windows-integration/tasks/main.yml
+
+- name: Create Windows integration script
+  copy:
+    dest: "{{ ansible_env.HOME }}/.wsl-windows-integration.sh"
+    mode: '0755'
+    content: |
+      #!/bin/bash
+      # Windows Integration Helper Functions
+      
+      # Open file/folder in Windows Explorer
+      winopen() {
+        if [ -z "$1" ]; then
+          explorer.exe .
+        else
+          explorer.exe "$1"
+        fi
+      }
+      
+      # Open file in default Windows application
+      winstart() {
+        if [ -z "$1" ]; then
+          echo "Usage: winstart <file>"
+        else
+          cmd.exe /c start "" "$(wslpath -w "$1")"
+        fi
+      }
+      
+      # Copy to Windows clipboard
+      clip() {
+        if [ -t 0 ]; then
+          # No stdin, copy argument
+          echo -n "$*" | clip.exe
+        else
+          # Read from stdin
+          clip.exe
+        fi
+      }
+      
+      # Paste from Windows clipboard
+      paste() {
+        powershell.exe -command "Get-Clipboard" | sed 's/\r$//'
+      }
+
+- name: Source Windows integration in .zshrc
+  blockinfile:
+    path: "{{ ansible_env.HOME }}/.zshrc"
+    marker: "# {mark} ANSIBLE MANAGED - Windows Integration Functions"
+    block: |
+      [ -f "$HOME/.wsl-windows-integration.sh" ] && source "$HOME/.wsl-windows-integration.sh"
+    insertafter: EOF
+    create: no
+
+- name: Create symbolic links to Windows directories
+  file:
+    src: "{{ item.src }}"
+    dest: "{{ ansible_env.HOME }}/{{ item.dest }}"
+    state: link
+    force: no
+  loop:
+    - { src: "/mnt/c/Users/{{ lookup('env', 'USER') }}/Downloads", dest: "downloads" }
+    - { src: "/mnt/c/Users/{{ lookup('env', 'USER') }}/Desktop", dest: "desktop" }
+    - { src: "/mnt/c/Users/{{ lookup('env', 'USER') }}/Documents", dest: "documents" }
+  ignore_errors: yes
+  when: create_windows_symlinks | default(false)
+
+- name: Display Windows integration info
+  debug:
+    msg:
+      - "Windows integration configured!"
+      - "Available functions:"
+      - "  - winopen [path]  : Open in Windows Explorer"
+      - "  - winstart <file> : Open in default Windows app"
+      - "  - clip [text]     : Copy to Windows clipboard"
+      - "  - paste           : Paste from Windows clipboard"

@@ -1,0 +1,52 @@
+---
+# ansible/roles/git/tasks/main.yml
+
+- name: Configure Git user name
+  git_config:
+    scope: global
+    name: user.name
+    value: "{{ git_user_name }}"
+  when: git_user_name is defined and git_user_name | length > 0
+
+- name: Configure Git user email
+  git_config:
+    scope: global
+    name: user.email
+    value: "{{ git_user_email }}"
+  when: git_user_email is defined and git_user_email | length > 0
+
+- name: Configure Git editor
+  git_config:
+    scope: global
+    name: core.editor
+    value: "{{ git_editor | default('nvim') }}"
+
+- name: Configure Git default branch
+  git_config:
+    scope: global
+    name: init.defaultBranch
+    value: "{{ git_default_branch | default('main') }}"
+
+- name: Configure Git pull behavior
+  git_config:
+    scope: global
+    name: pull.rebase
+    value: "{{ git_pull_rebase | default('false') }}"
+
+- name: Configure Git credential helper
+  git_config:
+    scope: global
+    name: credential.helper
+    value: "/mnt/c/Program\\ Files/Git/mingw64/bin/git-credential-manager.exe"
+  when: enable_windows_git_credential_helper | default(true)
+
+- name: Configure additional Git settings
+  git_config:
+    scope: global
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+  loop:
+    - { name: "core.autocrlf", value: "input" }
+    - { name: "color.ui", value: "auto" }
+    - { name: "push.default", value: "current" }
+    - { name: "core.filemode", value: "false" }

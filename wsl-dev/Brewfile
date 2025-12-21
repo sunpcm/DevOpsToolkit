@@ -15,3 +15,16 @@ brew "zoxide"
 brew "starship"
 
 brew "goenv"
+
+# Modern CLI tools
+brew "eza"        # Modern ls replacement
+brew "tldr"       # Simplified man pages
+brew "jq"         # JSON processor
+brew "yq"         # YAML processor
+brew "httpie"     # User-friendly HTTP client
+brew "gh"         # GitHub CLI
+brew "lazygit"    # Terminal UI for git
+brew "lazydocker" # Terminal UI for docker
+brew "btop"       # Resource monitor
+brew "dust"       # Disk usage analyzer
+brew "procs"      # Modern ps replacement

@@ -17,11 +17,16 @@
 
 - WSL2 / Ubuntu 环境校验（失败前置）
 - 基础系统依赖安装
+- **自动备份现有配置文件**
 - Homebrew（Linuxbrew）
+- **Oh My Zsh** + 常用插件
+- **Git 全局配置**
 - Python 环境（via `uv`）
 - Node.js 环境（via `nvm`）
-- Go
+- Go 环境（via `goenv`）
 - Docker CLI（WSL 模式，不运行 daemon）
+- **Windows 互操作增强**（剪贴板、文件打开等）
+- **现代 CLI 工具**（eza, lazygit, lazydocker, btop 等）
 - 可重复执行（idempotent）
 - 安装完成摘要 & 下一步指引
 
@@ -148,10 +153,16 @@ chmod +x bootstrap.sh
 | Category | Tool | Notes |
 |---|---|---|
 | Package Manager | Homebrew | Linuxbrew |
+| Shell | Oh My Zsh | With autosuggestions & syntax highlighting |
 | Python | uv | Fast, modern Python manager |
 | Node.js | nvm | Node version manager |
-| Go | go | Official distribution |
+| Go | goenv | Go version manager |
 | Container | Docker CLI | Uses Docker Desktop on Windows |
+| Modern CLI | eza, bat, fzf | Modern replacements for ls, cat, find |
+| Git TUI | lazygit | Terminal UI for git commands |
+| Docker TUI | lazydocker | Terminal UI for docker management |
+| Monitoring | btop | Resource monitor |
+| Utilities | jq, yq, httpie, gh | JSON/YAML processors, HTTP client, GitHub CLI |
 
 ---
 
@@ -183,7 +194,14 @@ chmod +x bootstrap.sh
 
 ```bash
 exec zsh
-# or: exec bash
+# or: source ~/.zshrc
+```
+
+#### 配置 Git（如未在 group_vars 中设置）
+
+```bash
+git config --global user.name "Your Name"
+git config --global user.email "you@example.com"
 ```
 
 #### Python (uv)
@@ -203,7 +221,25 @@ nvm use --lts
 #### Docker
 
 - 启动 **Docker Desktop (Windows)**
-- WSL 中仅使用 `docker` CLI
+- WSL 中使用 `docker` CLI 或 `lazydocker` TUI
+
+#### Windows 互操作功能
+
+```bash
+# 在 Windows 资源管理器中打开当前目录
+explorer
+
+# 复制内容到 Windows 剪贴板
+echo "hello" | clip
+
+# 从 Windows 剪贴板粘贴
+paste
+
+# 快捷目录访问
+cdwin         # Windows 用户目录
+cddownloads   # Downloads 目录
+cddesktop     # Desktop 目录
+```
 
 ---
 
@@ -226,6 +262,34 @@ nvm use --lts
 - 换新机器 / 新 WSL 实例
 - 修复部分安装失败
 
+**脚本会自动备份现有配置到 `~/.wsl-dev-backup/`**
+
+---
+
+## 🔄 Maintenance Scripts
+
+### 更新环境
+
+```bash
+./update.sh
+```
+
+更新以下组件：
+- 系统包
+- Homebrew 及其安装的包
+- Oh My Zsh 及插件
+- nvm, goenv
+- 重新运行 Ansible 配置
+
+### 完全卸载
+
+```bash
+./uninstall.sh
+```
+
+**警告**：此脚本会删除所有已安装的开发工具和配置。  
+卸载前会创建备份到 `~/.wsl-dev-backup/uninstall-<timestamp>/`
+
 ---
 
 ## ❓ What This Repo Is NOT
@@ -244,9 +308,24 @@ nvm use --lts
 ```text
 .
 ├── bootstrap.sh        # Entry point
+├── update.sh           # Update all components
+├── uninstall.sh        # Complete uninstallation
 ├── ansible/            # Environment provisioning
 │   ├── playbook.yml
+│   ├── group_vars/     # Configuration variables
 │   └── roles/
+│       ├── backup/           # Backup existing configs
+│       ├── base/             # Base system packages
+│       ├── brew/             # Homebrew installation
+│       ├── devtools/         # Development tools
+│       ├── shell/            # Oh My Zsh setup
+│       ├── git/              # Git configuration
+│       ├── python/           # Python (uv)
+│       ├── node/             # Node.js (nvm)
+│       ├── go/               # Go (goenv)
+│       ├── docker/           # Docker CLI setup
+│       ├── windows-integration/  # Windows interop features
+│       └── sudo/             # Passwordless sudo (optional)
 ├── Brewfile            # Homebrew packages
 ├── scripts/            # Helper / assertion scripts
 └── README.md
@@ -270,6 +349,37 @@ nvm use --lts
 
 - 确认 Windows 端 Docker Desktop 正在运行
 - 确认 Docker Desktop 中启用了 WSL integration
+
+---
+
+### Git 配置问题
+
+如需修改 Git 配置，编辑 [`wsl-dev/ansible/group_vars/all.yml`](wsl-dev/ansible/group_vars/all.yml):
+
+```yaml
+enable_git_config: true
+git_user_name: "Your Name"
+git_user_email: "you@example.com"
+```
+
+然后重新运行 `./bootstrap.sh`
+
+---
+
+### Oh My Zsh 主题或插件问题
+
+编辑 [`wsl-dev/ansible/roles/shell/templates/zshrc.j2`](wsl-dev/ansible/roles/shell/templates/zshrc.j2) 自定义配置
+
+---
+
+### 恢复备份的配置
+
+备份文件位于 `~/.wsl-dev-backup/`，按时间戳命名：
+
+```bash
+ls -la ~/.wsl-dev-backup/
+cp ~/.wsl-dev-backup/.zshrc.<timestamp> ~/.zshrc
+```
 
 ---
 
