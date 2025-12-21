@@ -504,7 +504,7 @@ MIT License - 详见 [LICENSE](LICENSE) 文件
 
 ## 联系方式
 
-- 📧 Email: your_email@example.com
+- 📧 Email: sunpcm@163.com
 - 🐛 Issues: [GitHub Issues](https://github.com/YOUR_USERNAME/DevOpsToolkit/issues)
 
 ---
