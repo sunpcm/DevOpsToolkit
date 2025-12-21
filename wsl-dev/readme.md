@@ -91,7 +91,45 @@ docker compose version
 
 ---
 
-### 4. 注意事项
+### 4. Nerd Font（字体）
+
+本项目使用的现代 CLI 工具（如 `eza`、`btop`）会在终端显示图标。  
+要正确显示这些图标，需要在 **Windows 侧安装 Nerd Font** 并配置 Windows Terminal。
+
+#### 安装 FiraCode Nerd Font（推荐）
+
+**方法 1：使用 winget（推荐）**
+
+在 **Windows PowerShell** 中执行：
+
+```powershell
+winget install -e --id DEVCOM.FiraCodeNerdFont
+```
+
+**方法 2：手动下载安装**
+
+1. 访问：https://github.com/ryanoasis/nerd-fonts/releases
+2. 下载 `FiraCode.zip`
+3. 解压后右键字体文件 → **为所有用户安装**
+
+#### 配置 Windows Terminal
+
+1. 打开 **Windows Terminal 设置**（`Ctrl + ,`）
+2. 导航到 **配置文件 → Ubuntu → 外观**
+3. **字体**：选择 `FiraCode Nerd Font` 或 `FiraCode NF`
+4. 保存设置
+
+> ✅ 配置完成后，重启 Windows Terminal，图标即可正常显示  
+> ⚠️ 如果 Windows Terminal 中看不到该字体选项，可能需要重启系统
+
+**其他推荐字体：**
+- Cascadia Code Nerd Font
+- JetBrains Mono Nerd Font
+- Meslo Nerd Font
+
+---
+
+### 5. 注意事项
 
 - ❌ 不要在 WSL 内安装 `docker / docker-ce / docker-compose`
 - ✅ Docker CLI 与 Compose 由 Docker Desktop 统一提供

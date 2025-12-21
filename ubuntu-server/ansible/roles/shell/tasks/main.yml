@@ -1,0 +1,72 @@
+---
+# ansible/roles/shell/tasks/main.yml
+
+- name: Install Zsh
+  apt:
+    name: zsh
+    state: present
+    update_cache: yes
+
+- name: Check if Oh My Zsh is already installed
+  stat:
+    path: "/home/{{ username }}/.oh-my-zsh"
+  register: omz_installed
+
+- name: Install Oh My Zsh
+  shell: |
+    sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+  args:
+    creates: "/home/{{ username }}/.oh-my-zsh"
+  become: yes
+  become_user: "{{ username }}"
+  when: not omz_installed.stat.exists and install_ohmyzsh
+
+- name: Install zsh-autosuggestions plugin
+  git:
+    repo: https://github.com/zsh-users/zsh-autosuggestions
+    dest: "/home/{{ username }}/.oh-my-zsh/custom/plugins/zsh-autosuggestions"
+    depth: 1
+    update: yes
+  become: yes
+  become_user: "{{ username }}"
+  when: install_ohmyzsh and 'zsh-autosuggestions' in zsh_plugins
+
+- name: Install zsh-syntax-highlighting plugin
+  git:
+    repo: https://github.com/zsh-users/zsh-syntax-highlighting
+    dest: "/home/{{ username }}/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
+    depth: 1
+    update: yes
+  become: yes
+  become_user: "{{ username }}"
+  when: install_ohmyzsh and 'zsh-syntax-highlighting' in zsh_plugins
+
+- name: Deploy .zshrc configuration
+  template:
+    src: zshrc.j2
+    dest: "/home/{{ username }}/.zshrc"
+    owner: "{{ username }}"
+    group: "{{ username }}"
+    mode: '0644'
+    backup: yes
+  when: install_ohmyzsh
+
+- name: Change user shell to zsh
+  user:
+    name: "{{ username }}"
+    shell: /bin/zsh
+  register: shell_changed
+
+- name: Display shell info
+  debug:
+    msg:
+      - "Zsh and Oh My Zsh installed successfully"
+      - "Theme: {{ zsh_theme }}"
+      - "Plugins: {{ zsh_plugins | join(', ') }}"
+      - "User '{{ username }}' shell changed to zsh"
+      - "💡 User needs to log out and back in for shell change to take effect"
+    msg:
+      - "Zsh and Oh My Zsh installed successfully"
+      - "Theme: {{ zsh_theme }}"
+      - "Plugins: {{ zsh_plugins | join(', ') }}"
+      - "User shell changed to zsh"

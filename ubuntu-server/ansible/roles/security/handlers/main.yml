@@ -1,0 +1,7 @@
+---
+# ansible/roles/security/handlers/main.yml
+
+- name: restart sshd
+  service:
+    name: sshd
+    state: restarted

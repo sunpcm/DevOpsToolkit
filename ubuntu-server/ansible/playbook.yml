@@ -1,0 +1,41 @@
+---
+- name: Ubuntu Server Configuration
+  hosts: ubuntu_servers
+  become: yes
+  gather_facts: true
+
+  roles:
+    - { role: base, when: install_base_packages | default(true) }
+    - { role: user, when: create_user | default(true) }
+    - { role: security, when: enable_ssh_security | default(true) }
+    - { role: firewall, when: enable_firewall | default(true) }
+    - { role: docker, when: install_docker | default(false) }
+    - { role: nginx, when: install_nginx | default(false) }
+    - { role: brew, when: install_brew | default(false) }
+    - { role: fonts, when: install_fonts | default(false) }
+    - { role: shell, when: install_zsh | default(false) }
+
+  post_tasks:
+    - name: Display completion message
+      debug:
+        msg:
+          - "╔════════════════════════════════════════╗"
+          - "║  Ubuntu Server Configuration Complete ║"
+          - "╚════════════════════════════════════════╝"
+          - ""
+          - "✅ System configured successfully!"
+          - ""
+          - "📝 Important reminders:"
+          - "  - User created: {{ username }}"
+          - "  - SSH port: {{ ssh_port }}"
+          - "  - Shell: {{ user_shell }}"
+          - ""
+          - "⚠️  Before disconnecting:"
+          - "  1. Test SSH connection in a new terminal"
+          - "  2. Verify you can connect with new port/settings"
+          - "  3. Keep this session open until verified"
+          - ""
+          - "🔄 Next steps:"
+          - "  - Log out and log back in as '{{ username }}'"
+          - "  - SSH: ssh -p {{ ssh_port }} {{ username }}@your_server"
+          - "  - If using zsh: source ~/.zshrc"

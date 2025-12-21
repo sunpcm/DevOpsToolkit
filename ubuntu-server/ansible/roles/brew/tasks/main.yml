@@ -1,0 +1,31 @@
+---
+# ansible/roles/brew/tasks/main.yml
+
+- name: Check if Homebrew is already installed
+  stat:
+    path: /home/linuxbrew/.linuxbrew/bin/brew
+  register: brew_installed
+
+- name: Install Homebrew
+  shell: |
+    NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  args:
+    creates: /home/linuxbrew/.linuxbrew/bin/brew
+  when: not brew_installed.stat.exists
+  become: no
+  become_user: "{{ username }}"
+
+- name: Add Homebrew to user's shell profile
+  lineinfile:
+    path: "/home/{{ username }}/.profile"
+    line: 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"'
+    create: yes
+    owner: "{{ username }}"
+    group: "{{ username }}"
+
+- name: Display Homebrew info
+  debug:
+    msg:
+      - "Homebrew installed successfully"
+      - "Location: /home/linuxbrew/.linuxbrew/"
+      - "Run 'eval \"$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)\"' or restart shell"

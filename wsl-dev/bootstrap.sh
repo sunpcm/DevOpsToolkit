@@ -84,10 +84,16 @@ if command -v docker >/dev/null 2>&1; then
   echo " ✅ Docker CLI (WSL mode)"
 fi
 
+if [ -d "$HOME/.oh-my-zsh" ]; then
+  echo " ✅ Zsh + Oh My Zsh"
+fi
+
 echo ""
 echo "Next steps:"
-echo " 1. Restart your shell:"
+echo " 1. Start using Zsh (now default shell):"
 echo "    exec zsh"
+echo ""
+echo "    Or simply restart your terminal"
 echo ""
 
 if command -v uv >/dev/null 2>&1; then
@@ -112,5 +118,6 @@ fi
 
 echo "Docs:"
 echo " 👉 README.md"
+echo " 👉 QUICKREF.md (Quick reference)"
 echo ""
-echo "✅ All done."
+echo "✅ All done. Enjoy your new shell! 🚀"

@@ -11,4 +11,33 @@
       - build-essential
       - unzip
       - zsh
+      - locales
     state: present
+
+- name: Configure locale - Generate en_US.UTF-8
+  become: true
+  locale_gen:
+    name: en_US.UTF-8
+    state: present
+
+- name: Configure locale - Update system default
+  become: true
+  shell: update-locale LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+  args:
+    creates: /etc/default/locale
+
+- name: Configure locale - Add to user profile
+  lineinfile:
+    path: "{{ ansible_env.HOME }}/.profile"
+    line: "{{ item }}"
+    create: yes
+  loop:
+    - "export LANG=en_US.UTF-8"
+    - "export LC_ALL=en_US.UTF-8"
+
+- name: Display base configuration info
+  debug:
+    msg:
+      - "✅ Base packages installed"
+      - "✅ Locale configured (en_US.UTF-8)"
+      - "💡 Locale changes take effect on next login"

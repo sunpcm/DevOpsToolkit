@@ -33,3 +33,18 @@
     dest: "{{ ansible_env.HOME }}/.zshrc"
     backup: yes
     mode: '0644'
+
+- name: Change default shell to zsh
+  become: true
+  user:
+    name: "{{ ansible_env.USER }}"
+    shell: /usr/bin/zsh
+  register: shell_changed
+
+- name: Display shell configuration info
+  debug:
+    msg:
+      - "✅ Oh My Zsh installed with plugins"
+      - "✅ Default shell changed to Zsh"
+      - "💡 Run 'exec zsh' or restart terminal to start using Zsh"
+  when: shell_changed.changed

@@ -99,7 +99,42 @@ ZSH_THEME="robbyrussell"  # 或其他主题：powerlevel10k, cloud, etc.
 
 可用主题列表：https://github.com/ohmyzsh/ohmyzsh/wiki/Themes
 
-### 5. 添加 zsh 插件
+### 5. 配置终端字体（Nerd Font）
+
+现代 CLI 工具（如 `eza`、`btop`、`lazygit`）使用图标字符，需要安装 Nerd Font 才能正确显示。
+
+#### 在 Windows 上安装 FiraCode Nerd Font
+
+**使用 winget（推荐）：**
+
+```powershell
+winget install -e --id DEVCOM.FiraCodeNerdFont
+```
+
+**手动安装：**
+
+1. 访问 https://github.com/ryanoasis/nerd-fonts/releases
+2. 下载 `FiraCode.zip`
+3. 解压后，右键字体文件 → **为所有用户安装**
+
+#### 配置 Windows Terminal
+
+1. 打开 Windows Terminal 设置（`Ctrl + ,`）
+2. **配置文件** → **Ubuntu** → **外观**
+3. **字体** → 选择 `FiraCode Nerd Font` 或 `FiraCode NF`
+4. 保存并重启终端
+
+**验证安装：**
+
+```bash
+ls   # 应显示文件/文件夹图标
+eza --icons
+btop
+```
+
+如果图标显示为乱码（如 󰂺 ），说明字体未正确配置。
+
+### 6. 添加 zsh 插件
 
 编辑 `ansible/roles/shell/templates/zshrc.j2`：
 
