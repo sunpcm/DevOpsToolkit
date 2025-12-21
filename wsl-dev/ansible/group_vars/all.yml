@@ -1,0 +1,17 @@
+# ===== Core =====
+enable_brew: true
+enable_zsh: true
+
+# ===== Languages =====
+enable_python: true      # uv-first
+enable_go: true
+enable_node: true
+# Node
+node_version: "24.11.1"
+
+# ===== Containers =====
+enable_docker: true
+
+# ===== Privilege =====
+enable_passwordless_sudo: true
+

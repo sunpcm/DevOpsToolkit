@@ -1,0 +1,19 @@
+# ansible/roles/shell/tasks/main.yml
+- name: Inject .zshrc
+  blockinfile:
+    path: "{{ ansible_env.HOME }}/.zshrc"
+    create: yes
+    marker: "# {mark} WSL DEV"
+    block: |
+      eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+
+      # uv
+      export PATH="$HOME/.cargo/bin:$PATH"
+
+      alias cat="bat"
+      eval "$(zoxide init zsh)"
+      eval "$(starship init zsh)"
+
+      # nvm
+      export NVM_DIR="$HOME/.nvm"
+      [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
