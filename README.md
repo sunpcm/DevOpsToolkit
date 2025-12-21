@@ -1,477 +1,514 @@
-# Ansible Server Setup
+# DevOpsToolkit
 
-这个 Ansible 配置用于快速设置 Ubuntu 服务器的开发环境。
+> 🚀 Production-ready automation toolkit for WSL2 dev environment & Ubuntu servers
 
-## 📁 文件说明
+一键配置脚本集：WSL2 开发环境 + Ubuntu 生产服务器 + 自动化证书管理
 
-- `playbook.yml` - 主要的 Ansible playbook 配置
-- `host.ini` - 服务器清单文件（包含连接信息和密码配置）
-- `ansible.cfg` - Ansible 运行配置
-- `.zshrc.server` - 清理过的 zsh 配置文件（移除了敏感信息）
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Platform: Linux](https://img.shields.io/badge/Platform-Linux-blue.svg)](https://www.linux.org/)
+[![Automation: Ansible](https://img.shields.io/badge/Automation-Ansible-red.svg)](https://www.ansible.com/)
 
-## 🚀 主要功能
+---
 
-### 安全配置
+## 📋 目录
 
-- ✅ 配置 SSH 密钥登录
-- ✅ 禁用密码登录
-- ✅ 禁用 root 用户 SSH 登录
-- ✅ 修改 SSH 默认端口为 ansible_new_port（配置一里的端口）
-- ✅ 配置防火墙规则 (UFW)
-- ✅ 将用户添加到 sudo 组
-- ✅ 自动清理配置文件中的敏感信息
+- [项目概述](#项目概述)
+- [功能特性](#功能特性)
+- [快速开始](#快速开始)
+  - [WSL2 开发环境](#wsl2-开发环境)
+  - [Ubuntu 服务器](#ubuntu-服务器)
+- [项目结构](#项目结构)
+- [技术栈](#技术栈)
+- [文档](#文档)
 
-### 开发环境
+---
 
-- ✅ 安装并配置 Zsh + Oh My Zsh
-- ✅ 使用 agnoster 主题
-- ✅ 安装 zsh-autosuggestions 插件
-- ✅ 安装支持主题的字体（Powerline、FiraCode）
-- ✅ 安装 Homebrew 包管理器
-- ✅ 安装基础开发工具（git, curl, build-essential）
-- ✅ 安装 Docker CE 及相关工具
-- ✅ 配置 Docker 用户权限（免 sudo）
-- ✅ 预设 Docker 常用别名和快捷命令
-- ✅ 安装 Nginx Web 服务器
-- ✅ 配置防火墙开放必要端口
+## 项目概述
 
-### 智能特性
+这是一个基于 **Ansible** 的自动化配置工具包，旨在帮助开发者快速配置开发和生产环境：
 
-- ✅ 幂等性：可以多次运行而不重复安装
-- ✅ 备份：会备份现有的 .zshrc 文件
-- ✅ 自动清理：移除配置中的敏感信息
-- ✅ 安全执行：防火墙配置不会导致 SSH 断连
-- ✅ 错误预防：修复了任务依赖和执行顺序问题
-- ✅ 现代化标准：使用最新的 GPG 密钥管理方式
-- ✅ 智能端口检测：自动识别当前 SSH 连接端口并保护
+- **🖥️ WSL2 开发环境**：一键配置完整的 WSL2 开发环境，包括 Docker、多语言支持、现代 CLI 工具
+- **🌐 Ubuntu 服务器**：生产级服务器配置，包括安全加固、开发工具、Docker、Nginx 等
+- **🔒 ACME 证书管理**：自动化 HTTPS 证书申请和续期（即将推出）
 
-## 🔧 使用方法
+---
 
-### 📋 前置要求
+## 功能特性
 
-1. **本地环境**：
-   - macOS 系统（已配置 SSH 密钥）
-   - 已安装 Ansible：`brew install ansible`
-   - 确保 `~/.ssh/id_rsa.pub` 公钥文件存在
+### 🖥️ WSL2 开发环境 ([wsl-dev](wsl-dev/))
 
-2. **服务器要求**：
-   - Ubuntu Server 系统
-   - 可以通过 SSH 连接
-   - 具有 sudo 权限的用户账户
+#### ✨ 核心功能
 
-### 🚀 快速开始
+- **环境校验**：自动检测 WSL2、Ubuntu 版本、Docker Desktop
+- **包管理器**：Homebrew (Linuxbrew)
+- **Shell 环境**：Zsh + Oh My Zsh + 插件（autosuggestions, syntax-highlighting）
+- **编程语言**：
+  - Python (uv)
+  - Node.js (nvm)
+  - Go (goenv)
+- **容器化**：Docker CLI (WSL 模式)
+- **Windows 集成**：剪贴板、文件互操作
+- **现代 CLI 工具**：eza, bat, fzf, zoxide, lazygit, lazydocker, btop, dust, procs
+- **Git 配置**：全局设置、Windows 凭据管理器集成
 
-#### 步骤 1: 克隆或下载配置文件
+#### 📦 安装的工具
+
+| 类别 | 工具 | 说明 |
+|------|------|------|
+| 包管理 | Homebrew | Linux 包管理器 |
+| Shell | Zsh + Oh My Zsh | 现代化终端 |
+| Python | uv | 快速 Python 环境管理 |
+| Node.js | nvm | Node 版本管理 |
+| Go | goenv | Go 版本管理 |
+| 容器 | Docker CLI | 容器管理（使用 Docker Desktop） |
+| CLI | eza, bat, fzf, zoxide | 现代化命令行工具 |
+| Git TUI | lazygit | Git 终端界面 |
+| Docker TUI | lazydocker | Docker 终端界面 |
+| 监控 | btop | 系统资源监控 |
+| 工具 | jq, yq, httpie, gh | JSON/YAML/HTTP/GitHub CLI |
+
+#### 🎯 设计原则
+
+- **系统级配置**：只负责开发工具，不涉及项目约定
+- **环境检查**：前置验证，失败快速退出
+- **幂等性**：可安全重复执行
+- **备份机制**：自动备份现有配置
+
+---
+
+### 🌐 Ubuntu 服务器 ([ubuntu-server](ubuntu-server/))
+
+#### 🔐 安全优先
+
+- **用户管理**：创建普通用户、SSH 密钥认证、免密 sudo
+- **SSH 加固**：修改端口、禁用 root、禁用密码认证
+- **防火墙**：UFW 自动配置、端口白名单
+- **最小权限**：遵循最佳安全实践
+
+#### 🛠️ 开发环境
+
+- **Docker**：Docker CE + Compose Plugin
+- **Web 服务器**：Nginx
+- **包管理器**：Homebrew (可选)
+- **Shell 环境**：Zsh + Oh My Zsh (可选)
+- **编程字体**：Powerline、FiraCode (可选)
+
+#### 📦 系统优化
+
+- **基础工具**：build-essential, git, vim, htop, net-tools
+- **时区配置**：Asia/Shanghai
+- **Locale 配置**：en_US.UTF-8
+- **系统更新**：自动更新和清理
+
+#### 🎛️ 模块化设计
+
+9 个独立可配置的 Ansible 角色：
+
+| 角色 | 功能 | 默认状态 |
+|------|------|---------|
+| base | 基础系统配置 | ✅ 启用 |
+| user | 用户创建和配置 | ✅ 启用 |
+| security | SSH 安全加固 | ✅ 启用 |
+| firewall | UFW 防火墙 | ✅ 启用 |
+| docker | Docker CE | ✅ 启用 |
+| nginx | Nginx Web 服务器 | ✅ 启用 |
+| brew | Homebrew | ✅ 启用 |
+| shell | Zsh + Oh My Zsh | ✅ 启用 |
+| fonts | 编程字体 | ✅ 启用 |
+
+---
+
+## 快速开始
+
+### 🖥️ WSL2 开发环境
+
+#### 前置要求
+
+- Windows 10/11
+- WSL2 已安装
+- Ubuntu 22.04+ 发行版
+- Docker Desktop for Windows
+
+#### 安装步骤
 
 ```bash
-# 如果是 git 仓库
-git clone https://github.com/sunpcm/UbuntuAutoConfig.git
-cd ansible_server_setup
+# 1. 克隆仓库
+git clone https://github.com/YOUR_USERNAME/DevOpsToolkit.git
+cd DevOpsToolkit/wsl-dev
 
-# 或者直接创建目录并复制文件
-mkdir ansible_server_setup
-cd ansible_server_setup
-# 复制所有配置文件到此目录
+# 2. 运行 bootstrap
+chmod +x bootstrap.sh
+./bootstrap.sh
 ```
 
-#### 步骤 3: 配置服务器信息
+#### 配置（可选）
 
-编辑 `host.ini` 文件，更新你的服务器信息：
-
-**情况 1: 服务器只有 root 用户**（新服务器常见情况）
-编辑 `host.ini` 文件，替换服务器 IP 和密码：
-```ini
-[servers]
-your_server_ip_here ansible_ssh_pass=server1_password ansible_become_pass=server1_password
-
-[all:vars]
-ansible_user=root  # 你的服务器登录用户名
-ansible_new_user=username # 你想新创建的用户名 （目标用户）
-ansible_new_port=6626 # 你想开的端口，后面都以 6626 举例，请以实际为准
-```
-
-**情况 2: 服务器已有普通用户**
-```ini
-[servers]
-# 替换为你的服务器 IP 地址
-your-server-ip-1  ansible_ssh_pass=server1_password ansible_become_pass=server1_password
-your-server-ip-2  ansible_ssh_pass=server2_password ansible_become_pass=server2_password
-
-[all:vars]
-# 使用现有的普通用户登录
-ansible_user=your-existing-username
-```
-
-#### 步骤 4: 配置目标用户
-
-可以无需编辑 `playbook.yml` 文件
+编辑 `ansible/group_vars/all.yml` 自定义安装：
 
 ```yaml
-  vars:
-    # 这个用户名是你要为之配置 Zsh、Homebrew 的用户，自动取ansible_new_user和ansible_new_port
-    target_user: "{{ ansible_new_user }}"
-    target_port: "{{ ansible_new_port }}"
+# 启用/禁用功能
+enable_brew: true
+enable_python: true
+enable_node: true
+enable_go: true
+enable_docker: true
+
+# Git 配置
+git_user_name: "Your Name"
+git_user_email: "you@example.com"
+
+# Windows 集成
+enable_windows_integration: true
 ```
 
-#### 步骤 5: 测试连接
-验证 Ansible 可以连接到你的服务器：
-```bash
-ansible -i host.ini servers -m ping
-```
-预期输出：
-```
-your-server-ip | SUCCESS => {
-    "ansible_facts": {
-        "discovered_interpreter_python": "/usr/bin/python3"
-    },
-    "changed": false,
-    "ping": "pong"
-}
-```
-
-#### 步骤 6: 执行部署
-
-运行 Ansible playbook：
+#### 验证安装
 
 ```bash
-ansible-playbook -i host.ini playbook.yml
+# 启动 Zsh
+exec zsh
+
+# 验证工具
+brew --version
+uv --version
+docker --version
 ```
 
-#### 步骤 7: 验证安装
-部署完成后，连接到服务器验证（注意使用新端口）：
+**详细文档**：
+- 📖 [完整 README](wsl-dev/readme.md)
+- ⚙️ [配置指南](wsl-dev/CONFIGURATION.md)
+- 📚 [快速参考](wsl-dev/QUICKREF.md)
+
+---
+
+### 🌐 Ubuntu 服务器
+
+#### 前置要求
+
+**控制机**（本地或跳板机）：
+- 安装了 Ansible 2.9+
+- SSH 客户端
+
+**目标服务器**：
+- Ubuntu 20.04 / 22.04 / 24.04
+- Root 或 sudo 权限
+- SSH 访问
+
+#### 安装步骤
+
 ```bash
-# 使用新的 SSH 端口连接
-ssh -p 6626 your-username@your-server-ip
+# 1. 进入目录
+cd DevOpsToolkit/ubuntu-server
 
-# 验证 zsh 和主题
-echo $SHELL
-# 应该输出：/usr/bin/zsh
+# 2. 配置清单
+cp host.ini.example host.ini
+vim host.ini
+```
 
-# 验证 Docker
+编辑 `host.ini`：
+```ini
+[ubuntu_servers]
+my-server ansible_host=192.168.1.100 ansible_user=root ansible_port=22
+
+[ubuntu_servers:vars]
+ansible_python_interpreter=/usr/bin/python3
+```
+
+```bash
+# 3. 配置变量
+vim ansible/group_vars/all.yml
+```
+
+**必须配置**：
+```yaml
+# 用户名
+username: "yourname"
+
+# SSH 公钥（重要！）
+ssh_authorized_keys:
+  - "ssh-rsa AAAAB3NzaC1... your_email@example.com"
+
+# SSH 端口（可选）
+ssh_port: 2222
+```
+
+```bash
+# 4. 测试连接
+ansible -i host.ini ubuntu_servers -m ping
+
+# 5. 运行配置
+./bootstrap.sh
+```
+
+#### 配置后操作
+
+⚠️ **重要**：在新终端测试连接，确认可用后再断开当前会话
+
+```bash
+# 使用新端口和新用户连接
+ssh -p 2222 yourname@your_server_ip
+
+# 验证服务
 docker --version
 docker compose version
-
-# 测试 Docker 别名
-dps  # 等同于 docker ps
-di   # 等同于 docker images
-
-# 验证 Homebrew
-brew --version
-
-# 验证 Nginx
 sudo systemctl status nginx
-
-# 验证防火墙
 sudo ufw status
 ```
-
-### 🔍 故障排除
-
-#### 常见问题
-
-1. **SSH 连接失败**
-   ```bash
-   # 检查 SSH 密钥
-   ssh-add -l
-   
-   # 手动测试连接
-   ssh -v your-username@your-server-ip
-   ```
-
-2. **权限错误**
-   ```bash
-   # 确保用户有 sudo 权限
-   ansible -i host.ini servers -m shell -a "sudo whoami" --ask-become-pass
-   ```
-
-3. **Docker 权限问题**
-   ```bash
-   # 重新登录后测试（组权限需要重新登录生效）
-   ssh your-username@your-server-ip
-   docker ps
-   ```
-
-4. **查看详细日志**
-   ```bash
-   # 使用 -v 参数获取详细输出
-   ansible-playbook -i host.ini playbook.yml -v
-   
-   # 使用 -vvv 获取更详细的调试信息
-   ansible-playbook -i host.ini playbook.yml -vvv
-   ```
-
-### 📊 执行统计
-
-- **总任务数**: 30 个主要任务 + 验证任务
-- **预计执行时间**: 8-12 分钟（取决于网络速度）
-- **重启要求**: 无需重启（但建议重新登录以生效用户组权限）
-
-## 🛡️ 安全性和可靠性保证
-
-### 🔒 安全执行设计
-
-本 playbook 经过专门优化，确保执行过程的安全性：
-
-**防火墙配置安全**：
-- ✅ 智能检测当前 SSH 连接端口并自动允许
-- ✅ 配置所有必要端口规则后再启用防火墙
-- ✅ 支持从任何端口运行 playbook 而不会被锁定
-- ✅ 避免因防火墙配置导致 SSH 连接断开
-
-**任务执行顺序优化**：
-- ✅ 先安装 Oh My Zsh，再安装插件（避免目录不存在错误）
-- ✅ 在 Oh My Zsh 安装后覆盖自定义配置（避免配置丢失）
-- ✅ Docker 组权限添加后提供明确的重新登录提示
-
-**现代化安全标准**：
-- ✅ 使用 GPG keyring 替代已弃用的 apt_key
-- ✅ 专用密钥目录 `/etc/apt/keyrings/`
-- ✅ 签名验证确保软件包来源安全
-
-### ⚠️ 重要安全提醒
-
-1. **SSH 端口变更**：部署后 SSH 端口将改为 6626
-   ```bash
-   # 新的连接方式
-   ssh -p 6626 your_user_name@your-server-ip
-   ```
-
-2. **用户权限生效**：Docker 组权限需要重新登录后生效
-   ```bash
-   # 部署完成后重新连接
-   ssh -p 6626 your_user_name@your-server-ip
-   docker ps  # 现在可以无需 sudo 使用
-   ```
-
-3. **防火墙状态**：部署后防火墙将自动启用
-   ```bash
-   # 检查防火墙状态
-   sudo ufw status
-   ```
-
-### 🚨 故障排除增强
-
-**连接问题**：
-- 如果 SSH 连接失败，检查是否使用了新端口 6626
-- 确保防火墙规则正确配置了必要端口
-
-**权限问题**：
-- Docker 命令权限被拒绝：重新登录以获得 docker 组权限
-- sudo 权限问题：确认用户已正确添加到 sudo 组
-
-**配置验证**：
-```bash
-# 验证关键服务状态
-sudo systemctl status docker nginx ssh
-sudo ufw status
-```
-
-### 🔧 进阶配置
 
 #### 自定义配置
-如果你需要添加自己的配置，可以修改 `.zshrc.server` 文件：
 
-```bash
-# 在文件末尾添加你的自定义配置
-echo "# 我的自定义配置" >> .zshrc.server
-echo "export MY_VAR=value" >> .zshrc.server
-echo "alias myalias='command'" >> .zshrc.server
+编辑 `ansible/group_vars/all.yml`：
+
+```yaml
+# 禁用不需要的组件
+install_docker: true      # Docker CE
+install_nginx: true       # Nginx
+install_brew: false       # Homebrew（可选）
+install_zsh: true         # Zsh + Oh My Zsh
+
+# 防火墙端口
+allowed_ports:
+  - { port: "{{ ssh_port }}", proto: "tcp", comment: "SSH" }
+  - { port: "80", proto: "tcp", comment: "HTTP" }
+  - { port: "443", proto: "tcp", comment: "HTTPS" }
+  - { port: "3000", proto: "tcp", comment: "Custom App" }
 ```
 
-#### 选择性执行任务
-如果只想执行特定任务，可以使用标签：
+**详细文档**：
+- 📖 [完整 README](ubuntu-server/README.md)
+- ⚙️ [配置指南](ubuntu-server/CONFIGURATION.md)
+- 📚 [快速参考](ubuntu-server/QUICKREF.md)
+- 📝 [更新日志](ubuntu-server/CHANGELOG.md)
 
-```bash
-# 只安装 Docker（需要先在 playbook 中添加标签）
-ansible-playbook -i host.ini playbook.yml --tags docker
+---
 
-# 跳过某些任务
-ansible-playbook -i host.ini playbook.yml --skip-tags ssh
+## 项目结构
+
 ```
-
-#### 批量服务器管理
-对于大量服务器，可以使用 Ansible 的并行执行：
-
-```bash
-# 同时在 10 台服务器上执行（默认是 5 台）
-ansible-playbook -i host.ini playbook.yml --forks 10
-
-# 指定特定的服务器组
-ansible-playbook -i host.ini playbook.yml --limit "192.168.1.100,192.168.1.101"
-```
-
-## ⚠️ 安全注意事项
-
-- `.zshrc.server` 文件已经移除了以下敏感信息：
-  - Cloudflare API Token
-  - Cloudflare Account ID
-  - 个人路径引用（如 acme.sh）
-
-- 原始的 `.zshrc` 文件保留在本地，不会被部署到服务器
-
-## 🎨 配置的主题和插件
-
-- **主题**: agnoster（需要支持 Powerline 的字体）
-- **插件**:
-  - git（默认）
-  - zsh-autosuggestions（自动建议历史命令）
-
-## 📦 安装的软件包
-
-- zsh - 现代化 Shell
-- git - 版本控制
-- curl - 网络工具
-- build-essential - 编译工具
-- ufw - 防火墙管理
-- nginx - Web 服务器
-- fonts-powerline - 支持主题的字体
-- fonts-firacode - FiraCode 字体
-- Oh My Zsh - Zsh 框架
-- Homebrew - 包管理器
-- Docker CE - 容器化平台
-- Docker Compose - 容器编排工具
-- Docker Buildx - 扩展构建功能
-- Nginx - Web 服务器
-- UFW - 防火墙工具
-
-## 🐳 Docker 功能
-
-### 预设别名
-
-- `dps` - 查看运行中的容器 (docker ps)
-- `dpsa` - 查看所有容器 (docker ps -a)
-- `di` - 查看镜像 (docker images)
-- `dlog` - 查看容器日志 (docker logs)
-- `dexec` - 进入容器 (docker exec -it)
-- `dstop` - 停止所有运行的容器
-- `drm` - 删除所有容器
-- `drmi` - 删除所有镜像
-- `dprune` - 清理系统 (docker system prune -af)
-
-### Docker Compose 别名
-
-- `dc` - docker compose
-- `dcup` - 启动服务 (docker compose up -d)
-- `dcdown` - 停止服务 (docker compose down)
-- `dclog` - 查看日志 (docker compose logs -f)
-- `dcps` - 查看服务状态 (docker compose ps)
-
-### 用户权限
-
-- 自动将用户添加到 docker 组，无需 sudo 即可使用 Docker
-
-## 🌐 Web 服务器功能
-
-### Nginx 配置
-- ✅ 自动安装 Nginx
-- ✅ 启用并自动启动服务
-- ✅ 默认配置文件位置：`/etc/nginx/`
-- ✅ 网站根目录：`/var/www/html/`
-
-### 基础使用
-```bash
-# 检查 Nginx 状态
-sudo systemctl status nginx
-
-# 重启 Nginx
-sudo systemctl restart nginx
-
-# 重新加载配置
-sudo nginx -s reload
-
-# 测试配置文件语法
-sudo nginx -t
-```
-
-## 🔥 防火墙配置
-
-### 开放的端口
-
-- ✅ **SSH**: 当前连接端口 (自动检测) + 6626 (新端口)
-- ✅ **HTTP**: 80 (Web 服务)
-- ✅ **HTTPS**: 443 (SSL Web 服务)
-- ✅ **开发端口**: 8000-8999 (应用开发)
-
-### UFW 防火墙管理
-```bash
-# 查看防火墙状态
-sudo ufw status
-
-# 查看详细规则
-sudo ufw status verbose
-
-# 添加新规则
-sudo ufw allow 3000/tcp
-
-# 删除规则
-sudo ufw delete allow 3000/tcp
-
-# 重置防火墙（谨慎使用）
-sudo ufw --force reset
-```
-
-### ⚠️ 重要提醒
-- SSH 端口已改为 **6626**，请使用: `ssh -p 6626 user@server`
-- 确保在防火墙配置完成前保持 SSH 连接，避免被锁定
-- Root 用户已禁用 SSH 登录，只能使用配置的普通用户
-
-## 🔄 更新配置
-
-如果你需要更新服务器上的 zsh 配置：
-
-1. 修改 `.zshrc.server` 文件
-2. 重新运行 ansible playbook
-
-配置会自动更新，并保留 Homebrew 设置。
-
-## 📚 快速参考
-
-### 🚀 一键部署命令
-```bash
-# 标准部署
-ansible-playbook -i host.ini playbook.yml
-
-# 详细日志
-ansible-playbook -i host.ini playbook.yml -v
-
-# 检查模式（不实际执行）
-ansible-playbook -i host.ini playbook.yml --check
-```
-
-### 🐳 常用 Docker 命令（部署后可用）
-```bash
-# 基础操作
-dps          # 查看运行容器
-di           # 查看镜像  
-dlog <name>  # 查看日志
-dexec <name> # 进入容器
-
-# 清理操作
-dstop        # 停止所有容器
-drm          # 删除所有容器
-dprune       # 清理系统
-
-# Compose 操作
-dcup         # 启动服务
-dcdown       # 停止服务
-dclog        # 查看日志
-```
-
-### 🔧 常见维护命令
-```bash
-# 更新系统包
-sudo apt update && sudo apt upgrade
-
-# 更新 Homebrew
-brew update && brew upgrade
-
-# 查看 Zsh 插件
-ls ~/.oh-my-zsh/custom/plugins/
-
-# 重新加载 Zsh 配置
-source ~/.zshrc
+DevOpsToolkit/
+├── README.md                 # 本文件
+├── wsl-dev/                  # WSL2 开发环境配置
+│   ├── bootstrap.sh          # 主入口脚本
+│   ├── update.sh             # 更新脚本
+│   ├── uninstall.sh          # 卸载脚本
+│   ├── Brewfile              # Homebrew 包列表
+│   ├── readme.md             # WSL Dev 文档
+│   ├── CONFIGURATION.md      # 配置指南
+│   ├── QUICKREF.md           # 快速参考
+│   ├── ansible/
+│   │   ├── playbook.yml      # 主 Playbook
+│   │   ├── group_vars/
+│   │   │   └── all.yml       # 配置变量
+│   │   └── roles/            # 12 个角色
+│   │       ├── backup/
+│   │       ├── base/
+│   │       ├── brew/
+│   │       ├── devtools/
+│   │       ├── shell/
+│   │       ├── git/
+│   │       ├── python/
+│   │       ├── node/
+│   │       ├── go/
+│   │       ├── docker/
+│   │       ├── windows-integration/
+│   │       └── sudo/
+│   └── scripts/              # 工具脚本
+│
+├── ubuntu-server/            # Ubuntu 服务器配置
+│   ├── bootstrap.sh          # 主入口脚本
+│   ├── update.sh             # 更新脚本
+│   ├── host.ini.example      # 清单模板
+│   ├── README.md             # Ubuntu Server 文档
+│   ├── CONFIGURATION.md      # 配置指南
+│   ├── QUICKREF.md           # 快速参考
+│   ├── CHANGELOG.md          # 更新日志
+│   └── ansible/
+│       ├── playbook.yml      # 主 Playbook
+│       ├── group_vars/
+│       │   └── all.yml       # 配置变量
+│       └── roles/            # 9 个角色
+│           ├── base/
+│           ├── user/
+│           ├── security/
+│           ├── firewall/
+│           ├── docker/
+│           ├── nginx/
+│           ├── brew/
+│           ├── shell/
+│           └── fonts/
+│
+└── AcmeConfig/               # ACME 证书管理（独立模块）
+    ├── acme-init.sh          # 初始化脚本
+    ├── acme-check.sh         # 证书检查
+    ├── acme-cleanup.sh       # 清理脚本
+    └── README.md             # ACME 文档
 ```
 
 ---
 
-**🎉 享受你的现代化服务器开发环境！**
+## 技术栈
+
+### 自动化工具
+- **Ansible** - 配置管理和自动化
+- **Bash** - Shell 脚本
+
+### WSL2 开发环境
+- **Homebrew** - 包管理器
+- **Oh My Zsh** - Zsh 框架
+- **uv** - Python 环境管理
+- **nvm** - Node.js 版本管理
+- **goenv** - Go 版本管理
+- **Docker Desktop** - 容器运行时
+
+### Ubuntu 服务器
+- **UFW** - 防火墙
+- **Docker CE** - 容器引擎
+- **Nginx** - Web 服务器
+- **OpenSSH** - SSH 服务器
+
+### 现代 CLI 工具
+- **eza** - 现代化 ls 替代
+- **bat** - cat 增强版
+- **fzf** - 模糊查找
+- **zoxide** - 智能 cd
+- **lazygit** - Git TUI
+- **lazydocker** - Docker TUI
+- **btop** - 系统监控
+
+---
+
+## 文档
+
+### WSL2 开发环境
+- [完整文档](wsl-dev/readme.md) - 详细的安装和使用指南
+- [配置指南](wsl-dev/CONFIGURATION.md) - 自定义配置说明
+- [快速参考](wsl-dev/QUICKREF.md) - 常用命令速查
+
+### Ubuntu 服务器
+- [完整文档](ubuntu-server/README.md) - 服务器配置指南
+- [配置指南](ubuntu-server/CONFIGURATION.md) - 角色和变量详解
+- [快速参考](ubuntu-server/QUICKREF.md) - 运维命令速查
+- [更新日志](ubuntu-server/CHANGELOG.md) - 版本历史
+
+### ACME 证书管理
+- [文档](AcmeConfig/README.md) - 证书管理使用说明
+
+---
+
+## 使用场景
+
+### 🖥️ WSL2 开发环境适用于
+
+- Windows 用户希望获得完整 Linux 开发体验
+- 需要 Docker + 多语言开发环境
+- 追求现代化命令行工具和高效工作流
+- 需要与 Windows 文件系统无缝集成
+
+### 🌐 Ubuntu 服务器适用于
+
+- 全新服务器初始化和安全加固
+- 开发/测试/生产环境标准化配置
+- 多服务器批量部署
+- CI/CD 流水线中的服务器配置
+
+---
+
+## 常见问题
+
+### WSL2 开发环境
+
+**Q: 为什么需要 Docker Desktop？**  
+A: WSL2 中不运行 Docker daemon，Docker CLI 连接到 Windows 上的 Docker Desktop。
+
+**Q: 可以不安装某些语言吗？**  
+A: 可以，编辑 `ansible/group_vars/all.yml` 设置 `enable_python: false` 等。
+
+**Q: 如何更新已安装的环境？**  
+A: 运行 `./update.sh` 或重新执行 `./bootstrap.sh`。
+
+### Ubuntu 服务器
+
+**Q: 配置后无法 SSH 连接？**  
+A: 确保防火墙放行了新的 SSH 端口，通过控制台登录检查。
+
+**Q: Docker 命令提示权限不足？**  
+A: 用户刚被添加到 docker 组，需要重新登录生效。
+
+**Q: 如何只运行特定角色？**  
+A: 使用 `ansible-playbook -i host.ini ansible/playbook.yml --tags docker`
+
+---
+
+## 最佳实践
+
+### WSL2 开发环境
+1. ✅ 安装前确保 Docker Desktop 正在运行
+2. ✅ 定期运行 `./update.sh` 保持工具更新
+3. ✅ 使用 `.zshrc` 自定义别名提高效率
+4. ✅ 为不同项目创建独立的 Python/Node 环境
+
+### Ubuntu 服务器
+1. ✅ 首次运行前在测试服务器验证
+2. ✅ 修改 SSH 配置时保持当前会话不断开
+3. ✅ 配置完成后在新终端测试连接
+4. ✅ 定期审查防火墙规则和系统更新
+5. ✅ 使用 Ansible Vault 加密敏感信息
+
+---
+
+## 安全建议
+
+### 服务器安全
+- ✅ 使用 SSH 密钥认证，禁用密码登录
+- ✅ 修改 SSH 默认端口
+- ✅ 禁用 root 远程登录
+- ✅ 启用防火墙，仅开放必要端口
+- ✅ 使用非标准用户名
+- ✅ 定期更新系统和软件包
+
+### 凭据管理
+- ✅ 不要在配置文件中存储明文密码
+- ✅ 使用 Ansible Vault 加密敏感变量
+- ✅ 使用 SSH Agent 管理密钥
+- ✅ 定期轮换密码和密钥
+
+---
+
+## 贡献
+
+欢迎提交 Issue 和 Pull Request！
+
+### 贡献指南
+1. Fork 本仓库
+2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
+3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
+4. 推送到分支 (`git push origin feature/AmazingFeature`)
+5. 创建 Pull Request
+
+---
+
+## 许可证
+
+MIT License - 详见 [LICENSE](LICENSE) 文件
+
+---
+
+## 致谢
+
+本项目参考和借鉴了：
+- Ansible 官方最佳实践
+- Ubuntu Server 官方文档
+- WSL2 开发社区经验
+- 开源社区的各种优秀工具
+
+---
+
+## 联系方式
+
+- 📧 Email: your_email@example.com
+- 🐛 Issues: [GitHub Issues](https://github.com/YOUR_USERNAME/DevOpsToolkit/issues)
+
+---
+
+**⭐ 如果这个项目对你有帮助，请给个 Star！**
+
+**🎉 享受自动化配置的便利吧！**
