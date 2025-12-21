@@ -1,0 +1,14 @@
+# ansible/roles/base/tasks/main.yml
+- name: Update apt
+  become: true
+  apt:
+    update_cache: yes
+
+- name: Install base packages
+  become: true
+  apt:
+    name:
+      - build-essential
+      - unzip
+      - zsh
+    state: present

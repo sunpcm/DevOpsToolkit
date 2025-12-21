@@ -1,0 +1,15 @@
+- name: WSL Dev Environment
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  roles:
+    - base
+    - { role: brew, when: enable_brew }
+    - { role: devtools, when: enable_brew }
+    - { role: shell, when: enable_zsh }
+    - { role: python, when: enable_python }
+    - { role: go, when: enable_go }
+    - { role: node, when: enable_node }
+    - { role: docker, when: enable_docker }
+    - { role: sudo, when: enable_passwordless_sudo }
