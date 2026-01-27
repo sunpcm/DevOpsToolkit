@@ -1,0 +1,167 @@
+---
+- name: Setup Perfect WSL2 Dev Environment (v2.0)
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  become: false # 默认不用 root，按需开启
+
+  vars:
+    # 定义要通过 Homebrew 安装的工具
+    brew_packages:
+      - git
+      - neovim        # 现代化 Vim
+      - bat           # 带颜色的 cat
+      - fzf           # 模糊搜索神器
+      - zoxide        # 智能 cd 命令
+      - tldr          # 简化的 man 手册
+      - ripgrep       # 超快的 grep
+      - fd            # 超快的 find
+      - starship      # 极速 Shell 提示符
+
+    # 定义 Homebrew 的安装路径 (Linux 下的标准路径)
+    brew_install_path: "/home/linuxbrew/.linuxbrew/bin"
+
+  tasks:
+    # -------------------------------------------------------
+    # 1. 基础系统依赖 (需要 sudo 密码)
+    # -------------------------------------------------------
+    - name: "系统: 更新 apt 缓存"
+      become: true
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: "系统: 安装基础编译工具 (Homebrew 依赖)"
+      become: true
+      apt:
+        name:
+          - build-essential
+          - curl
+          - file
+          - git
+          - unzip
+        state: present
+
+    # -------------------------------------------------------
+    # 2. 安装 Homebrew
+    # -------------------------------------------------------
+    - name: "工具: 检查 Homebrew 是否存在"
+      stat:
+        path: "{{ brew_install_path }}/brew"
+      register: brew_check
+
+    - name: "工具: 安装 Homebrew (如果不存在)"
+      shell: |
+        NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+      when: not brew_check.stat.exists
+
+    # -------------------------------------------------------
+    # 3. 安装 Zsh 和 Oh My Zsh
+    # -------------------------------------------------------
+    - name: "Shell: 安装 Zsh"
+      become: true
+      apt:
+        name: zsh
+        state: present
+
+    - name: "Shell: 检查 Oh My Zsh"
+      stat:
+        path: "{{ ansible_env.HOME }}/.oh-my-zsh"
+      register: omz_check
+
+    - name: "Shell: 安装 Oh My Zsh"
+      shell: sh -c "$(curl -fsSL https://raw.github.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+      when: not omz_check.stat.exists
+
+    - name: "Shell: 安装 Zsh 插件"
+      git:
+        repo: "{{ item.repo }}"
+        dest: "{{ ansible_env.HOME }}/.oh-my-zsh/custom/plugins/{{ item.name }}"
+      loop:
+        - { name: "zsh-autosuggestions", repo: "https://github.com/zsh-users/zsh-autosuggestions" }
+        - { name: "zsh-syntax-highlighting", repo: "https://github.com/zsh-users/zsh-syntax-highlighting" }
+
+    - name: "配置: 更改当前用户默认 Shell 为 Zsh"
+      become: true
+      user:
+        name: "{{ ansible_env.USER }}"
+        shell: /usr/bin/zsh
+
+    # -------------------------------------------------------
+    # 4. 通过 Homebrew 安装现代开发工具
+    #    关键修正: 显式指定 PATH 环境变量，防止找不到 brew
+    # -------------------------------------------------------
+    - name: "工具: 安装现代 CLI 工具 (bat, fzf, zoxide...)"
+      community.general.homebrew:
+        name: "{{ item }}"
+        state: present
+        update_homebrew: yes
+      loop: "{{ brew_packages }}"
+      environment:
+        PATH: "{{ brew_install_path }}:{{ ansible_env.PATH }}"
+
+    # -------------------------------------------------------
+    # 5. Node.js 环境 (NVM)
+    # -------------------------------------------------------
+    - name: "Node: 检查 NVM"
+      stat:
+        path: "{{ ansible_env.HOME }}/.nvm"
+      register: nvm_check
+
+    - name: "Node: 安装 NVM"
+      shell: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
+      when: not nvm_check.stat.exists
+
+    # -------------------------------------------------------
+    # 6. 生成最终的 .zshrc
+    #    改进: 增加了 starship init 和 PATH 修复
+    # -------------------------------------------------------
+    - name: "配置: 注入完美版 .zshrc"
+      blockinfile:
+        path: "{{ ansible_env.HOME }}/.zshrc"
+        marker: "# {mark} ANSIBLE MANAGED BLOCK"
+        create: yes
+        block: |
+          # --- Homebrew ---
+          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+
+          # --- Oh My Zsh ---
+          export ZSH="$HOME/.oh-my-zsh"
+          ZSH_THEME="agnoster"  # 如果用了 Starship，这个主题会被覆盖，没关系
+          plugins=(git zsh-autosuggestions zsh-syntax-highlighting extract)
+          source $ZSH/oh-my-zsh.sh
+
+          # --- 现代化工具配置 ---
+          alias cat="bat"
+          eval "$(zoxide init zsh)"
+          # alias cd="z" # 比较激进的别名，如果你不习惯可以注释掉这一行，手动敲 z
+          
+          # --- Starship (颜值核心) ---
+          eval "$(starship init zsh)"
+
+          # --- 代理设置 (自动获取 Windows IP) ---
+          # 端口 7890 请根据你 Windows 代理软件实际端口修改
+          export HOST_IP=$(cat /etc/resolv.conf | grep nameserver | awk '{ print $2 }')
+          function proxy_on() {
+              export http_proxy="http://${HOST_IP}:7890"
+              export https_proxy="http://${HOST_IP}:7890"
+              export all_proxy="http://${HOST_IP}:7890"
+              echo "🚀 Proxy ON (IP: ${HOST_IP}:7890)"
+          }
+          function proxy_off() {
+              unset http_proxy https_proxy all_proxy
+              echo "🛑 Proxy OFF"
+          }
+
+          # --- NVM ---
+          export NVM_DIR="$HOME/.nvm"
+          [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+          [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"
+
+  post_tasks:
+    - name: "完成提示"
+      debug:
+        msg:
+          - "✅ 恭喜！完美 WSL 开发环境配置完成。"
+          - "👉 请立即重启终端 (关闭再打开) 以应用 Shell 更改。"
+          - "💡 提示: 输入 'proxy_on' 可开启代理加速。"
