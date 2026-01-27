@@ -1,7 +1,7 @@
 ---
 # ===== User Management =====
 create_user: true
-username: "sunpcm"                    # 创建的普通用户名
+username: "niu"                    # 创建的普通用户名
 user_password: ""                     # 留空使用密钥认证，或设置密码（需要加密）
 user_shell: "/bin/zsh"               # 用户默认 shell
 enable_passwordless_sudo: true       # 免密 sudo
