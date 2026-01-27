@@ -3,9 +3,10 @@
 
 - name: Install fonts
   apt:
-    name: "{{ fonts_to_install }}"
+    name: "{{ item }}"
     state: present
     update_cache: yes
+  loop: "{{ fonts_to_install }}"
 
 - name: Update font cache
   command: fc-cache -fv

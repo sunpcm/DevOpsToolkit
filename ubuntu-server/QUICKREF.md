@@ -11,6 +11,9 @@ cp host.ini.example host.ini
 vim host.ini
 vim ansible/group_vars/all.yml
 
+# 3. 配置 SSH 密钥
+ssh-copy-id root@server_ip
+
 # 3. 测试连接
 ansible -i host.ini ubuntu_servers -m ping
 

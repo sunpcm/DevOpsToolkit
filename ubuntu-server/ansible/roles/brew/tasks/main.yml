@@ -12,7 +12,7 @@
   args:
     creates: /home/linuxbrew/.linuxbrew/bin/brew
   when: not brew_installed.stat.exists
-  become: no
+  become: yes
   become_user: "{{ username }}"
 
 - name: Add Homebrew to user's shell profile
