@@ -19,9 +19,9 @@
     - name: Display completion message
       debug:
         msg:
-          - "╔════════════════════════════════════════╗"
-          - "║  Ubuntu Server Configuration Complete ║"
-          - "╚════════════════════════════════════════╝"
+          - "╔═══════════════════════════════════════════════════╗"
+          - "║  BiuBiuBiu! Ubuntu Server Configuration Complete  ║"
+          - "╚═══════════════════════════════════════════════════╝"
           - ""
           - "✅ System configured successfully!"
           - ""
