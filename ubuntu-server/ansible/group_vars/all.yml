@@ -11,8 +11,7 @@ enable_ssh_security: true
 ssh_port: 22                         # SSH 端口（修改后需要在防火墙放行）
 disable_root_login: true             # 禁用 root 登录
 disable_password_auth: true          # 禁用密码认证（只允许密钥）
-ssh_authorized_keys: []              # SSH 公钥列表，例如：
-  # - "ssh-rsa AAAAB3NzaC1yc2EAAAADA... user@host"
+ssh_authorized_keys: ["ssh-rsa AAA"] # SSH 公钥列表
 
 # ===== Firewall =====
 enable_firewall: true
