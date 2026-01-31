@@ -47,7 +47,7 @@ fi
 # Run Ansible playbook
 echo "🔧 Running Ansible playbook..."
 echo
-ansible-playbook -i host.ini ansible/playbook.yml
+ansible-playbook -i host.ini ansible/playbook.yml -vvv
 
 echo
 echo "✅ Bootstrap complete!"
