@@ -1,16 +1,7 @@
+---
 # ansible/roles/security/handlers/main.yml
 
 - name: restart sshd
-  ansible.builtin.service_facts:
-
-- name: Restart ssh if present
-  ansible.builtin.service:
-    name: ssh
-    state: restarted
-  when: '"ssh" in ansible_facts.services'
-
-- name: Restart sshd if present
-  ansible.builtin.service:
+  service:
     name: sshd
     state: restarted
-  when: '"sshd" in ansible_facts.services'
