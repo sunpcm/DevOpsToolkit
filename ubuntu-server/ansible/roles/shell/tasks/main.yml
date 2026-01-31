@@ -65,7 +65,6 @@
       - "Plugins: {{ zsh_plugins | join(', ') }}"
       - "User '{{ username }}' shell changed to zsh"
       - "💡 User needs to log out and back in for shell change to take effect"
-    msg:
       - "Zsh and Oh My Zsh installed successfully"
       - "Theme: {{ zsh_theme }}"
       - "Plugins: {{ zsh_plugins | join(', ') }}"

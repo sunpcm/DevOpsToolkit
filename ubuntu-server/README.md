@@ -50,7 +50,7 @@
 # 生成 SSH 密钥（如果还没有）
 ssh-keygen -t ed25519 -C "your_email@example.com"
 
-# 将公钥复制到服务器
+# 将公钥复制到服务器 可以省略，如果ini配置中使用密码登录
 ssh-copy-id root@your_server_ip
 
 # 测试连接（应该不需要密码）
@@ -70,7 +70,11 @@ vim host.ini
 配置示例：
 ```ini
 [ubuntu_servers]
-my-server ansible_host=192.168.1.100 ansible_user=root ansible_port=22
+# 依赖 SSH 密钥认证
+my-server ansible_host=192.168.1.100 ansible_user=root ansible_port=22 ansible_become_password=your_root_password
+
+# 这样写最简单，登录和提权都用密码，就不用给 root传密钥了
+# my-server ansible_host=192.168.1.100 ansible_user=root ansible_port=22 ansible_ssh_pass=your_ansible_user_login_password ansible_become_password=your_root_password
 
 [ubuntu_servers:vars]
 ansible_python_interpreter=/usr/bin/python3
