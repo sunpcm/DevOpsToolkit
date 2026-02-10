@@ -17,7 +17,7 @@
     sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
   args:
     creates: "/home/{{ username }}/.oh-my-zsh"
-  become: yes
+  become: true
   become_user: "{{ username }}"
   when: not omz_installed.stat.exists and install_ohmyzsh
 
@@ -26,8 +26,8 @@
     repo: https://github.com/zsh-users/zsh-autosuggestions
     dest: "/home/{{ username }}/.oh-my-zsh/custom/plugins/zsh-autosuggestions"
     depth: 1
-    update: yes
-  become: yes
+    update: true
+  become: true
   become_user: "{{ username }}"
   when: install_ohmyzsh and 'zsh-autosuggestions' in zsh_plugins
 
@@ -36,8 +36,8 @@
     repo: https://github.com/zsh-users/zsh-syntax-highlighting
     dest: "/home/{{ username }}/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting"
     depth: 1
-    update: yes
-  become: yes
+    update: true
+  become: true
   become_user: "{{ username }}"
   when: install_ohmyzsh and 'zsh-syntax-highlighting' in zsh_plugins
 
@@ -48,7 +48,7 @@
     owner: "{{ username }}"
     group: "{{ username }}"
     mode: '0644'
-    backup: yes
+    backup: true
   when: install_ohmyzsh
 
 - name: Change user shell to zsh
