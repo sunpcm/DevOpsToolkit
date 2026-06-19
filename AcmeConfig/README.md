@@ -17,7 +17,7 @@
 
 ```bash
 # 下载脚本
-wget https://raw.githubusercontent.com/sunpcm/UbuntuAutoConfig/main/AcmeConfig/acme-init.sh
+wget https://raw.githubusercontent.com/sunpcm/DevOpsToolkit/main/AcmeConfig/acme-init.sh
 
 # 使用默认邮箱初始化
 sudo bash acme-init.sh
