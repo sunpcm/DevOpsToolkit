@@ -1,0 +1,86 @@
+---
+- name: Configure only the authenticated user
+  hosts: user_only
+  gather_facts: true
+  become: false
+  vars_files:
+    - ../group_vars/all.yml
+  pre_tasks:
+    - name: Resolve the authenticated account
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ ansible_user_id }}"
+
+    - name: Set the strict user-only identity
+      ansible.builtin.set_fact:
+        user_only_name: "{{ ansible_user_id }}"
+        user_only_home: "{{ getent_passwd[ansible_user_id][4] }}"
+
+    - name: Reject root, another target account, or an invalid HOME
+      ansible.builtin.assert:
+        that:
+          - ansible_user_id != 'root'
+          - target_user | default('') | length == 0 or target_user == ansible_user_id
+          - user_only_home.startswith('/')
+          - user_only_home != '/'
+          - ansible_env.HOME == user_only_home
+        fail_msg: "user-only may only configure the authenticated non-root account and its real HOME."
+
+    - name: Check required user-profile commands
+      ansible.builtin.shell: "command -v {{ item }}"
+      args:
+        executable: /bin/sh
+      loop:
+        - curl
+        - git
+        - zsh
+      register: user_only_command_checks
+      changed_when: false
+      failed_when: false
+
+    - name: Record missing dependencies
+      ansible.builtin.set_fact:
+        user_only_dependency_allowlist:
+          - curl
+          - git
+          - zsh
+        user_only_missing_commands: >-
+          {{ user_only_command_checks.results
+             | selectattr('rc', 'ne', 0)
+             | map(attribute='item')
+             | list }}
+
+    - name: Explain the optional system-package exception
+      ansible.builtin.debug:
+        msg: >-
+          user_only_allow_system_dependencies=true changes system package state
+          with sudo, but it still never changes accounts, SSH, services, firewall,
+          root HOME, or another user's HOME.
+      when:
+        - user_only_missing_commands | length > 0
+        - user_only_allow_system_dependencies | bool
+
+    - name: Install only whitelisted user-profile dependencies
+      become: true
+      ansible.builtin.apt:
+        name: "{{ user_only_dependency_allowlist }}"
+        state: present
+        update_cache: true
+      when:
+        - user_only_missing_commands | length > 0
+        - user_only_allow_system_dependencies | bool
+
+    - name: Stop strict user-only mode when dependencies are missing
+      ansible.builtin.assert:
+        that: user_only_missing_commands | length == 0 or user_only_allow_system_dependencies | bool
+        fail_msg: >-
+          Missing commands: {{ user_only_missing_commands | join(', ') }}.
+          Ask an administrator to install {{ user_only_dependency_allowlist | join(', ') }},
+          or explicitly enable user_only_allow_system_dependencies.
+
+  roles:
+    - role: user_profile
+      vars:
+        profile_use_become: false
+        profile_target_user: "{{ user_only_name }}"
+        profile_target_home: "{{ user_only_home }}"

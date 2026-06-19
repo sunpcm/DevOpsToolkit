@@ -1,0 +1,42 @@
+# Managed by DevOpsToolkit. Put personal changes in ~/.zshrc outside its managed block.
+export PATH="$HOME/.local/bin:$HOME/bin:$PATH"
+export LANG="{{ system_locale }}"
+export EDITOR="{{ git_editor }}"
+export VISUAL="{{ git_editor }}"
+
+{% if configure_homebrew_environment | bool %}
+if [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then
+  eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+fi
+{% endif %}
+
+{% if configure_shell | bool %}
+export ZSH="$HOME/.oh-my-zsh"
+ZSH_THEME="{{ zsh_theme }}"
+plugins=({{ zsh_plugins | join(' ') }})
+[ -r "$ZSH/oh-my-zsh.sh" ] && source "$ZSH/oh-my-zsh.sh"
+{% endif %}
+
+{% if configure_uv | bool %}
+export PATH="$HOME/.local/bin:$PATH"
+{% endif %}
+
+{% if configure_node | bool %}
+export NVM_DIR="$HOME/.nvm"
+[ -r "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
+{% endif %}
+
+{% if configure_go | bool %}
+export GOENV_ROOT="$HOME/.goenv"
+export PATH="$GOENV_ROOT/bin:$PATH"
+command -v goenv >/dev/null 2>&1 && eval "$(goenv init -)"
+{% endif %}
+
+command -v zoxide >/dev/null 2>&1 && eval "$(zoxide init zsh)"
+command -v starship >/dev/null 2>&1 && eval "$(starship init zsh)"
+command -v eza >/dev/null 2>&1 && alias ll='eza -lah --icons --git'
+
+alias gs='git status'
+alias glog='git log --oneline --graph --decorate'
+alias dps='docker ps'
+alias dc='docker compose'

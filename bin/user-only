@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+INVENTORY="${1:-}"
+
+if [[ -z "${INVENTORY}" ]]; then
+  echo "用法：$0 <inventory> [ansible-playbook 参数]"
+  echo "密码登录追加 --ask-pass；密钥登录追加 --private-key <path>。"
+  exit 1
+fi
+
+export ANSIBLE_CONFIG="${ROOT_DIR}/ansible/ansible.cfg"
+exec ansible-playbook -i "${INVENTORY}" \
+  "${ROOT_DIR}/ansible/playbooks/user-only.yml" "${@:2}"

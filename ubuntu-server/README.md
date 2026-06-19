@@ -1,5 +1,8 @@
 # Ubuntu Server 自动化配置工具
 
+> 此目录的入口已进入兼容维护阶段。新部署请使用仓库根目录的
+> `bin/ubuntu-bootstrap`；已有普通用户只配置自身时使用 `bin/user-only`。
+
 基于 Ansible 的 Ubuntu 服务器一键配置方案，模块化设计，开箱即用。
 
 ---

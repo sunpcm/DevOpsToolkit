@@ -4,6 +4,41 @@
 
 一键配置脚本集：WSL2 开发环境 + Ubuntu 生产服务器 + 自动化证书管理
 
+## 新版统一入口
+
+系统配置、root 配置和普通用户配置现在明确隔离：
+
+```bash
+# WSL2：root 本地执行，创建并配置目标用户
+sudo ./bin/wsl-bootstrap developer
+
+# Ubuntu：root SSH 登录，创建并配置目标用户
+cp ansible/inventories/ubuntu.ini.example ansible/inventories/ubuntu.ini
+./bin/ubuntu-bootstrap ansible/inventories/ubuntu.ini developer
+
+# 已有普通用户：只配置当前登录用户
+cp ansible/inventories/user-only.ini.example ansible/inventories/user-only.ini
+./bin/user-only ansible/inventories/user-only.ini --ask-pass
+# 密钥登录追加：--private-key ~/.ssh/id_ed25519
+
+# 只移除 DevOpsToolkit 管理的 source 区块和配置目录
+./bin/user-only-remove ansible/inventories/user-only.ini --private-key ~/.ssh/id_ed25519
+```
+
+公共变量位于 `ansible/group_vars/all.yml`。`user-only` 默认禁止提权；只有显式设置
+`user_only_allow_system_dependencies=true` 才会使用 sudo 安装白名单依赖。
+
+首次使用前安装所需 Ansible collection：
+
+```bash
+ansible-galaxy collection install -r ansible/requirements.yml
+```
+
+新账户必须配置 `target_authorized_keys` 或预先生成的 `target_password_hash`；敏感变量
+应放入 Ansible Vault，不要写入 inventory。
+
+旧入口暂时保留，但已进入弃用阶段。
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform: Linux](https://img.shields.io/badge/Platform-Linux-blue.svg)](https://www.linux.org/)
 [![Automation: Ansible](https://img.shields.io/badge/Automation-Ansible-red.svg)](https://www.ansible.com/)

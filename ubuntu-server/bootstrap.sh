@@ -1,54 +1,21 @@
 #!/usr/bin/env bash
-# Ubuntu Server Bootstrap Script
-
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+INVENTORY="${INVENTORY:-${SCRIPT_DIR}/host.ini}"
 
-echo "🚀 Ubuntu Server Configuration Bootstrap"
-echo "=========================================="
-echo
+echo "警告：ubuntu-server/bootstrap.sh 已弃用，请改用 bin/ubuntu-bootstrap。" >&2
 
-# Check if host.ini exists
-if [ ! -f "$SCRIPT_DIR/host.ini" ]; then
-  echo "❌ Error: host.ini not found"
-  echo "📝 Please create host.ini from host.ini.example:"
-  echo "   cp host.ini.example host.ini"
-  echo "   # Then edit host.ini with your server details"
+if [[ ! -f "${INVENTORY}" ]]; then
+  echo "错误：找不到 inventory：${INVENTORY}" >&2
   exit 1
 fi
 
-# Check if Ansible is installed
-if ! command -v ansible-playbook >/dev/null 2>&1; then
-  echo "❌ Ansible not found"
-  echo "📦 Installing Ansible..."
-  sudo apt update
-  sudo apt install -y ansible
+TARGET_USER="${TARGET_USER:-$(sed -nE 's/^[[:space:]]*username:[[:space:]]*["'\'']?([^"'\'' #]+).*/\1/p' "${SCRIPT_DIR}/ansible/group_vars/all.yml" | head -n 1)}"
+if [[ -z "${TARGET_USER}" ]]; then
+  echo "错误：请设置 TARGET_USER。" >&2
+  exit 1
 fi
 
-echo "✅ Prerequisites checked"
-echo
-
-# Display configuration summary
-echo "📋 Configuration Summary:"
-echo "  - Inventory: host.ini"
-echo "  - Playbook: ansible/playbook.yml"
-echo "  - Config: ansible/group_vars/all.yml"
-echo
-
-# Confirm before proceeding
-read -p "Continue with server configuration? (yes/no): " -r
-echo
-if [[ ! $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
-  echo "❌ Configuration cancelled"
-  exit 0
-fi
-
-# Run Ansible playbook
-echo "🔧 Running Ansible playbook..."
-echo
-ansible-playbook -i host.ini ansible/playbook.yml -vvv
-
-echo
-echo "✅ Bootstrap complete!"
-echo "📖 See README.md for next steps"
+exec "${ROOT_DIR}/bin/ubuntu-bootstrap" "${INVENTORY}" "${TARGET_USER}" "$@"

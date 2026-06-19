@@ -1,0 +1,48 @@
+---
+- name: Create root's managed configuration directory
+  become: true
+  ansible.builtin.file:
+    path: /root/.config/devops-toolkit
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Install the minimal root shell profile
+  become: true
+  ansible.builtin.copy:
+    dest: /root/.config/devops-toolkit/root-shell.sh
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      # Managed by DevOpsToolkit. Keep root's environment intentionally small.
+      export EDITOR="${EDITOR:-vim}"
+      alias ll='ls -lah'
+      alias ports='ss -lntup'
+      alias diskinfo='df -h'
+      alias meminfo='free -h'
+
+- name: Load the managed root profile from Bash
+  become: true
+  ansible.builtin.blockinfile:
+    path: /root/.bashrc
+    create: true
+    marker: "# {mark} DEVOPSTOOLKIT ROOT PROFILE"
+    block: |
+      [ -r /root/.config/devops-toolkit/root-shell.sh ] && . /root/.config/devops-toolkit/root-shell.sh
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Load the managed root profile from Zsh
+  become: true
+  ansible.builtin.blockinfile:
+    path: /root/.zshrc
+    create: true
+    marker: "# {mark} DEVOPSTOOLKIT ROOT PROFILE"
+    block: |
+      [ -r /root/.config/devops-toolkit/root-shell.sh ] && source /root/.config/devops-toolkit/root-shell.sh
+    owner: root
+    group: root
+    mode: "0600"

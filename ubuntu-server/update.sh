@@ -1,21 +1,6 @@
 #!/usr/bin/env bash
-# Ubuntu Server Update Script
-
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-echo "🔄 Updating Ubuntu Server Configuration..."
-echo
-
-if [ ! -f "$SCRIPT_DIR/host.ini" ]; then
-  echo "❌ Error: host.ini not found"
-  exit 1
-fi
-
-# Re-run Ansible playbook
-echo "⚙️  Re-running Ansible configuration..."
-ansible-playbook -i host.ini ansible/playbook.yml
-
-echo
-echo "✅ Update complete!"
+echo "警告：ubuntu-server/update.sh 已弃用，将转调统一 bootstrap。" >&2
+exec "${SCRIPT_DIR}/bootstrap.sh" "$@"

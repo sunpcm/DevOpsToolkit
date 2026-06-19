@@ -1,0 +1,30 @@
+---
+- name: Install system profile dependencies
+  become: true
+  ansible.builtin.apt:
+    name: "{{ system_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Generate configured locale
+  become: true
+  community.general.locale_gen:
+    name: "{{ system_locale }}"
+    state: present
+
+- name: Set system timezone
+  become: true
+  community.general.timezone:
+    name: "{{ system_timezone }}"
+
+- name: Set system locale defaults
+  become: true
+  ansible.builtin.lineinfile:
+    path: /etc/default/locale
+    regexp: '^LANG='
+    line: "LANG={{ system_locale }}"
+    create: true
+    owner: root
+    group: root
+    mode: "0644"

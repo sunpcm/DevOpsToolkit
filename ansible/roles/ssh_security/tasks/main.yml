@@ -1,0 +1,53 @@
+---
+- name: Require a target key before disabling all password authentication
+  ansible.builtin.assert:
+    that:
+      - not (disable_password_auth | bool) or target_authorized_keys | length > 0
+    fail_msg: "Refusing to disable password authentication without target_authorized_keys."
+
+- name: Ensure the OpenSSH drop-in directory is included
+  become: true
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^Include\s+/etc/ssh/sshd_config\.d/\*\.conf$'
+    line: 'Include /etc/ssh/sshd_config.d/*.conf'
+    insertbefore: BOF
+    backup: true
+  notify: Validate and restart SSH
+
+- name: Ensure the OpenSSH drop-in directory exists
+  become: true
+  ansible.builtin.file:
+    path: /etc/ssh/sshd_config.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the managed OpenSSH drop-in
+  become: true
+  ansible.builtin.template:
+    src: 99-devops-toolkit.conf.j2
+    dest: /etc/ssh/sshd_config.d/99-devops-toolkit.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Validate and restart SSH
+
+- name: Validate the complete OpenSSH configuration before handlers run
+  become: true
+  ansible.builtin.command: /usr/sbin/sshd -t
+  changed_when: false
+
+- name: Apply validated SSH changes now
+  ansible.builtin.meta: flush_handlers
+
+- name: Verify the configured SSH port is reachable from the controller
+  ansible.builtin.wait_for:
+    host: "{{ ansible_host | default(inventory_hostname) }}"
+    port: "{{ ssh_port }}"
+    timeout: 30
+    delay: 1
+  delegate_to: localhost
+  become: false
+  when: ansible_connection | default('ssh') != 'local'

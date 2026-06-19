@@ -1,0 +1,69 @@
+---
+- name: Read the actual Windows account name
+  become: "{{ profile_use_become | default(true) }}"
+  become_user: "{{ profile_target_user | default(target_user) }}"
+  ansible.builtin.command: cmd.exe /c echo %USERNAME%
+  register: windows_account
+  changed_when: false
+
+- name: Verify Docker Desktop integration when requested
+  become: true
+  become_user: "{{ target_user }}"
+  ansible.builtin.command: docker version
+  changed_when: false
+  when: enable_wsl_docker_integration | bool
+
+- name: Normalize and validate the Windows account
+  ansible.builtin.set_fact:
+    windows_user: "{{ windows_account.stdout | trim }}"
+
+- name: Refuse an invalid Windows account path
+  ansible.builtin.assert:
+    that:
+      - windows_user | length > 0
+      - "'/' not in windows_user"
+      - "'\\\\' not in windows_user"
+
+- name: Install WSL helper functions in the target HOME
+  become: true
+  become_user: "{{ target_user }}"
+  ansible.builtin.copy:
+    dest: "{{ target_account_home }}/.config/devops-toolkit/wsl.sh"
+    mode: "0600"
+    content: |
+      winopen() { explorer.exe "${1:-.}"; }
+      clip() { if [ -t 0 ]; then printf '%s' "$*" | clip.exe; else clip.exe; fi; }
+      paste() { powershell.exe -NoProfile -Command Get-Clipboard | sed 's/\r$//'; }
+      export WINUSER={{ windows_user | quote }}
+      export WINHOME="/mnt/c/Users/$WINUSER"
+
+- name: Load WSL helpers from the managed user shell file
+  become: true
+  become_user: "{{ target_user }}"
+  ansible.builtin.blockinfile:
+    path: "{{ target_account_home }}/.config/devops-toolkit/shell.zsh"
+    marker: "# {mark} DEVOPSTOOLKIT WSL INTEGRATION"
+    block: |
+      [ -r "$HOME/.config/devops-toolkit/wsl.sh" ] && source "$HOME/.config/devops-toolkit/wsl.sh"
+
+- name: Check expected Windows directories
+  ansible.builtin.stat:
+    path: "/mnt/c/Users/{{ windows_user }}/{{ item.src }}"
+  loop:
+    - { src: Downloads, dest: downloads }
+    - { src: Desktop, dest: desktop }
+    - { src: Documents, dest: documents }
+  register: windows_directories
+
+- name: Link existing Windows directories without replacing user files
+  become: true
+  become_user: "{{ target_user }}"
+  ansible.builtin.file:
+    src: "{{ item.stat.path }}"
+    dest: "{{ target_account_home }}/{{ item.item.dest }}"
+    state: link
+    force: false
+  loop: "{{ windows_directories.results }}"
+  loop_control:
+    label: "{{ item.item.dest }}"
+  when: item.stat.exists

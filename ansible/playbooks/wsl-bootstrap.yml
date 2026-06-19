@@ -1,0 +1,36 @@
+---
+- name: Bootstrap WSL2 from root
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  vars_files:
+    - ../group_vars/all.yml
+  pre_tasks:
+    - name: Require root and an explicit non-root target account
+      ansible.builtin.assert:
+        that:
+          - ansible_user_id == 'root'
+          - target_user | length > 0
+          - target_user != 'root'
+          - target_user is match('^[a-z_][a-z0-9_-]*[$]?$')
+        fail_msg: "wsl-bootstrap must run as root with -e target_user=<existing-or-new-user>."
+
+    - name: Verify WSL2
+      ansible.builtin.command: grep -qi microsoft /proc/version
+      changed_when: false
+
+  roles:
+    - role: system_base
+      vars:
+        system_context: wsl
+    - role: account_create
+    - role: linuxbrew
+      when: install_linuxbrew | bool
+    - role: root_profile
+    - role: user_profile
+      vars:
+        profile_use_become: true
+        profile_target_user: "{{ target_user }}"
+        profile_target_home: "{{ target_account_home }}"
+    - role: wsl_integration
+      when: configure_wsl_integration | bool

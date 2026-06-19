@@ -1,0 +1,198 @@
+---
+- name: Validate user-profile identity and path
+  ansible.builtin.assert:
+    that:
+      - profile_target_user | length > 0
+      - profile_target_user != 'root'
+      - profile_target_home.startswith('/')
+      - profile_target_home != '/'
+      - profile_target_home != '/root'
+    fail_msg: "Unsafe user profile target: {{ profile_target_user }} {{ profile_target_home }}"
+
+- name: Read the canonical profile account
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ profile_target_user }}"
+
+- name: Ensure supplied HOME matches the account database
+  ansible.builtin.assert:
+    that:
+      - getent_passwd[profile_target_user][4] == profile_target_home
+    fail_msg: "Profile HOME does not match passwd database; refusing to write."
+
+- name: Create managed user configuration directory
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.file:
+    path: "{{ profile_target_home }}/.config/devops-toolkit"
+    state: directory
+    mode: "0700"
+
+- name: Install managed shell configuration
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.template:
+    src: shell.zsh.j2
+    dest: "{{ profile_target_home }}/.config/devops-toolkit/shell.zsh"
+    mode: "0600"
+  when: configure_shell | bool
+
+- name: Ensure the target Zsh configuration exists
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.file:
+    path: "{{ profile_target_home }}/.zshrc"
+    state: touch
+    mode: "0644"
+    modification_time: preserve
+    access_time: preserve
+  when: configure_shell | bool
+
+- name: Load the managed shell file without replacing user content
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.blockinfile:
+    path: "{{ profile_target_home }}/.zshrc"
+    marker: "# {mark} DEVOPSTOOLKIT USER PROFILE"
+    block: |
+      [ -r "$HOME/.config/devops-toolkit/shell.zsh" ] && source "$HOME/.config/devops-toolkit/shell.zsh"
+    backup: true
+  when: configure_shell | bool
+
+- name: Install Oh My Zsh without executing a remote installer
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.git:
+    repo: https://github.com/ohmyzsh/ohmyzsh.git
+    dest: "{{ profile_target_home }}/.oh-my-zsh"
+    version: "{{ ohmyzsh_version }}"
+    depth: 1
+    update: true
+  when: configure_shell | bool
+
+- name: Install managed Zsh plugins
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.git:
+    repo: "{{ item.repo }}"
+    dest: "{{ profile_target_home }}/.oh-my-zsh/custom/plugins/{{ item.name }}"
+    depth: 1
+    update: true
+  loop:
+    - { name: zsh-autosuggestions, repo: "https://github.com/zsh-users/zsh-autosuggestions" }
+    - { name: zsh-syntax-highlighting, repo: "https://github.com/zsh-users/zsh-syntax-highlighting" }
+  when:
+    - configure_shell | bool
+    - item.name in zsh_plugins
+
+- name: Configure Git values owned by DevOpsToolkit
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  community.general.git_config:
+    scope: global
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+  environment:
+    HOME: "{{ profile_target_home }}"
+  loop:
+    - { name: user.name, value: "{{ git_user_name }}" }
+    - { name: user.email, value: "{{ git_user_email }}" }
+    - { name: core.editor, value: "{{ git_editor }}" }
+    - { name: init.defaultBranch, value: "{{ git_default_branch }}" }
+    - { name: pull.rebase, value: "{{ git_pull_rebase }}" }
+  when:
+    - configure_git | bool
+    - item.value | string | length > 0
+
+- name: Check uv
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.stat:
+    path: "{{ profile_target_home }}/.local/bin/uv"
+  register: user_uv
+  when: configure_uv | bool
+
+- name: Install uv in the target HOME
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.shell: "curl -LsSf {{ uv_install_url | quote }} | sh"
+  args:
+    executable: /bin/sh
+  environment:
+    HOME: "{{ profile_target_home }}"
+  when:
+    - configure_uv | bool
+    - not user_uv.stat.exists
+
+- name: Install the pinned NVM source
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.git:
+    repo: https://github.com/nvm-sh/nvm.git
+    dest: "{{ profile_target_home }}/.nvm"
+    version: "{{ nvm_version }}"
+    update: false
+  when: configure_node | bool
+
+- name: Check the configured Node version
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.stat:
+    path: "{{ profile_target_home }}/.nvm/versions/node/v{{ node_version }}/bin/node"
+  register: user_node
+  when: configure_node | bool
+
+- name: Install the configured Node version
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.shell: |
+    export NVM_DIR={{ profile_target_home | quote }}'/.nvm'
+    . "$NVM_DIR/nvm.sh"
+    nvm install {{ node_version | quote }}
+    nvm alias default {{ node_version | quote }}
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "{{ profile_target_home }}"
+  when:
+    - configure_node | bool
+    - not user_node.stat.exists
+
+- name: Check the configured Go version
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.stat:
+    path: "{{ profile_target_home }}/.goenv/versions/{{ go_version }}/bin/go"
+  register: user_go
+  when: configure_go | bool
+
+- name: Check whether the system-managed goenv is available
+  ansible.builtin.stat:
+    path: /home/linuxbrew/.linuxbrew/bin/goenv
+  register: shared_goenv
+  when: configure_go | bool
+
+- name: Install Go through shared goenv when available
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.shell: |
+    export GOENV_ROOT={{ profile_target_home | quote }}'/.goenv'
+    export PATH="/home/linuxbrew/.linuxbrew/bin:$GOENV_ROOT/bin:$PATH"
+    goenv install -s {{ go_version | quote }}
+    goenv global {{ go_version | quote }}
+  args:
+    executable: /bin/bash
+  environment:
+    HOME: "{{ profile_target_home }}"
+  when:
+    - configure_go | bool
+    - not user_go.stat.exists
+    - shared_goenv.stat.exists
+
+- name: Report unavailable Go installation without changing system state
+  ansible.builtin.debug:
+    msg: "Go skipped: system-managed goenv is not installed."
+  when:
+    - configure_go | bool
+    - not user_go.stat.exists
+    - not shared_goenv.stat.exists

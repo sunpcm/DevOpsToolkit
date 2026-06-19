@@ -1,0 +1,8 @@
+[user_only]
+# Password: ansible-playbook ... --ask-pass
+# user1 ansible_host=192.0.2.10 ansible_user=alice ansible_port=22
+# Key: ansible-playbook ... --private-key ~/.ssh/id_ed25519
+# user1 ansible_host=192.0.2.10 ansible_user=alice ansible_port=22
+
+[user_only:vars]
+ansible_python_interpreter=/usr/bin/python3

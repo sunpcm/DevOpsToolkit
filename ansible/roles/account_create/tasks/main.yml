@@ -1,0 +1,76 @@
+---
+- name: Check whether the target account already exists
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ target_user }}"
+    fail_key: false
+
+- name: Record whether the target account existed before this run
+  ansible.builtin.set_fact:
+    target_account_preexisting: >-
+      {{ target_user in (getent_passwd | default({})) and
+         getent_passwd[target_user] is not none }}
+
+- name: Require a login method for a new target account
+  ansible.builtin.assert:
+    that:
+      - target_account_preexisting or target_password_hash | length > 0 or target_authorized_keys | length > 0
+    fail_msg: >-
+      A new account requires target_password_hash or target_authorized_keys.
+      Store password hashes and keys in an encrypted vars file when appropriate.
+
+- name: Create the target primary group
+  become: true
+  ansible.builtin.group:
+    name: "{{ target_user }}"
+    state: present
+
+- name: Create or update the target account
+  become: true
+  ansible.builtin.user:
+    name: "{{ target_user }}"
+    group: "{{ target_user }}"
+    groups: sudo
+    append: true
+    create_home: true
+    shell: /bin/zsh
+    password: "{{ target_password_hash if target_password_hash | length > 0 else omit }}"
+    update_password: on_create
+    state: present
+
+- name: Resolve the target account from the system database
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ target_user }}"
+
+- name: Record the canonical target HOME
+  ansible.builtin.set_fact:
+    target_account_home: "{{ getent_passwd[target_user][4] }}"
+
+- name: Validate the canonical target HOME
+  ansible.builtin.assert:
+    that:
+      - target_account_home.startswith('/')
+      - target_account_home != '/'
+      - target_account_home != '/root'
+    fail_msg: "Refusing unsafe HOME for {{ target_user }}: {{ target_account_home }}"
+
+- name: Add explicitly supplied SSH keys
+  become: true
+  ansible.posix.authorized_key:
+    user: "{{ target_user }}"
+    key: "{{ item }}"
+    state: present
+  loop: "{{ target_authorized_keys }}"
+  no_log: true
+
+- name: Configure optional passwordless sudo for the target account
+  become: true
+  ansible.builtin.copy:
+    dest: "/etc/sudoers.d/{{ target_user }}"
+    content: "{{ target_user }} ALL=(ALL) NOPASSWD:ALL\n"
+    owner: root
+    group: root
+    mode: "0440"
+    validate: "visudo -cf %s"
+  when: target_passwordless_sudo | bool

@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TARGET_USER="${TARGET_USER:-${1:-}}"
+
+if [[ "${EUID}" -ne 0 ]]; then
+  echo "错误：wsl-bootstrap 必须由 root 执行。"
+  echo "示例：sudo TARGET_USER=${USER} $0"
+  exit 1
+fi
+if [[ -z "${TARGET_USER}" || "${TARGET_USER}" == "root" ]]; then
+  echo "错误：请通过 TARGET_USER 或第一个参数指定非 root 目标用户。"
+  exit 1
+fi
+if [[ ! "${TARGET_USER}" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]]; then
+  echo "错误：目标用户名格式不合法：${TARGET_USER}" >&2
+  exit 1
+fi
+
+export ANSIBLE_CONFIG="${ROOT_DIR}/ansible/ansible.cfg"
+exec ansible-playbook "${ROOT_DIR}/ansible/playbooks/wsl-bootstrap.yml" \
+  -e "target_user=${TARGET_USER}" "${@:2}"

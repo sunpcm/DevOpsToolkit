@@ -1,0 +1,43 @@
+---
+- name: Remove only DevOpsToolkit-managed user profile files
+  hosts: user_only
+  gather_facts: true
+  become: false
+  vars_files:
+    - ../group_vars/all.yml
+  pre_tasks:
+    - name: Resolve the authenticated account
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ ansible_user_id }}"
+
+    - name: Record and validate the authenticated identity
+      ansible.builtin.set_fact:
+        user_only_name: "{{ ansible_user_id }}"
+        user_only_home: "{{ getent_passwd[ansible_user_id][4] }}"
+
+    - name: Refuse removal outside the authenticated non-root HOME
+      ansible.builtin.assert:
+        that:
+          - ansible_user_id != 'root'
+          - user_only_home == ansible_env.HOME
+          - user_only_home.startswith('/')
+          - user_only_home != '/'
+
+  tasks:
+    - name: Check whether the user's Zsh configuration exists
+      ansible.builtin.stat:
+        path: "{{ user_only_home }}/.zshrc"
+      register: user_only_zshrc
+
+    - name: Remove the source hook but preserve all other Zsh content
+      ansible.builtin.blockinfile:
+        path: "{{ user_only_home }}/.zshrc"
+        marker: "# {mark} DEVOPSTOOLKIT USER PROFILE"
+        state: absent
+      when: user_only_zshrc.stat.exists
+
+    - name: Remove only the managed configuration directory
+      ansible.builtin.file:
+        path: "{{ user_only_home }}/.config/devops-toolkit"
+        state: absent

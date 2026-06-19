@@ -29,8 +29,8 @@
     user: "{{ username }}"
     key: "{{ item }}"
     state: present
-  loop: "{{ ssh_authorized_keys }}"
-  when: ssh_authorized_keys | length > 0
+  loop: "{{ ssh_authorized_keys | default([]) }}"
+  when: ssh_authorized_keys is defined and ssh_authorized_keys | length > 0
 
 - name: Configure passwordless sudo
   lineinfile:

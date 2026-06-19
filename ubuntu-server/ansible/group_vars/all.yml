@@ -9,9 +9,9 @@ enable_passwordless_sudo: true       # 免密 sudo
 # ===== SSH Security =====
 enable_ssh_security: true
 ssh_port: 22                         # SSH 端口（修改后需要在防火墙放行）
-disable_root_login: true             # 禁用 root 登录
+disable_root_login: false             # 禁用 root 登录
 disable_password_auth: false          # 禁用密码认证（只允许密钥）
-ssh_authorized_keys: # ["ssh-rsa "] # SSH 公钥列表
+ssh_authorized_keys: ["ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQCjIt/gXy72n6yDFtHYzAqSWIzs+iedm769w8WKHZw4Ij74FrPGN8ziCH94PVLpy1HWtjs+R4u88xtZSkuFaKMZTBb8D5XMSryLG610TcOksrszw5L5ZGIsfXVfHPemLtf7SKwJebluCsUgHFLQc0bCoOeQD2aCUwur23yp9B5oKTLqYWW/yvFloQnmsMKB9Lw3v1gdCBeOQMucyme/zvso3Or54RHm8GIZR6MzKtt/cFxvrzLlmV60EDNrDXpIwsDJtAEbAmw8GK5owJh2KJ85ciF0ALJZ7grI5oUE31aRvntu5ArgFbZdMRvjX6M5c8Zd0CBsKgFqS9s3MZ5RsgR05dqWaLHN0EF707tgsAaNhbulMibZOzK8man9ZxEOPRvF0WJs60jYXV1LoTknYe+k6HwCybYRJC/iG9xv28aUPmjaXD36zbmlRGeJljWIVN3sK8v8CtVbe4AtzXlI8lHL0tRzltNwAqiqhuLZTeWg+YkQsNKZUVtxyIc8LwpMl4PmX20gsjJG4zcpA1ad91/m7+rPX1HsyUCdW2zDJKfKOZOEtpnfa34wth6kQz8SVOzCkG7+XtNGiauG+HB9vkkLxxXDW7wdDSA2FKocyu5v08ZB6HKEaXSUfyKdyuryHZf0dlttXe9z1ced9pa7fhiuRFgvg2SiJaCqf0xkLbNPvQ== sunpcm@yonglis-MacBook-Pro.local"]              # ["ssh-rsa "] # SSH 公钥列表
 
 # ===== Firewall =====
 enable_firewall: true
@@ -29,6 +29,7 @@ allowed_ports:
 # ===== Base Packages =====
 install_base_packages: true
 base_packages:
+  - locales
   - curl
   - wget
   - git

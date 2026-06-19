@@ -1,5 +1,8 @@
 # WSL Dev Bootstrap
 
+> `wsl-dev/bootstrap.sh` 已进入兼容维护阶段。新部署请在仓库根目录运行
+> `sudo ./bin/wsl-bootstrap <target_user>`。
+
 > One‑command setup for a clean, consistent WSL2 development environment.
 
 这是一个 **独立的一键初始化脚本**，用于在 **WSL2 + Ubuntu** 中快速配置统一、可重复的开发环境。

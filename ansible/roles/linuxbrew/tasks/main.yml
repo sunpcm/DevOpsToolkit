@@ -1,0 +1,64 @@
+---
+- name: Create the dedicated Linuxbrew account
+  become: true
+  ansible.builtin.user:
+    name: linuxbrew
+    home: /home/linuxbrew
+    create_home: true
+    shell: /usr/sbin/nologin
+    system: true
+
+- name: Create the Linuxbrew prefix
+  become: true
+  ansible.builtin.file:
+    path: /home/linuxbrew/.linuxbrew
+    state: directory
+    owner: linuxbrew
+    group: linuxbrew
+    mode: "0755"
+
+- name: Create the Linuxbrew binary directory
+  become: true
+  ansible.builtin.file:
+    path: /home/linuxbrew/.linuxbrew/bin
+    state: directory
+    owner: linuxbrew
+    group: linuxbrew
+    mode: "0755"
+
+- name: Install Homebrew into the system-managed prefix
+  become: true
+  become_user: linuxbrew
+  ansible.builtin.git:
+    repo: https://github.com/Homebrew/brew.git
+    dest: /home/linuxbrew/.linuxbrew/Homebrew
+    version: master
+    depth: 1
+    update: true
+
+- name: Expose the brew executable
+  become: true
+  ansible.builtin.file:
+    src: ../Homebrew/bin/brew
+    dest: /home/linuxbrew/.linuxbrew/bin/brew
+    state: link
+    owner: linuxbrew
+    group: linuxbrew
+
+- name: Check shared Homebrew packages
+  become: true
+  become_user: linuxbrew
+  ansible.builtin.command: "/home/linuxbrew/.linuxbrew/bin/brew list --versions {{ item }}"
+  loop: "{{ linuxbrew_packages }}"
+  register: linuxbrew_package_checks
+  changed_when: false
+  failed_when: false
+
+- name: Install missing shared Homebrew packages
+  become: true
+  become_user: linuxbrew
+  ansible.builtin.command: "/home/linuxbrew/.linuxbrew/bin/brew install {{ item.item }}"
+  loop: "{{ linuxbrew_package_checks.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.rc != 0

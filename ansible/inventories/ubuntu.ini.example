@@ -1,0 +1,5 @@
+[ubuntu_servers]
+# server1 ansible_host=192.0.2.10 ansible_user=root ansible_port=22
+
+[ubuntu_servers:vars]
+ansible_python_interpreter=/usr/bin/python3

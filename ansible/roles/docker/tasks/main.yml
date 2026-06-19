@@ -1,0 +1,52 @@
+---
+- name: Map the host architecture for Docker packages
+  ansible.builtin.set_fact:
+    docker_deb_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_architecture] | default(ansible_architecture) }}"
+
+- name: Install Docker repository prerequisites
+  become: true
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - python3-debian
+    state: present
+    update_cache: true
+
+- name: Configure the Docker deb822 repository
+  become: true
+  ansible.builtin.deb822_repository:
+    name: docker
+    types: [deb]
+    uris: https://download.docker.com/linux/ubuntu
+    suites: ["{{ ansible_distribution_release }}"]
+    components: [stable]
+    architectures: ["{{ docker_deb_arch }}"]
+    signed_by: https://download.docker.com/linux/ubuntu/gpg
+    state: present
+  register: docker_repository
+
+- name: Install Docker Engine and Compose
+  become: true
+  ansible.builtin.apt:
+    name:
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-ce
+      - docker-ce-cli
+      - docker-compose-plugin
+    state: present
+    update_cache: "{{ docker_repository.changed }}"
+
+- name: Enable Docker
+  become: true
+  ansible.builtin.service:
+    name: docker
+    state: started
+    enabled: true
+
+- name: Grant the target account Docker access
+  become: true
+  ansible.builtin.user:
+    name: "{{ target_user }}"
+    groups: docker
+    append: true

@@ -1,0 +1,13 @@
+# Managed by DevOpsToolkit
+Port {{ ssh_port }}
+PubkeyAuthentication yes
+PermitEmptyPasswords no
+ClientAliveInterval 300
+ClientAliveCountMax 2
+{% if disable_root_login | bool %}
+PermitRootLogin no
+{% endif %}
+{% if disable_password_auth | bool %}
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+{% endif %}
