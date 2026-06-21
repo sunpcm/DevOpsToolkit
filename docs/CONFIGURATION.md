@@ -63,6 +63,8 @@ goenv_version: "3.1.4"
 go_version: "1.22.1"
 ```
 
+交互式向导启用 Node.js 或 Go 时会询问精确版本，并通过 extra vars 覆盖本次执行；手工 Playbook 和 CI 仍以这里的公共变量为准。系统 Python 不由工具切换，项目 Python 应使用 uv 管理。
+
 Oh My Zsh、插件和 Linuxbrew 固定到不可变 Git commit。升级时应修改对应 revision，先在测试机运行两次幂等验证，再推广到正式机器。不要把 revision 改回 `main`、`master` 或开启自动更新，否则不同时间部署的机器可能得到不同结果。
 
 ### 系统组件

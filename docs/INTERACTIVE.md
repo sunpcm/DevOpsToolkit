@@ -14,12 +14,14 @@ devops-toolkit
 
 它不会替代 Ansible Playbook，而是收集输入后调用现有的 WSL2、Ubuntu 或 user-only Playbook。因此权限边界、幂等逻辑和手工入口保持一致。
 
+组件选择采用批量切换界面：输入一个或多个编号（例如 `2,4,6`）切换选中状态，输入 `a` 全选、`n` 全不选，按回车确认。该方式不依赖额外的 TUI 库，在 SSH、WSL 和精简服务器终端中都能稳定工作。
+
 ## 支持的选择
 
 ### WSL2
 
 - 创建或更新普通用户。
-- 配置目标用户密码哈希和 SSH 公钥。
+- 明确选择“密码”“SSH 公钥”“两者”或“不修改已有凭据”；密码只在随后出现的隐藏输入框中输入。
 - 选择 Shell、Git、uv、Node.js、Go、Linuxbrew 和 WSL 集成。
 - 可检查 Docker Desktop WSL Integration。
 
@@ -70,6 +72,31 @@ ansible-galaxy collection install -r ansible/requirements.yml
 - 默认不使用 sudo。
 - 可显式允许 sudo 安装白名单基础依赖。
 
+## 版本选择
+
+启用 Node.js 或 Go 后，向导会显示项目当前固定版本，可直接回车采用，也可输入其他精确版本。选择结果会传给本次 Ansible 执行，并在成功后作为下次默认值。
+
+Python 是 Ansible 和系统模块的基础依赖，向导不替换系统 Python，也不提供 Python 版本切换。项目级 Python 版本应在部署完成后使用 `uv` 和项目的 `.python-version` / `pyproject.toml` 管理，避免破坏 Ubuntu 的系统工具。
+
+## 记住上次选择
+
+Ansible 成功完成后，向导将非敏感选择保存到：
+
+```text
+~/.config/devops-toolkit/wizard-state.json
+```
+
+文件权限为 `0600`，目录权限为 `0700`。使用 `sudo` 启动时，状态属于原始操作用户，而不是错误地写入 `/root`。下次运行会恢复上次模式、目标用户名、组件开关、Git 身份以及 Node.js/Go 版本。
+
+以下内容永不保存：密码或密码哈希、SSH 公钥和私钥、SSH/sudo 密码、目标主机与认证参数、防火墙端口、关闭密码认证的确认，以及 user-only 的 sudo 例外。高风险选择必须每次重新确认。
+
+需要清空默认选择时，先保留备份再重新运行向导：
+
+```bash
+state="$HOME/.config/devops-toolkit/wizard-state.json"
+test -f "$state" && mv "$state" "$state.bak.$(date +%Y%m%d%H%M%S)"
+```
+
 ## 敏感信息处理
 
 - SSH 私钥只输入文件路径，向导不会读取或复制私钥内容。
@@ -90,7 +117,7 @@ ssh root@SERVER
 
 ## 交互式与配置文件的取舍
 
-交互式向导不保存选择，每次运行都需要重新确认，适合少量机器和人工操作。
+交互式向导只保存便于重复执行的非敏感默认值，适合少量机器和人工操作；它不是 inventory、Vault 或声明式配置的替代品。
 
 以下场景继续使用 inventory、Vault 和原始入口：
 

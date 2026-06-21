@@ -73,10 +73,11 @@ ansible-galaxy collection install -r ansible/requirements.yml
 
 - WSL2、Ubuntu 或 user-only 模式。
 - 密码或私钥认证。
-- 目标用户、公钥和本地 sudo 密码。
-- Shell、Git、uv、Node.js、Go、Linuxbrew、Docker、Nginx、UFW 等组件。
+- 目标用户，以及密码、公钥、两者或保留已有凭据。
+- 批量选择 Shell、Git、uv、Node.js、Go、Linuxbrew、Docker、Nginx、UFW 等组件。
+- Node.js 和 Go 的精确版本。
 
-无需编辑 inventory 或变量文件。密码只用于内存中生成 SHA-512 哈希；inventory 和变量写入权限为 `0600` 的临时目录，执行结束自动删除。
+无需编辑 inventory 或变量文件。密码只用于内存中生成 SHA-512 哈希；inventory 和变量写入权限为 `0600` 的临时目录，执行结束自动删除。成功执行后只记住组件、Git 身份和工具版本等非敏感选择，高风险选项仍会逐次确认。
 
 WSL2 模式需要：
 

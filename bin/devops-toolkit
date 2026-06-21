@@ -16,14 +16,37 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 ANSIBLE_DIR = ROOT_DIR / "ansible"
 USERNAME_RE = re.compile(r"^[a-z_][a-z0-9_-]*[$]?$")
 HOST_RE = re.compile(r"^[A-Za-z0-9_.:-]+$")
+VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$")
+STATE_SCHEMA = 1
+PERSISTED_VARIABLES = {
+    "target_user",
+    "configure_shell",
+    "configure_git",
+    "configure_uv",
+    "configure_node",
+    "configure_go",
+    "configure_homebrew_environment",
+    "git_user_name",
+    "git_user_email",
+    "node_version",
+    "go_version",
+    "install_linuxbrew",
+    "install_docker",
+    "install_nginx",
+    "enable_firewall",
+    "configure_ssh",
+    "configure_wsl_integration",
+    "enable_wsl_docker_integration",
+}
 PUBLIC_KEY_PREFIXES = (
     "ssh-ed25519 ",
     "ssh-rsa ",
@@ -56,6 +79,36 @@ def operator_home() -> Path:
     return Path.home()
 
 
+def operator_account() -> pwd.struct_passwd:
+    sudo_user = os.environ.get("SUDO_USER")
+    if sudo_user and sudo_user != "root":
+        try:
+            return pwd.getpwnam(sudo_user)
+        except KeyError:
+            pass
+    return pwd.getpwuid(os.geteuid())
+
+
+@contextmanager
+def operator_privileges() -> Iterator[None]:
+    account = operator_account()
+    original_euid = os.geteuid()
+    original_egid = os.getegid()
+    original_groups = os.getgroups()
+    should_drop = original_euid == 0 and account.pw_uid != 0
+    if should_drop:
+        os.setgroups([account.pw_gid])
+        os.setegid(account.pw_gid)
+        os.seteuid(account.pw_uid)
+    try:
+        yield
+    finally:
+        if should_drop:
+            os.seteuid(original_euid)
+            os.setegid(original_egid)
+            os.setgroups(original_groups)
+
+
 def prompt(
     label: str,
     default: str | None = None,
@@ -67,7 +120,7 @@ def prompt(
         value = input(f"{label}{suffix}: ").strip()
         if not value and default is not None:
             value = default
-        if value and (validator is None or validator(value)):
+        if (value or default is not None) and (validator is None or validator(value)):
             return value
         print(error)
 
@@ -85,15 +138,51 @@ def confirm(label: str, default: bool = True) -> bool:
         print("请输入 y 或 n。")
 
 
-def choose(label: str, options: list[tuple[str, str]]) -> str:
+def choose(label: str, options: list[tuple[str, str]], default: str | None = None) -> str:
     print(f"\n{label}")
-    for index, (_, description) in enumerate(options, start=1):
-        print(f"  {index}. {description}")
+    for index, (key, description) in enumerate(options, start=1):
+        marker = " *" if key == default else ""
+        print(f"  {index}. {description}{marker}")
     while True:
-        value = input("请选择编号: ").strip()
+        suffix = "（回车使用 * 默认项）" if default is not None else ""
+        value = input(f"请选择编号{suffix}: ").strip()
+        if not value and default is not None:
+            return default
         if value.isdigit() and 1 <= int(value) <= len(options):
             return options[int(value) - 1][0]
         print("编号无效，请重试。")
+
+
+def multi_select(
+    label: str,
+    options: list[tuple[str, str, bool]],
+    defaults: dict[str, Any] | None = None,
+) -> dict[str, bool]:
+    selected = {
+        key: bool((defaults or {}).get(key, default))
+        for key, _, default in options
+    }
+    while True:
+        print(f"\n{label}")
+        for index, (key, description, _) in enumerate(options, start=1):
+            marker = "x" if selected[key] else " "
+            print(f"  [{marker}] {index}. {description}")
+        value = input("输入编号切换（可用逗号分隔），a 全选，n 全不选，回车确认: ").strip().lower()
+        if not value:
+            return selected
+        if value == "a":
+            selected = {key: True for key, _, _ in options}
+            continue
+        if value == "n":
+            selected = {key: False for key, _, _ in options}
+            continue
+        parts = [part.strip() for part in value.split(",")]
+        if not parts or any(not part.isdigit() or not 1 <= int(part) <= len(options) for part in parts):
+            print("编号无效，请重试。")
+            continue
+        for index in {int(part) for part in parts}:
+            key = options[index - 1][0]
+            selected[key] = not selected[key]
 
 
 def validate_port(value: str) -> bool:
@@ -130,7 +219,7 @@ def read_public_keys(value: str) -> list[str]:
     return keys
 
 
-def collect_public_keys(default_public_key: str = "") -> list[str]:
+def collect_public_keys(default_public_key: str = "", required: bool = False) -> list[str]:
     if default_public_key:
         hint = f" [{default_public_key}]（回车使用默认，输入 - 跳过）"
     else:
@@ -138,6 +227,9 @@ def collect_public_keys(default_public_key: str = "") -> list[str]:
     while True:
         value = input(f"目标用户 SSH 公钥文件或完整公钥{hint}: ").strip()
         if value == "-" or (not value and not default_public_key):
+            if required:
+                print("当前凭据模式要求提供 SSH 公钥。")
+                continue
             return []
         if not value:
             value = default_public_key
@@ -211,27 +303,74 @@ def collect_connection(group: str, default_user: str) -> tuple[str, dict[str, st
     return inventory, {"host": host, "port": port, "user": user, "auth": auth, "private_key": private_key}, args
 
 
-def collect_user_modules() -> dict[str, Any]:
-    values: dict[str, Any] = {}
-    print("\n选择用户环境组件：")
-    values["configure_shell"] = confirm("安装并管理 Zsh / Oh My Zsh", True)
-    values["configure_git"] = confirm("管理 Git 用户配置", True)
-    values["configure_uv"] = confirm("安装 uv", True)
-    values["configure_node"] = confirm("安装 NVM / Node.js", True)
-    values["configure_go"] = confirm("安装 goenv / Go", True)
-    values["configure_homebrew_environment"] = confirm("加载已有共享 Linuxbrew 环境", True)
+def project_default_version(key: str) -> str:
+    variables_file = ANSIBLE_DIR / "group_vars" / "all.yml"
+    pattern = re.compile(rf"^{re.escape(key)}:\s*[\"']?([^\"'\s]+)")
+    for line in variables_file.read_text(encoding="utf-8").splitlines():
+        match = pattern.match(line)
+        if match:
+            return match.group(1)
+    raise WizardError(f"公共变量缺少 {key}。")
+
+
+def prompt_version(label: str, default: str) -> str:
+    return prompt(
+        f"{label} 精确版本",
+        default,
+        lambda value: bool(VERSION_RE.fullmatch(value)),
+        "请输入精确版本，例如 24.11.1。",
+    )
+
+
+def collect_user_modules(defaults: dict[str, Any] | None = None) -> dict[str, Any]:
+    defaults = defaults or {}
+    values: dict[str, Any] = multi_select(
+        "选择用户环境组件：",
+        [
+            ("configure_shell", "安装并管理 Zsh / Oh My Zsh", True),
+            ("configure_git", "管理 Git 用户配置", True),
+            ("configure_uv", "安装 uv", True),
+            ("configure_node", "安装 NVM / Node.js", True),
+            ("configure_go", "安装 goenv / Go", True),
+            ("configure_homebrew_environment", "加载已有共享 Linuxbrew 环境", True),
+        ],
+        defaults,
+    )
     if values["configure_git"]:
-        values["git_user_name"] = input("Git 用户名（留空则不修改）: ").strip()
-        values["git_user_email"] = input("Git 邮箱（留空则不修改）: ").strip()
+        values["git_user_name"] = prompt("Git 用户名（留空则不修改）", defaults.get("git_user_name", ""))
+        values["git_user_email"] = prompt("Git 邮箱（留空则不修改）", defaults.get("git_user_email", ""))
+    if values["configure_node"]:
+        values["node_version"] = prompt_version(
+            "Node.js",
+            str(defaults.get("node_version") or project_default_version("node_version")),
+        )
+    if values["configure_go"]:
+        values["go_version"] = prompt_version(
+            "Go",
+            str(defaults.get("go_version") or project_default_version("go_version")),
+        )
     return values
 
 
-def collect_target_credentials(default_public_key: str = "") -> dict[str, Any]:
-    keys = collect_public_keys(default_public_key)
+def collect_target_credentials(default_public_key: str = "", account_exists: bool = False) -> dict[str, Any]:
+    default_mode = "existing" if account_exists else ("both" if default_public_key else "password")
+    mode = choose(
+        "选择目标用户登录凭据（这里只选择方式，不输入密码）",
+        [
+            ("password", "设置本地密码（随后隐藏输入）"),
+            ("key", "只配置 SSH 公钥"),
+            ("both", "同时配置本地密码和 SSH 公钥"),
+            ("existing", "用户已存在，不修改登录凭据"),
+        ],
+        default_mode,
+    )
+    keys: list[str] = []
     password_hash = ""
-    if confirm("为新用户设置本地密码（推荐用于 sudo；已有用户不会重置）", True):
+    if mode in {"key", "both"}:
+        keys = collect_public_keys(default_public_key, required=True)
+    if mode in {"password", "both"}:
         password_hash = collect_local_password()
-    if not keys and not password_hash:
+    if mode == "existing" and not account_exists:
         if not confirm("未提供任何登录凭据；仅当目标用户已经存在时才能继续。确认继续", False):
             raise WizardError("已取消：新用户至少需要密码或 SSH 公钥。")
     return {
@@ -255,25 +394,44 @@ def parse_extra_ports(value: str) -> list[dict[str, str]]:
     return result
 
 
-def collect_wsl() -> tuple[Path, str | None, dict[str, Any], list[str], dict[str, str]]:
+def local_account_exists(username: str) -> bool:
+    try:
+        pwd.getpwnam(username)
+    except KeyError:
+        return False
+    return True
+
+
+def collect_wsl(defaults: dict[str, Any] | None = None) -> tuple[Path, str | None, dict[str, Any], list[str], dict[str, str]]:
+    defaults = defaults or {}
     if os.geteuid() != 0:
         raise WizardError("WSL 模式必须以 root 运行：sudo ./bin/devops-toolkit")
     target_user = prompt(
         "目标普通用户",
+        str(defaults.get("target_user")) if defaults.get("target_user") else None,
         validator=lambda value: value != "root" and bool(USERNAME_RE.fullmatch(value)),
         error="请输入合法的非 root Linux 用户名。",
     )
     variables = {"target_user": target_user}
-    variables.update(collect_target_credentials())
-    variables.update(collect_user_modules())
-    variables["install_linuxbrew"] = confirm("安装共享 Linuxbrew 和工具列表", True)
-    variables["configure_wsl_integration"] = confirm("配置 Windows 目录和剪贴板集成", True)
-    variables["enable_wsl_docker_integration"] = confirm("检查 Docker Desktop WSL 集成", True)
+    variables.update(collect_target_credentials(account_exists=local_account_exists(target_user)))
+    variables.update(collect_user_modules(defaults))
+    variables.update(
+        multi_select(
+            "选择 WSL 系统组件：",
+            [
+                ("install_linuxbrew", "安装共享 Linuxbrew 和工具列表", True),
+                ("configure_wsl_integration", "配置 Windows 目录和剪贴板集成", True),
+                ("enable_wsl_docker_integration", "检查 Docker Desktop WSL 集成", True),
+            ],
+            defaults,
+        )
+    )
     summary = {"模式": "WSL2 bootstrap", "目标用户": target_user, "连接": "本机 root"}
     return ANSIBLE_DIR / "playbooks" / "wsl-bootstrap.yml", None, variables, [], summary
 
 
-def collect_ubuntu() -> tuple[Path, str, dict[str, Any], list[str], dict[str, str]]:
+def collect_ubuntu(defaults: dict[str, Any] | None = None) -> tuple[Path, str, dict[str, Any], list[str], dict[str, str]]:
+    defaults = defaults or {}
     location = choose(
         "Ubuntu 执行位置",
         [
@@ -302,6 +460,7 @@ def collect_ubuntu() -> tuple[Path, str, dict[str, Any], list[str], dict[str, st
             raise WizardError("当前 ubuntu-bootstrap 只支持 root SSH 登录。")
     target_user = prompt(
         "要创建/配置的普通用户",
+        str(defaults.get("target_user")) if defaults.get("target_user") else None,
         validator=lambda value: value != "root" and bool(USERNAME_RE.fullmatch(value)),
         error="请输入合法的非 root Linux 用户名。",
     )
@@ -311,14 +470,22 @@ def collect_ubuntu() -> tuple[Path, str, dict[str, Any], list[str], dict[str, st
         if candidate.is_file():
             default_pub = str(candidate)
     variables = {"target_user": target_user}
-    variables.update(collect_target_credentials(default_pub))
-    variables.update(collect_user_modules())
-    print("\n选择服务器组件：")
-    variables["install_linuxbrew"] = confirm("安装共享 Linuxbrew 和工具列表", True)
-    variables["install_docker"] = confirm("安装 Docker Engine / Compose", False)
-    variables["install_nginx"] = confirm("安装并启用 Nginx", False)
-    variables["enable_firewall"] = confirm("启用 UFW 防火墙", True)
-    variables["configure_ssh"] = confirm("管理 OpenSSH 安全配置", True)
+    account_exists = location == "local" and local_account_exists(target_user)
+    variables.update(collect_target_credentials(default_pub, account_exists))
+    variables.update(collect_user_modules(defaults))
+    variables.update(
+        multi_select(
+            "选择服务器组件：",
+            [
+                ("install_linuxbrew", "安装共享 Linuxbrew 和工具列表", True),
+                ("install_docker", "安装 Docker Engine / Compose", False),
+                ("install_nginx", "安装并启用 Nginx", False),
+                ("enable_firewall", "启用 UFW 防火墙", True),
+                ("configure_ssh", "管理 OpenSSH 安全配置", True),
+            ],
+            defaults,
+        )
+    )
     managed_port = connection["port"]
     if variables["configure_ssh"]:
         managed_port = prompt("期望 SSH 端口", connection["port"], validate_port, "端口必须是 1-65535。")
@@ -363,11 +530,12 @@ def collect_ubuntu() -> tuple[Path, str, dict[str, Any], list[str], dict[str, st
     return ANSIBLE_DIR / "playbooks" / "ubuntu-bootstrap.yml", inventory, variables, args, summary
 
 
-def collect_user_only() -> tuple[Path, str, dict[str, Any], list[str], dict[str, str]]:
+def collect_user_only(defaults: dict[str, Any] | None = None) -> tuple[Path, str, dict[str, Any], list[str], dict[str, str]]:
+    defaults = defaults or {}
     inventory, connection, args = collect_connection("user_only", getpass.getuser())
     if connection["user"] == "root":
         raise WizardError("user-only 拒绝 root，请输入普通用户。")
-    variables = collect_user_modules()
+    variables = collect_user_modules(defaults)
     allow_dependencies = confirm("缺少基础依赖时允许 sudo 安装白名单系统包", False)
     variables["user_only_allow_system_dependencies"] = allow_dependencies
     if allow_dependencies:
@@ -405,9 +573,59 @@ def secure_write(path: Path, content: str) -> None:
         handle.write(content)
 
 
+def wizard_state_path() -> Path:
+    return Path(operator_account().pw_dir) / ".config" / "devops-toolkit" / "wizard-state.json"
+
+
+def empty_wizard_state() -> dict[str, Any]:
+    return {"schema": STATE_SCHEMA, "last_mode": "", "modes": {}}
+
+
+def load_wizard_state(path: Path | None = None) -> dict[str, Any]:
+    state_path = path or wizard_state_path()
+    try:
+        with operator_privileges():
+            if not state_path.is_file():
+                return empty_wizard_state()
+            raw = json.loads(state_path.read_text(encoding="utf-8"))
+        if raw.get("schema") != STATE_SCHEMA or not isinstance(raw.get("modes"), dict):
+            raise ValueError("格式或版本不受支持")
+        return raw
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        print(f"提示：忽略无法读取的上次向导选择（{state_path}）：{exc}", file=sys.stderr)
+        return empty_wizard_state()
+
+
+def persisted_variables(variables: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in variables.items()
+        if key in PERSISTED_VARIABLES and isinstance(value, (str, bool, int, float))
+    }
+
+
+def save_wizard_state(state: dict[str, Any], path: Path | None = None) -> Path:
+    state_path = path or wizard_state_path()
+    temporary = state_path.with_name(f".{state_path.name}.{os.getpid()}.tmp")
+    with operator_privileges():
+        state_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(state_path.parent, 0o700)
+        try:
+            secure_write(temporary, json.dumps(state, ensure_ascii=False, indent=2) + "\n")
+            os.replace(temporary, state_path)
+            os.chmod(state_path, 0o600)
+        finally:
+            temporary.unlink(missing_ok=True)
+    return state_path
+
+
 def run_wizard() -> int:
     if not shutil.which("ansible-playbook"):
         raise WizardError("找不到 ansible-playbook，请先安装 Ansible。")
+    state = load_wizard_state()
+    remembered_mode = state.get("last_mode")
+    if remembered_mode not in {"wsl", "ubuntu", "user-only"}:
+        remembered_mode = None
     mode = choose(
         "选择运行模式",
         [
@@ -415,10 +633,18 @@ def run_wizard() -> int:
             ("ubuntu", "Ubuntu：root SSH 创建并配置普通用户"),
             ("user-only", "user-only：只配置当前普通用户"),
         ],
+        remembered_mode,
     )
     collectors = {"wsl": collect_wsl, "ubuntu": collect_ubuntu, "user-only": collect_user_only}
-    playbook, inventory, variables, extra_args, summary = collectors[mode]()
+    mode_defaults = state.get("modes", {}).get(mode, {})
+    if not isinstance(mode_defaults, dict):
+        mode_defaults = {}
+    playbook, inventory, variables, extra_args, summary = collectors[mode](mode_defaults)
     summary["启用组件"] = enabled_components(variables)
+    if variables.get("configure_node"):
+        summary["Node.js 版本"] = variables["node_version"]
+    if variables.get("configure_go"):
+        summary["Go 版本"] = variables["go_version"]
     summary["目标密码"] = "已安全生成哈希" if variables.get("target_password_hash") else "未设置"
     summary["目标公钥"] = f"{len(variables.get('target_authorized_keys', []))} 条"
     print("\n执行摘要：")
@@ -447,14 +673,24 @@ def run_wizard() -> int:
             environment["ANSIBLE_COLLECTIONS_PATH"] = str(collections_dir)
             environment["ANSIBLE_COLLECTIONS_PATHS"] = str(collections_dir)
         result = subprocess.run(command, env=environment, check=False)
-        return result.returncode
+    if result.returncode == 0:
+        state["schema"] = STATE_SCHEMA
+        state["last_mode"] = mode
+        state.setdefault("modes", {})[mode] = persisted_variables(variables)
+        try:
+            state_path = save_wizard_state(state)
+            print(f"已记住本次非敏感选择：{state_path}")
+        except OSError as exc:
+            print(f"提示：配置已完成，但无法保存向导选择：{exc}", file=sys.stderr)
+    return result.returncode
 
 
 def print_help() -> None:
     print(
         "用法：devops-toolkit [--help|--version]\n\n"
         "交互选择 WSL2、Ubuntu 或 user-only 模式、认证方式和安装组件。\n"
-        "敏感变量只写入权限为 0600 的临时文件，并在执行结束后删除。"
+        "敏感变量只写入权限为 0600 的临时文件，并在执行结束后删除。\n"
+        "成功后仅在 ~/.config/devops-toolkit 中保存非敏感的向导默认值。"
     )
 
 
