@@ -18,7 +18,25 @@
 
 ## 快速开始
 
-### 1. 安装控制端依赖
+### 推荐：Release 一行安装
+
+新 Ubuntu/WSL 已经以 root 登录时：
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/sunpcm/DevOpsToolkit/main/install.sh)"
+```
+
+安装完成后会在交互终端自动启动向导。选择 `Ubuntu` → `当前服务器本地执行`，即可创建目标用户并配置系统；普通用户执行同一命令时只安装到 `~/.local`，且绝不提权。
+
+生产环境建议固定版本：
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/sunpcm/DevOpsToolkit/main/install.sh)" -- --version v0.1.0
+```
+
+完整的安装位置、`--no-run`、升级、回滚和供应链边界见 [安装、升级与回滚](docs/INSTALLATION.md)。首个 Release 发布前，一行安装地址尚无可下载资产，请暂时使用下面的源码方式。
+
+### 从源码运行（CI 与高级用户）
 
 ```bash
 git clone https://github.com/sunpcm/DevOpsToolkit.git
@@ -28,6 +46,9 @@ cd DevOpsToolkit
 sudo apt update
 sudo apt install -y ansible git
 
+# 仅密码 SSH 登录需要
+sudo apt install -y sshpass
+
 # 安装项目需要的 Ansible collection
 ansible-galaxy collection install -r ansible/requirements.yml
 ```
@@ -36,10 +57,34 @@ macOS 控制端可使用：
 
 ```bash
 brew install ansible
+# macOS 控制端推荐使用 SSH 私钥认证
 ansible-galaxy collection install -r ansible/requirements.yml
 ```
 
-### 2. 配置公共变量
+### 使用交互式向导
+
+```bash
+./bin/devops-toolkit
+```
+
+向导会依次选择：
+
+- WSL2、Ubuntu 或 user-only 模式。
+- 密码或私钥认证。
+- 目标用户、公钥和本地 sudo 密码。
+- Shell、Git、uv、Node.js、Go、Linuxbrew、Docker、Nginx、UFW 等组件。
+
+无需编辑 inventory 或变量文件。密码只用于内存中生成 SHA-512 哈希；inventory 和变量写入权限为 `0600` 的临时目录，执行结束自动删除。
+
+WSL2 模式需要：
+
+```bash
+sudo ./bin/devops-toolkit
+```
+
+如果已经以 root 登录一台全新 Ubuntu 服务器，也可以 clone 本项目后直接运行 `./bin/devops-toolkit`，选择 `Ubuntu` → `当前服务器本地执行`，无需创建 inventory。
+
+### 手工配置（适合 CI 和长期自动化）
 
 修改前先备份：
 
@@ -58,7 +103,7 @@ target_authorized_keys:
 target_password_hash: "$6$..."
 ```
 
-### 3. 执行对应入口
+### 执行对应入口
 
 WSL2：
 
@@ -116,7 +161,9 @@ vim ansible/inventories/user-only.ini
 
 ## 文档
 
+- [安装、升级与回滚](docs/INSTALLATION.md)
 - [三个场景完整使用指南](docs/GETTING_STARTED.md)
+- [交互式向导说明](docs/INTERACTIVE.md)
 - [配置、安全与故障排查](docs/CONFIGURATION.md)
 - [ACME 证书管理](AcmeConfig/README.md)
 - [历史文档](archive/README.md)

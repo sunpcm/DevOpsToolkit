@@ -30,9 +30,30 @@ bash -n \
   "${ROOT_DIR}/bin/ubuntu-bootstrap" \
   "${ROOT_DIR}/bin/user-only" \
   "${ROOT_DIR}/bin/user-only-remove" \
+  "${ROOT_DIR}/install.sh" \
+  "${ROOT_DIR}/scripts/build-release.sh" \
+  "${ROOT_DIR}/tests/test-installer.sh" \
+  "${ROOT_DIR}/tests/test-release.sh" \
   "${ROOT_DIR}/tests/verify-idempotence.sh" \
   "${ROOT_DIR}/wsl-dev/bootstrap.sh" \
   "${ROOT_DIR}/ubuntu-server/bootstrap.sh"
+
+python3 -c 'import sys; from pathlib import Path; p=Path(sys.argv[1]); compile(p.read_text(), str(p), "exec")' \
+  "${ROOT_DIR}/bin/devops-toolkit"
+python3 -c 'import runpy, stat, sys; from pathlib import Path; m=runpy.run_path(sys.argv[1]); p=Path(sys.argv[2]); m["secure_write"](p, "{}\n"); assert stat.S_IMODE(p.stat().st_mode) == 0o600' \
+  "${ROOT_DIR}/bin/devops-toolkit" "${TMP_DIR}/sensitive-vars.json"
+"${ROOT_DIR}/bin/devops-toolkit" --help >/dev/null
+[[ "$("${ROOT_DIR}/bin/devops-toolkit" --version)" == "development" ]]
+"${ROOT_DIR}/tests/test-installer.sh"
+"${ROOT_DIR}/tests/test-release.sh"
+
+if command -v shellcheck >/dev/null 2>&1; then
+  shellcheck \
+    "${ROOT_DIR}/install.sh" \
+    "${ROOT_DIR}/scripts/build-release.sh" \
+    "${ROOT_DIR}/tests/test-installer.sh" \
+    "${ROOT_DIR}/tests/test-release.sh"
+fi
 
 if grep -R -nE 'apt_key:|apt_repository:' "${ROOT_DIR}/ansible"; then
   echo "错误：统一实现中仍有已弃用的 APT 仓库模块。" >&2

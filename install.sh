@@ -1,0 +1,357 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly REPOSITORY="sunpcm/DevOpsToolkit"
+readonly ARCHIVE_NAME="devops-toolkit.tar.gz"
+readonly CHECKSUM_NAME="${ARCHIVE_NAME}.sha256"
+readonly REQUIRED_ANSIBLE_MAJOR=2
+readonly REQUIRED_ANSIBLE_MINOR=12
+
+INSTALL_MODE=""
+REQUESTED_VERSION="${DEVOPS_TOOLKIT_VERSION:-}"
+RUN_AFTER_INSTALL=true
+TEMP_DIR=""
+
+usage() {
+  cat <<'EOF'
+DevOpsToolkit installer
+
+Usage:
+  install.sh [--version v0.1.0] [--no-run] [--user|--system]
+
+Options:
+  --version VERSION  Install a specific GitHub Release tag.
+  --no-run           Install only; do not launch the interactive wizard.
+  --user             Install below ~/.local without privilege escalation.
+  --system           Install below /opt and /usr/local/bin; requires root.
+  -h, --help         Show this help.
+
+Environment:
+  DEVOPS_TOOLKIT_VERSION        Alternative to --version.
+  DEVOPS_TOOLKIT_DOWNLOAD_BASE  Override the release asset directory (testing/mirror).
+EOF
+}
+
+fail() {
+  printf '错误：%s\n' "$*" >&2
+  exit 1
+}
+
+info() {
+  printf '==> %s\n' "$*"
+}
+
+effective_uid() {
+  id -u
+}
+
+cleanup() {
+  if [[ -n "${TEMP_DIR}" && -d "${TEMP_DIR}" ]]; then
+    rm -rf "${TEMP_DIR}"
+  fi
+}
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --version)
+        [[ $# -ge 2 ]] || fail "--version 需要版本号。"
+        REQUESTED_VERSION="$2"
+        shift 2
+        ;;
+      --no-run)
+        RUN_AFTER_INSTALL=false
+        shift
+        ;;
+      --user|--system)
+        local requested_mode="${1#--}"
+        if [[ -n "${INSTALL_MODE}" && "${INSTALL_MODE}" != "${requested_mode}" ]]; then
+          fail "--user 与 --system 不能同时使用。"
+        fi
+        INSTALL_MODE="${requested_mode}"
+        shift
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        fail "未知参数：$1"
+        ;;
+    esac
+  done
+
+  if [[ -n "${REQUESTED_VERSION}" && ! "${REQUESTED_VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([._-][A-Za-z0-9.-]+)?$ ]]; then
+    fail "版本格式无效：${REQUESTED_VERSION}，应类似 v0.1.0。"
+  fi
+
+  if [[ -z "${INSTALL_MODE}" ]]; then
+    if [[ "$(effective_uid)" -eq 0 ]]; then
+      INSTALL_MODE="system"
+    else
+      INSTALL_MODE="user"
+    fi
+  fi
+  if [[ "${INSTALL_MODE}" == "system" && "$(effective_uid)" -ne 0 ]]; then
+    fail "--system 需要 root；请使用 sudo 或改用 --user。"
+  fi
+}
+
+missing_core_commands() {
+  local command_name
+  for command_name in curl tar python3 ansible-playbook ansible-galaxy git openssl; do
+    if ! command -v "${command_name}" >/dev/null 2>&1; then
+      printf '%s\n' "${command_name}"
+    fi
+  done
+}
+
+run_apt_get() {
+  apt-get "$@"
+}
+
+apt_get_available() {
+  command -v apt-get >/dev/null 2>&1
+}
+
+install_system_dependencies() {
+  apt_get_available || \
+    fail "系统模式只能在支持 apt-get 的 Ubuntu/WSL 自动安装依赖。"
+  info "安装系统依赖"
+  run_apt_get update
+  DEBIAN_FRONTEND=noninteractive run_apt_get install -y \
+    ansible python3 git curl ca-certificates openssl sshpass
+}
+
+ensure_dependencies() {
+  local missing
+  missing="$(missing_core_commands)"
+  if [[ -n "${missing}" && "${INSTALL_MODE}" == "system" ]]; then
+    install_system_dependencies
+    missing="$(missing_core_commands)"
+  fi
+  if [[ -n "${missing}" ]]; then
+    printf '缺少命令：\n%s\n' "${missing}" >&2
+    if [[ "${INSTALL_MODE}" == "user" ]]; then
+      printf '普通用户安装不会提权。请让管理员安装 python3、ansible、git、curl 和 openssl。\n' >&2
+    fi
+    exit 1
+  fi
+  if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
+    fail "找不到 sha256sum 或 shasum。"
+  fi
+}
+
+check_ansible_version() {
+  local version major minor
+  version="$(ansible-playbook --version | sed -nE '1s/.*\[core ([0-9]+)\.([0-9]+).*/\1.\2/p')"
+  [[ -n "${version}" ]] || fail "无法识别 ansible-core 版本。"
+  major="${version%%.*}"
+  minor="${version##*.}"
+  if (( major < REQUIRED_ANSIBLE_MAJOR || (major == REQUIRED_ANSIBLE_MAJOR && minor < REQUIRED_ANSIBLE_MINOR) )); then
+    fail "需要 ansible-core >= ${REQUIRED_ANSIBLE_MAJOR}.${REQUIRED_ANSIBLE_MINOR}，当前为 ${version}。"
+  fi
+}
+
+download_base_url() {
+  if [[ -n "${DEVOPS_TOOLKIT_DOWNLOAD_BASE:-}" ]]; then
+    printf '%s\n' "${DEVOPS_TOOLKIT_DOWNLOAD_BASE%/}"
+  elif [[ -n "${REQUESTED_VERSION}" ]]; then
+    printf 'https://github.com/%s/releases/download/%s\n' "${REPOSITORY}" "${REQUESTED_VERSION}"
+  else
+    printf 'https://github.com/%s/releases/latest/download\n' "${REPOSITORY}"
+  fi
+}
+
+download_assets() {
+  local base_url="$1"
+  info "下载 DevOpsToolkit Release"
+  curl --fail --silent --show-error --location \
+    "${base_url}/${ARCHIVE_NAME}" --output "${TEMP_DIR}/${ARCHIVE_NAME}"
+  curl --fail --silent --show-error --location \
+    "${base_url}/${CHECKSUM_NAME}" --output "${TEMP_DIR}/${CHECKSUM_NAME}"
+  chmod 0600 "${TEMP_DIR}/${ARCHIVE_NAME}" "${TEMP_DIR}/${CHECKSUM_NAME}"
+}
+
+calculate_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+verify_checksum() {
+  local expected actual expected_lower actual_lower
+  expected="$(awk 'NR == 1 {print $1}' "${TEMP_DIR}/${CHECKSUM_NAME}")"
+  [[ "${expected}" =~ ^[0-9a-fA-F]{64}$ ]] || fail "Release checksum 文件格式无效。"
+  actual="$(calculate_sha256 "${TEMP_DIR}/${ARCHIVE_NAME}")"
+  expected_lower="$(printf '%s' "${expected}" | tr '[:upper:]' '[:lower:]')"
+  actual_lower="$(printf '%s' "${actual}" | tr '[:upper:]' '[:lower:]')"
+  [[ "${actual_lower}" == "${expected_lower}" ]] || fail "Release SHA256 校验失败。"
+  printf '%s\n' "${actual_lower}" >"${TEMP_DIR}/verified.sha256"
+  info "SHA256 校验通过"
+}
+
+extract_archive_safely() {
+  mkdir -m 0700 "${TEMP_DIR}/extracted"
+  python3 - "${TEMP_DIR}/${ARCHIVE_NAME}" "${TEMP_DIR}/extracted" <<'PY'
+import sys
+import tarfile
+from pathlib import PurePosixPath
+
+archive, destination = sys.argv[1:]
+with tarfile.open(archive, "r:gz") as package:
+    members = package.getmembers()
+    if not members:
+        raise SystemExit("empty release archive")
+    for member in members:
+        path = PurePosixPath(member.name)
+        if path.is_absolute() or ".." in path.parts:
+            raise SystemExit(f"unsafe archive path: {member.name}")
+        if not path.parts or path.parts[0] != "devops-toolkit":
+            raise SystemExit(f"unexpected archive root: {member.name}")
+        if not (member.isfile() or member.isdir()):
+            raise SystemExit(f"unsupported archive entry: {member.name}")
+    package.extractall(destination)
+PY
+}
+
+read_release_version() {
+  local source_dir="${TEMP_DIR}/extracted/devops-toolkit"
+  [[ -f "${source_dir}/VERSION" ]] || fail "Release 缺少 VERSION。"
+  [[ -x "${source_dir}/bin/devops-toolkit" ]] || fail "Release 缺少可执行入口。"
+  [[ -f "${source_dir}/ansible/requirements.yml" ]] || fail "Release 缺少 Ansible requirements。"
+  local release_version
+  release_version="$(tr -d '[:space:]' <"${source_dir}/VERSION")"
+  [[ "${release_version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([._-][A-Za-z0-9.-]+)?$ ]] || \
+    fail "Release VERSION 格式无效。"
+  if [[ -n "${REQUESTED_VERSION}" && "${release_version}" != "${REQUESTED_VERSION}" ]]; then
+    fail "请求 ${REQUESTED_VERSION}，但 Release 内容为 ${release_version}。"
+  fi
+  printf '%s\n' "${release_version}"
+}
+
+install_release() {
+  local release_version="$1" verified_sha source_dir base_dir bin_dir
+  source_dir="${TEMP_DIR}/extracted/devops-toolkit"
+  verified_sha="$(cat "${TEMP_DIR}/verified.sha256")"
+  if [[ "${INSTALL_MODE}" == "system" ]]; then
+    base_dir="${DEVOPS_TOOLKIT_INSTALL_BASE:-/opt/devops-toolkit}"
+    bin_dir="${DEVOPS_TOOLKIT_BIN_DIR:-/usr/local/bin}"
+  else
+    base_dir="${DEVOPS_TOOLKIT_INSTALL_BASE:-${HOME}/.local/share/devops-toolkit}"
+    bin_dir="${DEVOPS_TOOLKIT_BIN_DIR:-${HOME}/.local/bin}"
+  fi
+
+  local releases_dir target_dir staging_dir current_link launcher_link
+  releases_dir="${base_dir}/releases"
+  target_dir="${releases_dir}/${release_version}"
+  staging_dir="${releases_dir}/.install-${release_version}-$$"
+  current_link="${base_dir}/current"
+  launcher_link="${bin_dir}/devops-toolkit"
+  mkdir -p "${releases_dir}"
+  chmod 0755 "${base_dir}" "${releases_dir}"
+  if [[ ! -d "${bin_dir}" ]]; then
+    mkdir -p "${bin_dir}"
+    chmod 0755 "${bin_dir}"
+  fi
+
+  if [[ -e "${current_link}" && ! -L "${current_link}" ]]; then
+    fail "${current_link} 已存在且不是符号链接，拒绝覆盖。"
+  fi
+  if [[ -e "${launcher_link}" && ! -L "${launcher_link}" ]]; then
+    fail "${launcher_link} 已存在且不是符号链接，拒绝覆盖。"
+  fi
+
+  local collection_root
+  if [[ -e "${target_dir}" || -L "${target_dir}" ]]; then
+    [[ -f "${target_dir}/.release-sha256" ]] || \
+      fail "版本目录 ${target_dir} 已存在但缺少校验记录，拒绝覆盖。"
+    [[ "$(cat "${target_dir}/.release-sha256")" == "${verified_sha}" ]] || \
+      fail "版本 ${release_version} 的 Release 内容已变化，拒绝覆盖不可变版本。"
+    info "版本 ${release_version} 已安装，复用现有文件"
+    collection_root="${target_dir}"
+  else
+    rm -rf "${staging_dir}"
+    mkdir -m 0755 "${staging_dir}"
+    cp -a "${source_dir}/." "${staging_dir}/"
+    chmod 0755 "${staging_dir}"
+    printf '%s\n' "${verified_sha}" >"${staging_dir}/.release-sha256"
+    chmod 0755 "${staging_dir}/bin/devops-toolkit"
+    collection_root="${staging_dir}"
+  fi
+
+  if [[ -f "${collection_root}/.collections-ready" ]]; then
+    info "Ansible collections 已就绪，跳过安装"
+  else
+    info "安装 Ansible collections 到版本目录"
+    mkdir -p "${collection_root}/collections"
+    if ! ANSIBLE_COLLECTIONS_PATH="${collection_root}/collections" \
+      ANSIBLE_COLLECTIONS_PATHS="${collection_root}/collections" \
+      ansible-galaxy collection install \
+        --requirements-file "${collection_root}/ansible/requirements.yml" \
+        --collections-path "${collection_root}/collections"; then
+      [[ "${collection_root}" != "${staging_dir}" ]] || rm -rf "${staging_dir}"
+      fail "Ansible collections 安装失败，current 未切换。"
+    fi
+    printf '%s\n' "${verified_sha}" >"${collection_root}/.collections-ready"
+  fi
+
+  find "${collection_root}" -type d -exec chmod a+rx {} +
+  find "${collection_root}" -type f -exec chmod a+r {} +
+  chmod 0600 "${collection_root}/.release-sha256" "${collection_root}/.collections-ready"
+
+  if [[ "${collection_root}" == "${staging_dir}" ]]; then
+    mv "${staging_dir}" "${target_dir}"
+  fi
+
+  local current_tmp launcher_tmp
+  current_tmp="${base_dir}/.current-$$"
+  launcher_tmp="${bin_dir}/.devops-toolkit-$$"
+  ln -s "releases/${release_version}" "${current_tmp}"
+  ln -s "${current_link}/bin/devops-toolkit" "${launcher_tmp}"
+  python3 - "${current_tmp}" "${current_link}" "${launcher_tmp}" "${launcher_link}" <<'PY'
+import os
+import sys
+
+current_tmp, current_link, launcher_tmp, launcher_link = sys.argv[1:]
+os.replace(current_tmp, current_link)
+os.replace(launcher_tmp, launcher_link)
+PY
+
+  printf '%s\n' "${launcher_link}"
+}
+
+main() {
+  parse_args "$@"
+  ensure_dependencies
+  check_ansible_version
+  umask 077
+  TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/devops-toolkit-install.XXXXXX")"
+  chmod 0700 "${TEMP_DIR}"
+  trap cleanup EXIT INT TERM
+
+  local base_url release_version launcher
+  base_url="$(download_base_url)"
+  download_assets "${base_url}"
+  verify_checksum
+  extract_archive_safely
+  release_version="$(read_release_version)"
+  launcher="$(install_release "${release_version}" | tail -n 1)"
+
+  info "DevOpsToolkit ${release_version} 已安装：${launcher}"
+  if [[ "${INSTALL_MODE}" == "user" && ":${PATH}:" != *":$(dirname "${launcher}"):"* ]]; then
+    printf '提示：请将 %s 加入 PATH。\n' "$(dirname "${launcher}")"
+  fi
+  if [[ "${RUN_AFTER_INSTALL}" == true && -t 0 && -t 1 ]]; then
+    exec "${launcher}"
+  fi
+  if [[ "${RUN_AFTER_INSTALL}" == true ]]; then
+    info "当前不是交互终端，已跳过启动向导；稍后运行 devops-toolkit。"
+  fi
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

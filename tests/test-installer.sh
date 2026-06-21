@@ -1,0 +1,243 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TMP_DIR="$(mktemp -d)"
+cleanup() {
+  if [[ -n "${DEVOPS_TOOLKIT_TEST_KEEP_TMP:-}" ]]; then
+    echo "保留测试目录：${TMP_DIR}" >&2
+  else
+    rm -rf "${TMP_DIR}"
+  fi
+}
+trap cleanup EXIT
+
+fail() {
+  echo "错误：$*" >&2
+  exit 1
+}
+
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+make_release() {
+  local version="$1" output_dir="$2"
+  local stage="${TMP_DIR}/stage-${version}"
+  rm -rf "${stage}" "${output_dir}"
+  mkdir -p "${stage}/devops-toolkit/bin" "${stage}/devops-toolkit/ansible"
+  printf '%s\n' "${version}" >"${stage}/devops-toolkit/VERSION"
+  cat >"${stage}/devops-toolkit/bin/devops-toolkit" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+while [[ -L "${SCRIPT_PATH}" ]]; do
+  SCRIPT_DIR="$(cd "$(dirname "${SCRIPT_PATH}")" && pwd)"
+  SCRIPT_PATH="$(readlink "${SCRIPT_PATH}")"
+  [[ "${SCRIPT_PATH}" == /* ]] || SCRIPT_PATH="${SCRIPT_DIR}/${SCRIPT_PATH}"
+done
+ROOT="$(cd "$(dirname "${SCRIPT_PATH}")/.." && pwd)"
+if [[ "${1:-}" == "--version" ]]; then
+  cat "${ROOT}/VERSION"
+  exit 0
+fi
+if [[ "${1:-}" == "--help" ]]; then
+  echo "fixture help"
+  exit 0
+fi
+if [[ -n "${DEVOPS_TOOLKIT_TEST_RUN_MARKER:-}" ]]; then
+  : >"${DEVOPS_TOOLKIT_TEST_RUN_MARKER}"
+fi
+EOF
+  chmod +x "${stage}/devops-toolkit/bin/devops-toolkit"
+  cat >"${stage}/devops-toolkit/ansible/requirements.yml" <<'EOF'
+---
+collections: []
+EOF
+  mkdir -p "${output_dir}"
+  COPYFILE_DISABLE=1 tar -C "${stage}" -czf "${output_dir}/devops-toolkit.tar.gz" devops-toolkit
+  printf '%s  devops-toolkit.tar.gz\n' \
+    "$(sha256_file "${output_dir}/devops-toolkit.tar.gz")" \
+    >"${output_dir}/devops-toolkit.tar.gz.sha256"
+}
+
+make_unsafe_release() {
+  local output_dir="$1"
+  mkdir -p "${output_dir}"
+  python3 - "${output_dir}/devops-toolkit.tar.gz" <<'PY'
+import io
+import tarfile
+import sys
+
+with tarfile.open(sys.argv[1], "w:gz") as archive:
+    data = b"escape"
+    member = tarfile.TarInfo("../escape")
+    member.size = len(data)
+    archive.addfile(member, io.BytesIO(data))
+PY
+  printf '%s  devops-toolkit.tar.gz\n' \
+    "$(sha256_file "${output_dir}/devops-toolkit.tar.gz")" \
+    >"${output_dir}/devops-toolkit.tar.gz.sha256"
+}
+
+MOCK_BIN="${TMP_DIR}/mock-bin"
+mkdir -p "${MOCK_BIN}"
+cat >"${MOCK_BIN}/ansible-playbook" <<'EOF'
+#!/usr/bin/env bash
+echo 'ansible-playbook [core 2.18.6]'
+EOF
+cat >"${MOCK_BIN}/ansible-galaxy" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${DEVOPS_TOOLKIT_TEST_GALAXY_LOG}"
+[[ -z "${DEVOPS_TOOLKIT_TEST_GALAXY_FAIL:-}" ]]
+EOF
+chmod +x "${MOCK_BIN}/ansible-playbook" "${MOCK_BIN}/ansible-galaxy"
+
+export PATH="${MOCK_BIN}:${PATH}"
+export HOME="${TMP_DIR}/home"
+export DEVOPS_TOOLKIT_TEST_GALAXY_LOG="${TMP_DIR}/galaxy.log"
+mkdir -p "${HOME}"
+
+RELEASE_V1="${TMP_DIR}/release-v1"
+RELEASE_V2="${TMP_DIR}/release-v2"
+make_release v0.1.0 "${RELEASE_V1}"
+make_release v0.2.0 "${RELEASE_V2}"
+
+DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${RELEASE_V1}" \
+  "${ROOT_DIR}/install.sh" --user --no-run --version v0.1.0
+[[ "$("${HOME}/.local/bin/devops-toolkit" --version)" == "v0.1.0" ]] || fail "v0.1.0 安装失败"
+"${HOME}/.local/bin/devops-toolkit" --help >/dev/null
+python3 - "${HOME}" <<'PY'
+import stat
+import sys
+from pathlib import Path
+
+home = Path(sys.argv[1])
+launcher = home / ".local/bin/devops-toolkit"
+release = home / ".local/share/devops-toolkit/releases/v0.1.0/bin/devops-toolkit"
+assert launcher.is_symlink()
+assert stat.S_IMODE(release.stat().st_mode) == 0o755
+assert stat.S_IMODE((release.parents[1] / ".release-sha256").stat().st_mode) == 0o600
+assert stat.S_IMODE(release.parents[1].stat().st_mode) == 0o755
+PY
+
+# Reinstalling the same verified version must keep working without a duplicate release.
+DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${RELEASE_V1}" \
+  "${ROOT_DIR}/install.sh" --user --no-run --version v0.1.0
+[[ "$(find "${HOME}/.local/share/devops-toolkit/releases" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')" == "1" ]] || \
+  fail "重复安装产生了重复版本目录"
+[[ "$(wc -l <"${DEVOPS_TOOLKIT_TEST_GALAXY_LOG}" | tr -d ' ')" == "1" ]] || \
+  fail "重复安装没有跳过已就绪的 collections"
+
+# Updating switches current while retaining the previous release.
+DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${RELEASE_V2}" \
+  "${ROOT_DIR}/install.sh" --user --no-run
+[[ "$("${HOME}/.local/bin/devops-toolkit" --version)" == "v0.2.0" ]] || fail "升级切换失败"
+[[ -d "${HOME}/.local/share/devops-toolkit/releases/v0.1.0" ]] || fail "旧版本未保留"
+
+# A version mismatch must fail before switching current.
+if DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${RELEASE_V2}" \
+  "${ROOT_DIR}/install.sh" --user --no-run --version v0.1.0 >/dev/null 2>&1; then
+  fail "版本不匹配未被拒绝"
+fi
+[[ "$("${HOME}/.local/bin/devops-toolkit" --version)" == "v0.2.0" ]] || fail "失败安装改变了 current"
+
+# Bad and missing checksums must fail without changing current.
+BAD_CHECKSUM="${TMP_DIR}/bad-checksum"
+cp -R "${RELEASE_V2}" "${BAD_CHECKSUM}"
+printf '%064d  devops-toolkit.tar.gz\n' 0 >"${BAD_CHECKSUM}/devops-toolkit.tar.gz.sha256"
+if DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${BAD_CHECKSUM}" \
+  "${ROOT_DIR}/install.sh" --user --no-run >/dev/null 2>&1; then
+  fail "错误 checksum 未被拒绝"
+fi
+MISSING_CHECKSUM="${TMP_DIR}/missing-checksum"
+mkdir -p "${MISSING_CHECKSUM}"
+cp "${RELEASE_V2}/devops-toolkit.tar.gz" "${MISSING_CHECKSUM}/"
+if DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${MISSING_CHECKSUM}" \
+  "${ROOT_DIR}/install.sh" --user --no-run >/dev/null 2>&1; then
+  fail "缺失 checksum 未被拒绝"
+fi
+
+# Unsafe archive entries must be rejected.
+UNSAFE_RELEASE="${TMP_DIR}/unsafe-release"
+make_unsafe_release "${UNSAFE_RELEASE}"
+if DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${UNSAFE_RELEASE}" \
+  "${ROOT_DIR}/install.sh" --user --no-run >/dev/null 2>&1; then
+  fail "危险 tar 路径未被拒绝"
+fi
+[[ ! -e "${TMP_DIR}/escape" ]] || fail "危险 tar 写出了目标目录"
+
+# Collection failure must not publish or activate a partial version.
+FAILED_HOME="${TMP_DIR}/failed-home"
+mkdir -p "${FAILED_HOME}"
+if HOME="${FAILED_HOME}" DEVOPS_TOOLKIT_TEST_GALAXY_FAIL=1 \
+  DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${RELEASE_V1}" \
+  "${ROOT_DIR}/install.sh" --user --no-run >/dev/null 2>&1; then
+  fail "collection 安装失败未传递错误"
+fi
+[[ ! -e "${FAILED_HOME}/.local/share/devops-toolkit/current" ]] || fail "失败安装切换了 current"
+[[ ! -e "${FAILED_HOME}/.local/share/devops-toolkit/releases/v0.1.0" ]] || fail "失败安装发布了不完整版本"
+
+# Non-TTY execution installs but never starts the wizard.
+NON_TTY_HOME="${TMP_DIR}/non-tty-home"
+mkdir -p "${NON_TTY_HOME}"
+NON_TTY_MARKER="${TMP_DIR}/non-tty-ran"
+HOME="${NON_TTY_HOME}" DEVOPS_TOOLKIT_TEST_RUN_MARKER="${NON_TTY_MARKER}" \
+  DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${RELEASE_V1}" \
+  "${ROOT_DIR}/install.sh" --user </dev/null
+[[ ! -e "${NON_TTY_MARKER}" ]] || fail "非 TTY 错误启动了向导"
+
+# A pseudo-terminal triggers the wizard after installation.
+TTY_HOME="${TMP_DIR}/tty-home"
+TTY_MARKER="${TMP_DIR}/tty-ran"
+mkdir -p "${TTY_HOME}"
+HOME="${TTY_HOME}" DEVOPS_TOOLKIT_TEST_RUN_MARKER="${TTY_MARKER}" \
+DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${RELEASE_V1}" \
+python3 - "${ROOT_DIR}/install.sh" <<'PY'
+import os
+import pty
+import sys
+
+status = pty.spawn([sys.argv[1], "--user"])
+raise SystemExit(os.waitstatus_to_exitcode(status) if hasattr(os, "waitstatus_to_exitcode") else status)
+PY
+[[ -e "${TTY_MARKER}" ]] || fail "TTY 安装后未启动向导"
+
+# Dependency policy: user mode never calls apt; system mode uses only the whitelist.
+APT_LOG="${TMP_DIR}/apt.log"
+if (
+  source "${ROOT_DIR}/install.sh"
+  INSTALL_MODE=user
+  missing_core_commands() { echo ansible-playbook; }
+  run_apt_get() { echo "$*" >>"${APT_LOG}"; }
+  ensure_dependencies
+) >/dev/null 2>&1; then
+  fail "普通用户缺少依赖时未失败"
+fi
+[[ ! -e "${APT_LOG}" ]] || fail "普通用户模式调用了 apt"
+
+(
+  source "${ROOT_DIR}/install.sh"
+  INSTALL_MODE=system
+  marker="${TMP_DIR}/deps-installed"
+  missing_core_commands() {
+    [[ -e "${marker}" ]] || echo ansible-playbook
+    return 0
+  }
+  apt_get_available() { return 0; }
+  run_apt_get() {
+    echo "$*" >>"${APT_LOG}"
+    [[ "${1:-}" == install ]] && : >"${marker}"
+    return 0
+  }
+  ensure_dependencies
+)
+grep -Fx 'update' "${APT_LOG}" >/dev/null
+grep -Fx 'install -y ansible python3 git curl ca-certificates openssl sshpass' "${APT_LOG}" >/dev/null
+
+"${ROOT_DIR}/install.sh" --help >/dev/null
+echo "安装器测试通过。"

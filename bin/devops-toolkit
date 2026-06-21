@@ -1,0 +1,479 @@
+#!/usr/bin/env python3
+"""DevOpsToolkit interactive launcher.
+
+Collects deployment choices interactively, writes only short-lived mode-0600
+Ansible inputs, and delegates all state changes to the existing playbooks.
+"""
+
+from __future__ import annotations
+
+import getpass
+import json
+import os
+import pwd
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from typing import Any, Callable
+
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+ANSIBLE_DIR = ROOT_DIR / "ansible"
+USERNAME_RE = re.compile(r"^[a-z_][a-z0-9_-]*[$]?$")
+HOST_RE = re.compile(r"^[A-Za-z0-9_.:-]+$")
+PUBLIC_KEY_PREFIXES = (
+    "ssh-ed25519 ",
+    "ssh-rsa ",
+    "ecdsa-sha2-",
+    "sk-ssh-ed25519@openssh.com ",
+    "sk-ecdsa-sha2-nistp256@openssh.com ",
+)
+
+
+class WizardError(RuntimeError):
+    pass
+
+
+def toolkit_version() -> str:
+    version_file = ROOT_DIR / "VERSION"
+    if version_file.is_file():
+        value = version_file.read_text(encoding="utf-8").strip()
+        if value:
+            return value
+    return "development"
+
+
+def operator_home() -> Path:
+    sudo_user = os.environ.get("SUDO_USER")
+    if sudo_user and sudo_user != "root":
+        try:
+            return Path(pwd.getpwnam(sudo_user).pw_dir)
+        except KeyError:
+            pass
+    return Path.home()
+
+
+def prompt(
+    label: str,
+    default: str | None = None,
+    validator: Callable[[str], bool] | None = None,
+    error: str = "输入无效，请重试。",
+) -> str:
+    suffix = f" [{default}]" if default not in (None, "") else ""
+    while True:
+        value = input(f"{label}{suffix}: ").strip()
+        if not value and default is not None:
+            value = default
+        if value and (validator is None or validator(value)):
+            return value
+        print(error)
+
+
+def confirm(label: str, default: bool = True) -> bool:
+    hint = "Y/n" if default else "y/N"
+    while True:
+        value = input(f"{label} [{hint}]: ").strip().lower()
+        if not value:
+            return default
+        if value in {"y", "yes", "是"}:
+            return True
+        if value in {"n", "no", "否"}:
+            return False
+        print("请输入 y 或 n。")
+
+
+def choose(label: str, options: list[tuple[str, str]]) -> str:
+    print(f"\n{label}")
+    for index, (_, description) in enumerate(options, start=1):
+        print(f"  {index}. {description}")
+    while True:
+        value = input("请选择编号: ").strip()
+        if value.isdigit() and 1 <= int(value) <= len(options):
+            return options[int(value) - 1][0]
+        print("编号无效，请重试。")
+
+
+def validate_port(value: str) -> bool:
+    return value.isdigit() and 1 <= int(value) <= 65535
+
+
+def expand_existing_file(value: str) -> Path:
+    path = Path(value).expanduser()
+    if not path.is_file():
+        raise WizardError(f"文件不存在：{path}")
+    return path.resolve()
+
+
+def prompt_existing_file(label: str, default: str = "") -> Path:
+    while True:
+        value = prompt(label, default or None)
+        try:
+            return expand_existing_file(value)
+        except WizardError as exc:
+            print(exc)
+
+
+def read_public_keys(value: str) -> list[str]:
+    if not value:
+        return []
+    candidate = Path(value).expanduser()
+    if candidate.is_file():
+        lines = candidate.read_text(encoding="utf-8").splitlines()
+    else:
+        lines = [value]
+    keys = [line.strip() for line in lines if line.strip() and not line.lstrip().startswith("#")]
+    if not keys or any(not key.startswith(PUBLIC_KEY_PREFIXES) for key in keys):
+        raise WizardError("SSH 公钥格式无效；请输入 .pub 文件路径或完整 OpenSSH 公钥。")
+    return keys
+
+
+def collect_public_keys(default_public_key: str = "") -> list[str]:
+    if default_public_key:
+        hint = f" [{default_public_key}]（回车使用默认，输入 - 跳过）"
+    else:
+        hint = "（留空跳过）"
+    while True:
+        value = input(f"目标用户 SSH 公钥文件或完整公钥{hint}: ").strip()
+        if value == "-" or (not value and not default_public_key):
+            return []
+        if not value:
+            value = default_public_key
+        try:
+            return read_public_keys(value)
+        except WizardError as exc:
+            print(exc)
+
+
+def hash_password(password: str) -> str:
+    openssl = shutil.which("openssl")
+    if not openssl:
+        raise WizardError("找不到 openssl，无法安全生成 SHA-512 密码哈希。")
+    result = subprocess.run(
+        [openssl, "passwd", "-6", "-stdin"],
+        input=password + "\n",
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    hashed = result.stdout.strip()
+    if result.returncode != 0 or not hashed.startswith("$6$"):
+        detail = result.stderr.strip() or "当前 openssl 不支持 passwd -6"
+        raise WizardError(f"密码哈希生成失败：{detail}")
+    return hashed
+
+
+def collect_local_password() -> str:
+    while True:
+        first = getpass.getpass("输入目标用户的本地密码（仅用于生成哈希）: ")
+        second = getpass.getpass("再次输入本地密码: ")
+        if len(first) < 12:
+            print("密码至少需要 12 个字符。")
+            continue
+        if first != second:
+            print("两次密码不一致，请重试。")
+            continue
+        return hash_password(first)
+
+
+def collect_connection(group: str, default_user: str) -> tuple[str, dict[str, str], list[str]]:
+    host = prompt(
+        "目标主机/IP",
+        validator=lambda value: bool(HOST_RE.fullmatch(value)),
+        error="主机只能包含字母、数字、点、冒号、下划线和连字符。",
+    )
+    port = prompt("当前 SSH 端口", "22", validate_port, "端口必须是 1-65535。")
+    user = prompt(
+        "SSH 登录用户",
+        default_user,
+        lambda value: bool(USERNAME_RE.fullmatch(value)),
+        "Linux 用户名格式无效。",
+    )
+    auth = choose("SSH 认证方式", [("key", "私钥"), ("password", "密码（运行时由 Ansible 安全询问）")])
+    args: list[str] = []
+    private_key = ""
+    if auth == "key":
+        default_key = operator_home() / ".ssh" / "id_ed25519"
+        private_key = str(prompt_existing_file("SSH 私钥路径", str(default_key)))
+        args.extend(["--private-key", private_key])
+    else:
+        args.append("--ask-pass")
+        if not shutil.which("sshpass"):
+            print("提示：控制端未发现 sshpass；OpenSSH 密码认证可能失败，推荐改用私钥。")
+    inventory = (
+        f"[{group}]\n"
+        f"wizard_target ansible_host={host} ansible_user={user} ansible_port={port}\n\n"
+        f"[{group}:vars]\n"
+        "ansible_python_interpreter=/usr/bin/python3\n"
+    )
+    return inventory, {"host": host, "port": port, "user": user, "auth": auth, "private_key": private_key}, args
+
+
+def collect_user_modules() -> dict[str, Any]:
+    values: dict[str, Any] = {}
+    print("\n选择用户环境组件：")
+    values["configure_shell"] = confirm("安装并管理 Zsh / Oh My Zsh", True)
+    values["configure_git"] = confirm("管理 Git 用户配置", True)
+    values["configure_uv"] = confirm("安装 uv", True)
+    values["configure_node"] = confirm("安装 NVM / Node.js", True)
+    values["configure_go"] = confirm("安装 goenv / Go", True)
+    values["configure_homebrew_environment"] = confirm("加载已有共享 Linuxbrew 环境", True)
+    if values["configure_git"]:
+        values["git_user_name"] = input("Git 用户名（留空则不修改）: ").strip()
+        values["git_user_email"] = input("Git 邮箱（留空则不修改）: ").strip()
+    return values
+
+
+def collect_target_credentials(default_public_key: str = "") -> dict[str, Any]:
+    keys = collect_public_keys(default_public_key)
+    password_hash = ""
+    if confirm("为新用户设置本地密码（推荐用于 sudo；已有用户不会重置）", True):
+        password_hash = collect_local_password()
+    if not keys and not password_hash:
+        if not confirm("未提供任何登录凭据；仅当目标用户已经存在时才能继续。确认继续", False):
+            raise WizardError("已取消：新用户至少需要密码或 SSH 公钥。")
+    return {
+        "target_authorized_keys": keys,
+        "target_password_hash": password_hash,
+        "target_passwordless_sudo": False,
+    }
+
+
+def parse_extra_ports(value: str) -> list[dict[str, str]]:
+    result: list[dict[str, str]] = []
+    if not value.strip():
+        return result
+    for item in value.split(","):
+        parts = item.strip().split("/", 1)
+        port = parts[0]
+        proto = parts[1].lower() if len(parts) == 2 else "tcp"
+        if not validate_port(port) or proto not in {"tcp", "udp"}:
+            raise WizardError(f"无效放行端口：{item}；格式示例 80/tcp,53/udp。")
+        result.append({"port": port, "proto": proto, "comment": "Wizard"})
+    return result
+
+
+def collect_wsl() -> tuple[Path, str | None, dict[str, Any], list[str], dict[str, str]]:
+    if os.geteuid() != 0:
+        raise WizardError("WSL 模式必须以 root 运行：sudo ./bin/devops-toolkit")
+    target_user = prompt(
+        "目标普通用户",
+        validator=lambda value: value != "root" and bool(USERNAME_RE.fullmatch(value)),
+        error="请输入合法的非 root Linux 用户名。",
+    )
+    variables = {"target_user": target_user}
+    variables.update(collect_target_credentials())
+    variables.update(collect_user_modules())
+    variables["install_linuxbrew"] = confirm("安装共享 Linuxbrew 和工具列表", True)
+    variables["configure_wsl_integration"] = confirm("配置 Windows 目录和剪贴板集成", True)
+    variables["enable_wsl_docker_integration"] = confirm("检查 Docker Desktop WSL 集成", True)
+    summary = {"模式": "WSL2 bootstrap", "目标用户": target_user, "连接": "本机 root"}
+    return ANSIBLE_DIR / "playbooks" / "wsl-bootstrap.yml", None, variables, [], summary
+
+
+def collect_ubuntu() -> tuple[Path, str, dict[str, Any], list[str], dict[str, str]]:
+    location = choose(
+        "Ubuntu 执行位置",
+        [
+            ("local", "当前服务器本地执行（已经 root 登录并 clone 项目）"),
+            ("remote", "从控制端通过 SSH 配置另一台服务器"),
+        ],
+    )
+    if location == "local":
+        if os.geteuid() != 0:
+            raise WizardError("Ubuntu 本地模式必须以 root 运行：sudo ./bin/devops-toolkit")
+        inventory = (
+            "[ubuntu_servers]\n"
+            "wizard_target ansible_connection=local ansible_python_interpreter=/usr/bin/python3\n"
+        )
+        connection = {
+            "host": "localhost",
+            "port": "22",
+            "user": "root",
+            "auth": "local",
+            "private_key": "",
+        }
+        args: list[str] = []
+    else:
+        inventory, connection, args = collect_connection("ubuntu_servers", "root")
+        if connection["user"] != "root":
+            raise WizardError("当前 ubuntu-bootstrap 只支持 root SSH 登录。")
+    target_user = prompt(
+        "要创建/配置的普通用户",
+        validator=lambda value: value != "root" and bool(USERNAME_RE.fullmatch(value)),
+        error="请输入合法的非 root Linux 用户名。",
+    )
+    default_pub = ""
+    if connection["private_key"]:
+        candidate = Path(connection["private_key"] + ".pub")
+        if candidate.is_file():
+            default_pub = str(candidate)
+    variables = {"target_user": target_user}
+    variables.update(collect_target_credentials(default_pub))
+    variables.update(collect_user_modules())
+    print("\n选择服务器组件：")
+    variables["install_linuxbrew"] = confirm("安装共享 Linuxbrew 和工具列表", True)
+    variables["install_docker"] = confirm("安装 Docker Engine / Compose", False)
+    variables["install_nginx"] = confirm("安装并启用 Nginx", False)
+    variables["enable_firewall"] = confirm("启用 UFW 防火墙", True)
+    variables["configure_ssh"] = confirm("管理 OpenSSH 安全配置", True)
+    managed_port = connection["port"]
+    if variables["configure_ssh"]:
+        managed_port = prompt("期望 SSH 端口", connection["port"], validate_port, "端口必须是 1-65535。")
+    variables["ssh_port"] = int(managed_port)
+    variables["disable_root_login"] = False
+    variables["disable_password_auth"] = False
+    if (
+        variables["configure_ssh"]
+        and connection["auth"] == "key"
+        and variables["target_authorized_keys"]
+    ):
+        variables["disable_password_auth"] = confirm("确认新用户密钥登录后，禁用 SSH 密码认证", False)
+    elif variables["configure_ssh"] and connection["auth"] == "password":
+        print("提示：当前使用密码连接，本次不会关闭 SSH 密码认证。")
+    elif variables["configure_ssh"] and connection["auth"] == "local":
+        print("提示：本地首次初始化不会关闭 SSH 密码认证；请先验证新用户远程登录。")
+    elif variables["configure_ssh"]:
+        print("提示：没有向目标用户写入公钥，本次不会关闭 SSH 密码认证。")
+    ports = [{"port": managed_port, "proto": "tcp", "comment": "SSH"}]
+    if variables["install_nginx"] and variables["enable_firewall"]:
+        ports.extend(
+            [
+                {"port": "80", "proto": "tcp", "comment": "HTTP"},
+                {"port": "443", "proto": "tcp", "comment": "HTTPS"},
+            ]
+        )
+    if variables["enable_firewall"]:
+        extra = input("额外放行端口（例如 8080/tcp,53/udp；留空跳过）: ")
+        ports.extend(parse_extra_ports(extra))
+    variables["firewall_allowed_ports"] = ports
+    summary = {
+        "模式": "Ubuntu bootstrap",
+        "主机": connection["host"],
+        "SSH 用户": connection["user"],
+        "目标用户": target_user,
+        "连接方式": {
+            "key": "SSH 私钥",
+            "password": "SSH 密码",
+            "local": "当前服务器本地执行",
+        }[connection["auth"]],
+    }
+    return ANSIBLE_DIR / "playbooks" / "ubuntu-bootstrap.yml", inventory, variables, args, summary
+
+
+def collect_user_only() -> tuple[Path, str, dict[str, Any], list[str], dict[str, str]]:
+    inventory, connection, args = collect_connection("user_only", getpass.getuser())
+    if connection["user"] == "root":
+        raise WizardError("user-only 拒绝 root，请输入普通用户。")
+    variables = collect_user_modules()
+    allow_dependencies = confirm("缺少基础依赖时允许 sudo 安装白名单系统包", False)
+    variables["user_only_allow_system_dependencies"] = allow_dependencies
+    if allow_dependencies:
+        args.append("--ask-become-pass")
+    summary = {
+        "模式": "user-only",
+        "主机": connection["host"],
+        "当前用户": connection["user"],
+        "SSH 认证": "私钥" if connection["auth"] == "key" else "密码",
+        "系统依赖例外": "允许" if allow_dependencies else "禁止",
+    }
+    return ANSIBLE_DIR / "playbooks" / "user-only.yml", inventory, variables, args, summary
+
+
+def enabled_components(variables: dict[str, Any]) -> str:
+    labels = {
+        "configure_shell": "Shell",
+        "configure_git": "Git",
+        "configure_uv": "uv",
+        "configure_node": "Node.js",
+        "configure_go": "Go",
+        "install_linuxbrew": "Linuxbrew",
+        "install_docker": "Docker",
+        "install_nginx": "Nginx",
+        "enable_firewall": "UFW",
+        "configure_ssh": "SSH",
+        "configure_wsl_integration": "WSL 集成",
+    }
+    return ", ".join(label for key, label in labels.items() if variables.get(key)) or "无"
+
+
+def secure_write(path: Path, content: str) -> None:
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(content)
+
+
+def run_wizard() -> int:
+    if not shutil.which("ansible-playbook"):
+        raise WizardError("找不到 ansible-playbook，请先安装 Ansible。")
+    mode = choose(
+        "选择运行模式",
+        [
+            ("wsl", "WSL2：root 本地创建并配置普通用户"),
+            ("ubuntu", "Ubuntu：root SSH 创建并配置普通用户"),
+            ("user-only", "user-only：只配置当前普通用户"),
+        ],
+    )
+    collectors = {"wsl": collect_wsl, "ubuntu": collect_ubuntu, "user-only": collect_user_only}
+    playbook, inventory, variables, extra_args, summary = collectors[mode]()
+    summary["启用组件"] = enabled_components(variables)
+    summary["目标密码"] = "已安全生成哈希" if variables.get("target_password_hash") else "未设置"
+    summary["目标公钥"] = f"{len(variables.get('target_authorized_keys', []))} 条"
+    print("\n执行摘要：")
+    for key, value in summary.items():
+        print(f"  {key}: {value}")
+    print("\n注意：首次 SSH 连接请先人工核对并接受主机指纹；向导不会关闭主机指纹校验。")
+    if not confirm("确认开始执行", False):
+        print("已取消，未修改目标系统。")
+        return 0
+
+    with tempfile.TemporaryDirectory(prefix="devops-toolkit-") as temp_dir:
+        temp = Path(temp_dir)
+        vars_file = temp / "extra-vars.json"
+        secure_write(vars_file, json.dumps(variables, ensure_ascii=False, indent=2) + "\n")
+        command = ["ansible-playbook"]
+        if inventory is not None:
+            inventory_file = temp / "inventory.ini"
+            secure_write(inventory_file, inventory)
+            command.extend(["-i", str(inventory_file)])
+        command.extend([str(playbook), "-e", f"@{vars_file}"])
+        command.extend(extra_args)
+        environment = os.environ.copy()
+        environment["ANSIBLE_CONFIG"] = str(ANSIBLE_DIR / "ansible.cfg")
+        collections_dir = ROOT_DIR / "collections"
+        if collections_dir.is_dir():
+            environment["ANSIBLE_COLLECTIONS_PATH"] = str(collections_dir)
+            environment["ANSIBLE_COLLECTIONS_PATHS"] = str(collections_dir)
+        result = subprocess.run(command, env=environment, check=False)
+        return result.returncode
+
+
+def print_help() -> None:
+    print(
+        "用法：devops-toolkit [--help|--version]\n\n"
+        "交互选择 WSL2、Ubuntu 或 user-only 模式、认证方式和安装组件。\n"
+        "敏感变量只写入权限为 0600 的临时文件，并在执行结束后删除。"
+    )
+
+
+def main() -> int:
+    if len(sys.argv) > 1:
+        if sys.argv[1] in {"-h", "--help"}:
+            print_help()
+            return 0
+        if sys.argv[1] == "--version":
+            print(toolkit_version())
+            return 0
+        print_help()
+        return 2
+    try:
+        return run_wizard()
+    except (WizardError, EOFError, KeyboardInterrupt) as exc:
+        print(f"\n错误：{exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
