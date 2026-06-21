@@ -31,4 +31,15 @@ if "${ROOT_DIR}/scripts/build-release.sh" invalid "${TMP_DIR}/invalid" >/dev/nul
   exit 1
 fi
 
+WORKFLOW="${ROOT_DIR}/.github/workflows/release.yml"
+grep -F 'id-token: write' "${WORKFLOW}" >/dev/null
+grep -F 'cosign sign-blob' "${WORKFLOW}" >/dev/null
+grep -F 'cosign verify-blob' "${WORKFLOW}" >/dev/null
+grep -F 'devops-toolkit.tar.gz.sigstore.json' "${WORKFLOW}" >/dev/null
+if grep -RE 'uses:[[:space:]]+[^[:space:]]+@(main|master|v[0-9]+)[[:space:]]*$' \
+  "${ROOT_DIR}/.github/workflows"; then
+  echo "错误：GitHub Action 仍使用可移动引用。" >&2
+  exit 1
+fi
+
 echo "Release 包测试通过。"

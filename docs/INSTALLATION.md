@@ -1,6 +1,6 @@
 # 安装、升级与回滚
 
-推荐通过 GitHub Release 安装固定构建产物。安装器会下载压缩包和 SHA256，验证包内路径与版本，再切换统一命令 `devops-toolkit`。
+推荐通过 GitHub Release 安装固定构建产物。安装器会校验 SHA256、Sigstore 签名身份、包内路径与版本，再切换统一命令 `devops-toolkit`。
 
 ## 快速安装
 
@@ -79,6 +79,11 @@ devops-toolkit --version
 
 同一版本号对应的 Release 资产被替换时，安装器会因 SHA256 变化而拒绝覆盖。这是有意的：发布后的版本应视为不可变。
 
+安装器会缓存经过内置 SHA256 校验的 Cosign 二进制，升级时重新核对后复用：
+
+- root：`/opt/devops-toolkit/tools/`
+- 普通用户：`~/.local/share/devops-toolkit/tools/`
+
 ## 手工回滚
 
 先确认旧版本可执行，再原子替换 `current`。root 安装示例：
@@ -117,6 +122,9 @@ ansible-galaxy collection install -r ansible/requirements.yml
 
 - 临时下载目录权限为 `0700`，资产文件为 `0600`。
 - 安装器拒绝绝对路径、`..`、额外顶层目录、符号链接和设备文件，避免 tar 路径穿越。
-- SHA256 能发现下载损坏或资产与 checksum 不一致，但二者来自同一个 GitHub Release，不能抵御仓库、GitHub 账号或 Release 发布权限整体失陷。
-- `raw.githubusercontent.com/.../main/install.sh` 本身是可变的 root 执行代码。高安全环境应先下载、审查并固定安装器提交，再执行固定 Release；后续版本应增加 Sigstore 或 GPG 签名验证。
+- SHA256 用于完整性检查；Sigstore 进一步要求产物来自本仓库、指定 Release workflow 和对应 tag。
+- Sigstore 验证失败时不会降级为只检查 SHA256。
+- `raw.githubusercontent.com/.../main/install.sh` 本身仍是可变的 root 执行代码。高安全环境应先下载、审查并固定安装器提交，再执行固定 Release。
 - 首次 SSH 连接仍会正常校验主机指纹，安装方式不会关闭该保护。
+
+完整信任模型和 GitHub 手工加固清单见[发布供应链安全](SUPPLY_CHAIN_SECURITY.md)。

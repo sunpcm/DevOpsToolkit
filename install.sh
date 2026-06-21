@@ -4,6 +4,8 @@ set -euo pipefail
 readonly REPOSITORY="sunpcm/DevOpsToolkit"
 readonly ARCHIVE_NAME="devops-toolkit.tar.gz"
 readonly CHECKSUM_NAME="${ARCHIVE_NAME}.sha256"
+readonly BUNDLE_NAME="${ARCHIVE_NAME}.sigstore.json"
+readonly COSIGN_VERSION="v3.1.1"
 readonly REQUIRED_ANSIBLE_MAJOR=2
 readonly REQUIRED_ANSIBLE_MINOR=12
 
@@ -170,7 +172,12 @@ download_assets() {
     "${base_url}/${ARCHIVE_NAME}" --output "${TEMP_DIR}/${ARCHIVE_NAME}"
   curl --fail --silent --show-error --location \
     "${base_url}/${CHECKSUM_NAME}" --output "${TEMP_DIR}/${CHECKSUM_NAME}"
-  chmod 0600 "${TEMP_DIR}/${ARCHIVE_NAME}" "${TEMP_DIR}/${CHECKSUM_NAME}"
+  curl --fail --silent --show-error --location \
+    "${base_url}/${BUNDLE_NAME}" --output "${TEMP_DIR}/${BUNDLE_NAME}"
+  chmod 0600 \
+    "${TEMP_DIR}/${ARCHIVE_NAME}" \
+    "${TEMP_DIR}/${CHECKSUM_NAME}" \
+    "${TEMP_DIR}/${BUNDLE_NAME}"
 }
 
 calculate_sha256() {
@@ -178,6 +185,14 @@ calculate_sha256() {
     sha256sum "$1" | awk '{print $1}'
   else
     shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+toolkit_base_dir() {
+  if [[ "${INSTALL_MODE}" == "system" ]]; then
+    printf '%s\n' "${DEVOPS_TOOLKIT_INSTALL_BASE:-/opt/devops-toolkit}"
+  else
+    printf '%s\n' "${DEVOPS_TOOLKIT_INSTALL_BASE:-${HOME}/.local/share/devops-toolkit}"
   fi
 }
 
@@ -191,6 +206,90 @@ verify_checksum() {
   [[ "${actual_lower}" == "${expected_lower}" ]] || fail "Release SHA256 校验失败。"
   printf '%s\n' "${actual_lower}" >"${TEMP_DIR}/verified.sha256"
   info "SHA256 校验通过"
+}
+
+cosign_asset_name() {
+  local operating_system architecture
+  operating_system="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  architecture="$(uname -m)"
+  case "${operating_system}" in
+    linux|darwin) ;;
+    *) fail "Cosign 暂不支持当前系统：${operating_system}。" ;;
+  esac
+  case "${architecture}" in
+    x86_64|amd64) architecture="amd64" ;;
+    arm64|aarch64) architecture="arm64" ;;
+    *) fail "Cosign 暂不支持当前架构：${architecture}。" ;;
+  esac
+  printf 'cosign-%s-%s\n' "${operating_system}" "${architecture}"
+}
+
+cosign_expected_sha256() {
+  case "$1" in
+    cosign-darwin-amd64) printf '%s\n' '14d2678dfbfde18798151e86fbd91ebdadbb7424b18412a42a155dd8a2df4c7a' ;;
+    cosign-darwin-arm64) printf '%s\n' '94b42a9e697be95675f6160ab031a9a5f1ec1e646d6f648d7b2f5cd59ececbc5' ;;
+    cosign-linux-amd64) printf '%s\n' 'ae1ecd212663f3693ad9edf8b1a183900c9a52d3155ba6e354237f9a0f6463fc' ;;
+    cosign-linux-arm64) printf '%s\n' '2ec865872e331c32fd12b08dae15332d3f92c0aa029219589684a4903ca85d11' ;;
+    *) fail "没有 $1 的 Cosign 校验值。" ;;
+  esac
+}
+
+cosign_download_base() {
+  printf 'https://github.com/sigstore/cosign/releases/download/%s\n' "${COSIGN_VERSION}"
+}
+
+prepare_cosign() {
+  local asset_name expected_sha actual_sha download_base cache_dir cached_cosign cache_tmp
+  asset_name="$(cosign_asset_name)"
+  expected_sha="$(cosign_expected_sha256 "${asset_name}")"
+  download_base="$(cosign_download_base)"
+
+  cache_dir="$(toolkit_base_dir)/tools"
+  cached_cosign="${cache_dir}/cosign-${COSIGN_VERSION}-${asset_name}"
+  if [[ -f "${cached_cosign}" && \
+        "$(calculate_sha256 "${cached_cosign}")" == "${expected_sha}" ]]; then
+    info "复用已校验的 Cosign ${COSIGN_VERSION}"
+    printf '%s\n' "${cached_cosign}"
+    return 0
+  fi
+
+  info "下载并校验 Cosign ${COSIGN_VERSION}"
+  curl --fail --silent --show-error --location \
+    "${download_base}/${asset_name}" --output "${TEMP_DIR}/cosign"
+  chmod 0700 "${TEMP_DIR}/cosign"
+  actual_sha="$(calculate_sha256 "${TEMP_DIR}/cosign")"
+  [[ "${actual_sha}" == "${expected_sha}" ]] || fail "Cosign SHA256 校验失败。"
+  mkdir -p "${cache_dir}"
+  chmod 0755 "$(toolkit_base_dir)" "${cache_dir}"
+  cache_tmp="${cache_dir}/.cosign-$$"
+  cp "${TEMP_DIR}/cosign" "${cache_tmp}"
+  chmod 0755 "${cache_tmp}"
+  python3 - "${cache_tmp}" "${cached_cosign}" <<'PY'
+import os
+import sys
+
+os.replace(sys.argv[1], sys.argv[2])
+PY
+  printf '%s\n' "${cached_cosign}"
+}
+
+verify_sigstore_signature() {
+  local release_version="$1" cosign identity workflow_ref
+  cosign="$(prepare_cosign | tail -n 1)"
+  identity="https://github.com/${REPOSITORY}/.github/workflows/release.yml@refs/tags/${release_version}"
+  workflow_ref="refs/tags/${release_version}"
+  info "验证 Sigstore 签名与 GitHub Actions 身份"
+  "${cosign}" verify-blob \
+    --timeout 2m \
+    --bundle "${TEMP_DIR}/${BUNDLE_NAME}" \
+    --certificate-identity "${identity}" \
+    --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+    --certificate-github-workflow-repository "${REPOSITORY}" \
+    --certificate-github-workflow-ref "${workflow_ref}" \
+    --certificate-github-workflow-trigger push \
+    "${TEMP_DIR}/${ARCHIVE_NAME}" >/dev/null || \
+      fail "Sigstore 签名验证失败，拒绝安装。"
+  info "Sigstore 身份验证通过"
 }
 
 extract_archive_safely() {
@@ -237,10 +336,10 @@ install_release() {
   source_dir="${TEMP_DIR}/extracted/devops-toolkit"
   verified_sha="$(cat "${TEMP_DIR}/verified.sha256")"
   if [[ "${INSTALL_MODE}" == "system" ]]; then
-    base_dir="${DEVOPS_TOOLKIT_INSTALL_BASE:-/opt/devops-toolkit}"
+    base_dir="$(toolkit_base_dir)"
     bin_dir="${DEVOPS_TOOLKIT_BIN_DIR:-/usr/local/bin}"
   else
-    base_dir="${DEVOPS_TOOLKIT_INSTALL_BASE:-${HOME}/.local/share/devops-toolkit}"
+    base_dir="$(toolkit_base_dir)"
     bin_dir="${DEVOPS_TOOLKIT_BIN_DIR:-${HOME}/.local/bin}"
   fi
 
@@ -338,6 +437,7 @@ main() {
   verify_checksum
   extract_archive_safely
   release_version="$(read_release_version)"
+  verify_sigstore_signature "${release_version}"
   launcher="$(install_release "${release_version}" | tail -n 1)"
 
   info "DevOpsToolkit ${release_version} 已安装：${launcher}"

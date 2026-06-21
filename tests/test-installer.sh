@@ -63,6 +63,8 @@ EOF
   printf '%s  devops-toolkit.tar.gz\n' \
     "$(sha256_file "${output_dir}/devops-toolkit.tar.gz")" \
     >"${output_dir}/devops-toolkit.tar.gz.sha256"
+  printf '{"fixture":"%s"}\n' "${version}" \
+    >"${output_dir}/devops-toolkit.tar.gz.sigstore.json"
 }
 
 make_unsafe_release() {
@@ -97,9 +99,35 @@ printf '%s\n' "$*" >>"${DEVOPS_TOOLKIT_TEST_GALAXY_LOG}"
 EOF
 chmod +x "${MOCK_BIN}/ansible-playbook" "${MOCK_BIN}/ansible-galaxy"
 
+MOCK_COSIGN_DIR="${TMP_DIR}/mock-cosign"
+mkdir -p "${MOCK_COSIGN_DIR}"
+cat >"${TMP_DIR}/fake-cosign" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"${DEVOPS_TOOLKIT_TEST_COSIGN_LOG}"
+[[ -z "${DEVOPS_TOOLKIT_TEST_COSIGN_FAIL:-}" ]]
+EOF
+chmod +x "${TMP_DIR}/fake-cosign"
+for asset in cosign-darwin-amd64 cosign-darwin-arm64 cosign-linux-amd64 cosign-linux-arm64; do
+  cp "${TMP_DIR}/fake-cosign" "${MOCK_COSIGN_DIR}/${asset}"
+done
+
 export PATH="${MOCK_BIN}:${PATH}"
 export HOME="${TMP_DIR}/home"
 export DEVOPS_TOOLKIT_TEST_GALAXY_LOG="${TMP_DIR}/galaxy.log"
+export DEVOPS_TOOLKIT_TEST_COSIGN_LOG="${TMP_DIR}/cosign.log"
+FAKE_COSIGN_SHA256="$(sha256_file "${TMP_DIR}/fake-cosign")"
+INSTALLER="${TMP_DIR}/test-install.sh"
+cat >"${INSTALLER}" <<EOF
+#!/usr/bin/env bash
+source "${ROOT_DIR}/install.sh"
+cosign_download_base() { printf '%s\\n' 'file://${MOCK_COSIGN_DIR}'; }
+cosign_expected_sha256() {
+  printf '%s\\n' "\${DEVOPS_TOOLKIT_TEST_EXPECTED_COSIGN_SHA256:-${FAKE_COSIGN_SHA256}}"
+}
+main "\$@"
+EOF
+chmod +x "${INSTALLER}"
 mkdir -p "${HOME}"
 
 RELEASE_V1="${TMP_DIR}/release-v1"
@@ -108,8 +136,12 @@ make_release v0.1.0 "${RELEASE_V1}"
 make_release v0.2.0 "${RELEASE_V2}"
 
 DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${RELEASE_V1}" \
-  "${ROOT_DIR}/install.sh" --user --no-run --version v0.1.0
+  "${INSTALLER}" --user --no-run --version v0.1.0
 [[ "$("${HOME}/.local/bin/devops-toolkit" --version)" == "v0.1.0" ]] || fail "v0.1.0 安装失败"
+grep -F -- '--certificate-identity https://github.com/sunpcm/DevOpsToolkit/.github/workflows/release.yml@refs/tags/v0.1.0' \
+  "${DEVOPS_TOOLKIT_TEST_COSIGN_LOG}" >/dev/null || fail "Cosign 没有校验精确 workflow 身份"
+grep -F -- '--certificate-github-workflow-ref refs/tags/v0.1.0' \
+  "${DEVOPS_TOOLKIT_TEST_COSIGN_LOG}" >/dev/null || fail "Cosign 没有校验 tag ref"
 "${HOME}/.local/bin/devops-toolkit" --help >/dev/null
 python3 - "${HOME}" <<'PY'
 import stat
@@ -127,21 +159,30 @@ PY
 
 # Reinstalling the same verified version must keep working without a duplicate release.
 DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${RELEASE_V1}" \
-  "${ROOT_DIR}/install.sh" --user --no-run --version v0.1.0
+  "${INSTALLER}" --user --no-run --version v0.1.0
 [[ "$(find "${HOME}/.local/share/devops-toolkit/releases" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')" == "1" ]] || \
   fail "重复安装产生了重复版本目录"
 [[ "$(wc -l <"${DEVOPS_TOOLKIT_TEST_GALAXY_LOG}" | tr -d ' ')" == "1" ]] || \
   fail "重复安装没有跳过已就绪的 collections"
 
+# A tampered Cosign cache must be replaced from the pinned, verified source.
+COSIGN_CACHE="$(find "${HOME}/.local/share/devops-toolkit/tools" -type f -name 'cosign-v3.1.1-*' -print -quit)"
+[[ -n "${COSIGN_CACHE}" ]] || fail "没有创建 Cosign 缓存"
+printf 'tampered\n' >"${COSIGN_CACHE}"
+DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${RELEASE_V1}" \
+  "${INSTALLER}" --user --no-run --version v0.1.0
+[[ "$(sha256_file "${COSIGN_CACHE}")" == "${FAKE_COSIGN_SHA256}" ]] || \
+  fail "被篡改的 Cosign 缓存未被修复"
+
 # Updating switches current while retaining the previous release.
 DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${RELEASE_V2}" \
-  "${ROOT_DIR}/install.sh" --user --no-run
+  "${INSTALLER}" --user --no-run
 [[ "$("${HOME}/.local/bin/devops-toolkit" --version)" == "v0.2.0" ]] || fail "升级切换失败"
 [[ -d "${HOME}/.local/share/devops-toolkit/releases/v0.1.0" ]] || fail "旧版本未保留"
 
 # A version mismatch must fail before switching current.
 if DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${RELEASE_V2}" \
-  "${ROOT_DIR}/install.sh" --user --no-run --version v0.1.0 >/dev/null 2>&1; then
+  "${INSTALLER}" --user --no-run --version v0.1.0 >/dev/null 2>&1; then
   fail "版本不匹配未被拒绝"
 fi
 [[ "$("${HOME}/.local/bin/devops-toolkit" --version)" == "v0.2.0" ]] || fail "失败安装改变了 current"
@@ -151,14 +192,14 @@ BAD_CHECKSUM="${TMP_DIR}/bad-checksum"
 cp -R "${RELEASE_V2}" "${BAD_CHECKSUM}"
 printf '%064d  devops-toolkit.tar.gz\n' 0 >"${BAD_CHECKSUM}/devops-toolkit.tar.gz.sha256"
 if DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${BAD_CHECKSUM}" \
-  "${ROOT_DIR}/install.sh" --user --no-run >/dev/null 2>&1; then
+  "${INSTALLER}" --user --no-run >/dev/null 2>&1; then
   fail "错误 checksum 未被拒绝"
 fi
 MISSING_CHECKSUM="${TMP_DIR}/missing-checksum"
 mkdir -p "${MISSING_CHECKSUM}"
 cp "${RELEASE_V2}/devops-toolkit.tar.gz" "${MISSING_CHECKSUM}/"
 if DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${MISSING_CHECKSUM}" \
-  "${ROOT_DIR}/install.sh" --user --no-run >/dev/null 2>&1; then
+  "${INSTALLER}" --user --no-run >/dev/null 2>&1; then
   fail "缺失 checksum 未被拒绝"
 fi
 
@@ -166,17 +207,43 @@ fi
 UNSAFE_RELEASE="${TMP_DIR}/unsafe-release"
 make_unsafe_release "${UNSAFE_RELEASE}"
 if DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${UNSAFE_RELEASE}" \
-  "${ROOT_DIR}/install.sh" --user --no-run >/dev/null 2>&1; then
+  "${INSTALLER}" --user --no-run >/dev/null 2>&1; then
   fail "危险 tar 路径未被拒绝"
 fi
 [[ ! -e "${TMP_DIR}/escape" ]] || fail "危险 tar 写出了目标目录"
+
+# A missing bundle, bad Cosign bootstrap hash, or failed identity must stop before publication.
+MISSING_BUNDLE="${TMP_DIR}/missing-bundle"
+cp -R "${RELEASE_V1}" "${MISSING_BUNDLE}"
+rm "${MISSING_BUNDLE}/devops-toolkit.tar.gz.sigstore.json"
+if HOME="${TMP_DIR}/missing-bundle-home" \
+  DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${MISSING_BUNDLE}" \
+  "${INSTALLER}" --user --no-run >/dev/null 2>&1; then
+  fail "缺失 Sigstore bundle 未被拒绝"
+fi
+
+if HOME="${TMP_DIR}/bad-cosign-home" DEVOPS_TOOLKIT_TEST_EXPECTED_COSIGN_SHA256="$(printf '%064d' 0)" \
+  DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${RELEASE_V1}" \
+  "${INSTALLER}" --user --no-run >/dev/null 2>&1; then
+  fail "错误 Cosign checksum 未被拒绝"
+fi
+[[ ! -e "${TMP_DIR}/bad-cosign-home/.local/share/devops-toolkit/current" ]] || \
+  fail "Cosign 引导校验失败后切换了 current"
+
+if HOME="${TMP_DIR}/bad-signature-home" DEVOPS_TOOLKIT_TEST_COSIGN_FAIL=1 \
+  DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${RELEASE_V1}" \
+  "${INSTALLER}" --user --no-run >/dev/null 2>&1; then
+  fail "错误 Sigstore 身份未被拒绝"
+fi
+[[ ! -e "${TMP_DIR}/bad-signature-home/.local/share/devops-toolkit/current" ]] || \
+  fail "Sigstore 验证失败后切换了 current"
 
 # Collection failure must not publish or activate a partial version.
 FAILED_HOME="${TMP_DIR}/failed-home"
 mkdir -p "${FAILED_HOME}"
 if HOME="${FAILED_HOME}" DEVOPS_TOOLKIT_TEST_GALAXY_FAIL=1 \
   DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${RELEASE_V1}" \
-  "${ROOT_DIR}/install.sh" --user --no-run >/dev/null 2>&1; then
+  "${INSTALLER}" --user --no-run >/dev/null 2>&1; then
   fail "collection 安装失败未传递错误"
 fi
 [[ ! -e "${FAILED_HOME}/.local/share/devops-toolkit/current" ]] || fail "失败安装切换了 current"
@@ -188,7 +255,7 @@ mkdir -p "${NON_TTY_HOME}"
 NON_TTY_MARKER="${TMP_DIR}/non-tty-ran"
 HOME="${NON_TTY_HOME}" DEVOPS_TOOLKIT_TEST_RUN_MARKER="${NON_TTY_MARKER}" \
   DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${RELEASE_V1}" \
-  "${ROOT_DIR}/install.sh" --user </dev/null
+  "${INSTALLER}" --user </dev/null
 [[ ! -e "${NON_TTY_MARKER}" ]] || fail "非 TTY 错误启动了向导"
 
 # A pseudo-terminal triggers the wizard after installation.
@@ -197,7 +264,7 @@ TTY_MARKER="${TMP_DIR}/tty-ran"
 mkdir -p "${TTY_HOME}"
 HOME="${TTY_HOME}" DEVOPS_TOOLKIT_TEST_RUN_MARKER="${TTY_MARKER}" \
 DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${RELEASE_V1}" \
-python3 - "${ROOT_DIR}/install.sh" <<'PY'
+python3 - "${INSTALLER}" <<'PY'
 import os
 import pty
 import sys
