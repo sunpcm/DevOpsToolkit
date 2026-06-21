@@ -26,15 +26,29 @@
     group: linuxbrew
     mode: "0755"
 
+- name: Check the installed Homebrew revision
+  become: true
+  become_user: linuxbrew
+  ansible.builtin.command:
+    argv:
+      - git
+      - -C
+      - /home/linuxbrew/.linuxbrew/Homebrew
+      - rev-parse
+      - HEAD
+  register: linuxbrew_revision
+  changed_when: false
+  failed_when: false
+
 - name: Install Homebrew into the system-managed prefix
   become: true
   become_user: linuxbrew
   ansible.builtin.git:
     repo: https://github.com/Homebrew/brew.git
     dest: /home/linuxbrew/.linuxbrew/Homebrew
-    version: master
-    depth: 1
+    version: "{{ linuxbrew_version }}"
     update: true
+  when: linuxbrew_revision.rc != 0 or (linuxbrew_revision.stdout | trim) != linuxbrew_version
 
 - name: Expose the brew executable
   become: true
@@ -58,6 +72,8 @@
   become: true
   become_user: linuxbrew
   ansible.builtin.command: "/home/linuxbrew/.linuxbrew/bin/brew install {{ item.item }}"
+  environment:
+    HOMEBREW_NO_AUTO_UPDATE: "1"
   loop: "{{ linuxbrew_package_checks.results }}"
   loop_control:
     label: "{{ item.item }}"

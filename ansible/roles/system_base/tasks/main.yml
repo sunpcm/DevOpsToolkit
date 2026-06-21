@@ -5,7 +5,7 @@
     name: "{{ system_packages }}"
     state: present
     update_cache: true
-    cache_valid_time: 3600
+    cache_valid_time: "{{ apt_cache_valid_time }}"
 
 - name: Generate configured locale
   become: true

@@ -30,11 +30,26 @@ bash -n \
   "${ROOT_DIR}/bin/ubuntu-bootstrap" \
   "${ROOT_DIR}/bin/user-only" \
   "${ROOT_DIR}/bin/user-only-remove" \
+  "${ROOT_DIR}/tests/verify-idempotence.sh" \
   "${ROOT_DIR}/wsl-dev/bootstrap.sh" \
   "${ROOT_DIR}/ubuntu-server/bootstrap.sh"
 
 if grep -R -nE 'apt_key:|apt_repository:' "${ROOT_DIR}/ansible"; then
   echo "错误：统一实现中仍有已弃用的 APT 仓库模块。" >&2
+  exit 1
+fi
+
+if grep -R -nE 'version:[[:space:]]*(master|main)$' \
+  "${ROOT_DIR}/ansible/roles"; then
+  echo "错误：统一实现中仍有跟随上游分支的 Git 安装。" >&2
+  exit 1
+fi
+
+if ! grep -Eq '^ohmyzsh_version:[[:space:]]+[0-9a-f]{40}$' \
+  "${ROOT_DIR}/ansible/group_vars/all.yml" || \
+   ! grep -Eq '^linuxbrew_version:[[:space:]]+[0-9a-f]{40}$' \
+  "${ROOT_DIR}/ansible/group_vars/all.yml"; then
+  echo "错误：Oh My Zsh 或 Linuxbrew 没有固定到不可变提交。" >&2
   exit 1
 fi
 

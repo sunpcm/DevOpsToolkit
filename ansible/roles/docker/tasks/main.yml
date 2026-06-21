@@ -11,6 +11,7 @@
       - python3-debian
     state: present
     update_cache: true
+    cache_valid_time: "{{ apt_cache_valid_time }}"
 
 - name: Configure the Docker deb822 repository
   become: true

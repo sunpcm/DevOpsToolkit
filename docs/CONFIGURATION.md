@@ -40,7 +40,7 @@ vim ansible/group_vars/all.yml
 | `configure_git` | `true` | Git 全局配置 |
 | `configure_uv` | `true` | uv |
 | `configure_node` | `true` | NVM 和 Node.js |
-| `configure_go` | `true` | 使用共享 goenv 安装 Go |
+| `configure_go` | `true` | 在目标用户 HOME 内安装固定版本的 goenv 和 Go |
 | `configure_homebrew_environment` | `true` | 在 Shell 中加载已有 Linuxbrew |
 | `configure_wsl_integration` | `true` | WSL Windows 互操作配置 |
 | `enable_wsl_docker_integration` | `true` | 检查 Docker Desktop 可用性 |
@@ -52,6 +52,18 @@ git_user_name: "Your Name"
 git_user_email: "you@example.com"
 git_editor: nvim
 ```
+
+工具版本均集中配置并按实际版本校验：
+
+```yaml
+uv_version: "0.9.18"
+nvm_version: bab86d5de571015b63fd8fc30b47bbe072a1290e
+node_version: "24.11.1"
+goenv_version: "3.1.4"
+go_version: "1.22.1"
+```
+
+Oh My Zsh、插件和 Linuxbrew 固定到不可变 Git commit。升级时应修改对应 revision，先在测试机运行两次幂等验证，再推广到正式机器。不要把 revision 改回 `main`、`master` 或开启自动更新，否则不同时间部署的机器可能得到不同结果。
 
 ### 系统组件
 
@@ -118,6 +130,17 @@ SSH 公钥可以提交，但更推荐放在环境专用变量文件中。
 - Playbook 全局 `become: false`。
 - 只有显式开启依赖安装例外时，单个 apt 任务提权。
 - 不允许把 user-only 当作 root 或任意用户配置器使用。
+- goenv 及其 Go 版本安装在当前用户的 `~/.local/share/devops-toolkit/goenv`，不再依赖共享 Linuxbrew。旧实现产生的 `~/.goenv` 不会被自动删除。
+
+## 功能开关的关闭语义
+
+关闭功能时，只自动删除能够确定由 DevOpsToolkit 独占管理的内容：
+
+- `configure_shell=false`：删除 `.zshrc` 中的托管 source 区块和托管 `shell.zsh`。
+- `configure_wsl_integration=false`：删除托管 WSL source 区块和 `wsl.sh`。
+- `target_passwordless_sudo=false`：删除 `90-devops-toolkit-<user>` sudoers 文件。
+
+出于数据安全考虑，不会自动删除 `.oh-my-zsh`、`.nvm`、`.goenv`、uv、Docker、Nginx、Linuxbrew 或用户自己的 Git 配置。安装类开关表示“是否安装或继续管理”，不表示卸载。卸载系统软件和用户工具应单独执行并先备份数据。
 
 ## SSH 变更安全流程
 
@@ -156,13 +179,13 @@ ansible-galaxy collection install -r ansible/requirements.yml
 
 处理：配置其中一种凭据，或先由管理员创建该用户。
 
-### user-only 提示缺少 curl、git 或 zsh
+### user-only 提示缺少 cc、make、curl、git 或 zsh
 
 推荐让管理员安装：
 
 ```bash
 sudo apt update
-sudo apt install -y curl git zsh
+sudo apt install -y build-essential curl git zsh
 ```
 
 不要为了绕过检查而启用全局 sudo。
@@ -214,3 +237,13 @@ git diff --check
 ```
 
 静态检查通过不代表系统级运行一定安全。SSH、UFW、用户创建和 Docker 安装必须先在临时 VM 验证首次执行与第二次幂等执行。
+
+在测试目标上真实执行两次并要求第二次 `changed=0`：
+
+```bash
+./tests/verify-idempotence.sh -- \
+  ./bin/user-only ansible/inventories/user-only.ini \
+  --private-key ~/.ssh/id_ed25519
+```
+
+该命令会真实修改目标机，不要直接拿生产服务器作为首次验证环境。

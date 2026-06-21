@@ -33,4 +33,3 @@
         profile_target_user: "{{ target_user }}"
         profile_target_home: "{{ target_account_home }}"
     - role: wsl_integration
-      when: configure_wsl_integration | bool

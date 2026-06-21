@@ -37,6 +37,13 @@
     mode: "0600"
   when: configure_shell | bool
 
+- name: Check whether the target Zsh configuration exists
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.stat:
+    path: "{{ profile_target_home }}/.zshrc"
+  register: target_zshrc
+
 - name: Ensure the target Zsh configuration exists
   become: "{{ profile_use_become }}"
   become_user: "{{ profile_target_user }}"
@@ -46,7 +53,9 @@
     mode: "0644"
     modification_time: preserve
     access_time: preserve
-  when: configure_shell | bool
+  when:
+    - configure_shell | bool
+    - not target_zshrc.stat.exists
 
 - name: Load the managed shell file without replacing user content
   become: "{{ profile_use_become }}"
@@ -59,6 +68,40 @@
     backup: true
   when: configure_shell | bool
 
+- name: Remove the managed Zsh loader when shell management is disabled
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.blockinfile:
+    path: "{{ profile_target_home }}/.zshrc"
+    marker: "# {mark} DEVOPSTOOLKIT USER PROFILE"
+    state: absent
+  when:
+    - not configure_shell | bool
+    - target_zshrc.stat.exists
+
+- name: Remove the managed shell file when shell management is disabled
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.file:
+    path: "{{ profile_target_home }}/.config/devops-toolkit/shell.zsh"
+    state: absent
+  when: not configure_shell | bool
+
+- name: Check the installed Oh My Zsh revision
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.command:
+    argv:
+      - git
+      - -C
+      - "{{ profile_target_home }}/.oh-my-zsh"
+      - rev-parse
+      - HEAD
+  register: ohmyzsh_revision
+  changed_when: false
+  failed_when: false
+  when: configure_shell | bool
+
 - name: Install Oh My Zsh without executing a remote installer
   become: "{{ profile_use_become }}"
   become_user: "{{ profile_target_user }}"
@@ -66,24 +109,46 @@
     repo: https://github.com/ohmyzsh/ohmyzsh.git
     dest: "{{ profile_target_home }}/.oh-my-zsh"
     version: "{{ ohmyzsh_version }}"
-    depth: 1
     update: true
-  when: configure_shell | bool
+  when:
+    - configure_shell | bool
+    - ohmyzsh_revision.rc != 0 or (ohmyzsh_revision.stdout | trim) != ohmyzsh_version
+
+- name: Check managed Zsh plugin revisions
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.command:
+    argv:
+      - git
+      - -C
+      - "{{ profile_target_home }}/.oh-my-zsh/custom/plugins/{{ item.key }}"
+      - rev-parse
+      - HEAD
+  loop: "{{ zsh_plugin_sources | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  register: zsh_plugin_revisions
+  changed_when: false
+  failed_when: false
+  when:
+    - configure_shell | bool
+    - item.key in zsh_plugins
 
 - name: Install managed Zsh plugins
   become: "{{ profile_use_become }}"
   become_user: "{{ profile_target_user }}"
   ansible.builtin.git:
-    repo: "{{ item.repo }}"
-    dest: "{{ profile_target_home }}/.oh-my-zsh/custom/plugins/{{ item.name }}"
-    depth: 1
+    repo: "{{ item.item.value.repo }}"
+    dest: "{{ profile_target_home }}/.oh-my-zsh/custom/plugins/{{ item.item.key }}"
+    version: "{{ item.item.value.version }}"
     update: true
-  loop:
-    - { name: zsh-autosuggestions, repo: "https://github.com/zsh-users/zsh-autosuggestions" }
-    - { name: zsh-syntax-highlighting, repo: "https://github.com/zsh-users/zsh-syntax-highlighting" }
+  loop: "{{ zsh_plugin_revisions.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.key }}"
   when:
     - configure_shell | bool
-    - item.name in zsh_plugins
+    - not item.skipped | default(false)
+    - item.rc != 0 or (item.stdout | trim) != item.item.value.version
 
 - name: Configure Git values owned by DevOpsToolkit
   become: "{{ profile_use_become }}"
@@ -104,12 +169,16 @@
     - configure_git | bool
     - item.value | string | length > 0
 
-- name: Check uv
+- name: Check the configured uv version
   become: "{{ profile_use_become }}"
   become_user: "{{ profile_target_user }}"
-  ansible.builtin.stat:
-    path: "{{ profile_target_home }}/.local/bin/uv"
+  ansible.builtin.command:
+    argv:
+      - "{{ profile_target_home }}/.local/bin/uv"
+      - --version
   register: user_uv
+  changed_when: false
+  failed_when: false
   when: configure_uv | bool
 
 - name: Install uv in the target HOME
@@ -122,7 +191,22 @@
     HOME: "{{ profile_target_home }}"
   when:
     - configure_uv | bool
-    - not user_uv.stat.exists
+    - user_uv.rc != 0 or not user_uv.stdout.startswith('uv ' ~ uv_version ~ ' ')
+
+- name: Check the installed NVM revision
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.command:
+    argv:
+      - git
+      - -C
+      - "{{ profile_target_home }}/.nvm"
+      - rev-parse
+      - HEAD
+  register: nvm_revision
+  changed_when: false
+  failed_when: false
+  when: configure_node | bool
 
 - name: Install the pinned NVM source
   become: "{{ profile_use_become }}"
@@ -131,15 +215,34 @@
     repo: https://github.com/nvm-sh/nvm.git
     dest: "{{ profile_target_home }}/.nvm"
     version: "{{ nvm_version }}"
-    update: false
-  when: configure_node | bool
+    update: true
+  when:
+    - configure_node | bool
+    - nvm_revision.rc != 0 or (nvm_revision.stdout | trim) != nvm_version
 
-- name: Check the configured Node version
+- name: Check the configured Node runtime
   become: "{{ profile_use_become }}"
   become_user: "{{ profile_target_user }}"
-  ansible.builtin.stat:
-    path: "{{ profile_target_home }}/.nvm/versions/node/v{{ node_version }}/bin/node"
+  ansible.builtin.command:
+    argv:
+      - "{{ profile_target_home }}/.nvm/versions/node/v{{ node_version }}/bin/node"
+      - --version
   register: user_node
+  changed_when: false
+  failed_when: false
+  when: configure_node | bool
+
+- name: Check the NVM default alias
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.shell: >-
+    test "$(cat {{ (profile_target_home + '/.nvm/alias/default') | quote }} 2>/dev/null)"
+    = {{ node_version | quote }}
+  args:
+    executable: /bin/sh
+  register: user_node_default
+  changed_when: false
+  failed_when: false
   when: configure_node | bool
 
 - name: Install the configured Node version
@@ -156,28 +259,78 @@
     HOME: "{{ profile_target_home }}"
   when:
     - configure_node | bool
-    - not user_node.stat.exists
+    - >-
+      user_node.rc != 0 or
+      (user_node.stdout | trim) != ('v' ~ node_version) or
+      user_node_default.rc != 0
 
-- name: Check the configured Go version
+- name: Create the managed user data directory for goenv
   become: "{{ profile_use_become }}"
   become_user: "{{ profile_target_user }}"
-  ansible.builtin.stat:
-    path: "{{ profile_target_home }}/.goenv/versions/{{ go_version }}/bin/go"
+  ansible.builtin.file:
+    path: "{{ profile_target_home }}/.local/share/devops-toolkit"
+    state: directory
+    mode: "0700"
+  when: configure_go | bool
+
+- name: Check the installed goenv revision
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.command:
+    argv:
+      - git
+      - -C
+      - "{{ profile_target_home }}/.local/share/devops-toolkit/goenv"
+      - rev-parse
+      - HEAD
+  register: goenv_revision
+  changed_when: false
+  failed_when: false
+  when: configure_go | bool
+
+- name: Install the pinned goenv source in the target HOME
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.git:
+    repo: https://github.com/go-nv/goenv.git
+    dest: "{{ profile_target_home }}/.local/share/devops-toolkit/goenv"
+    version: "{{ goenv_version }}"
+    update: true
+  when:
+    - configure_go | bool
+    - goenv_revision.rc != 0 or (goenv_revision.stdout | trim) != goenv_version
+
+- name: Check the configured Go runtime
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.command:
+    argv:
+      - "{{ profile_target_home }}/.local/share/devops-toolkit/goenv/versions/{{ go_version }}/bin/go"
+      - version
   register: user_go
+  changed_when: false
+  failed_when: false
   when: configure_go | bool
 
-- name: Check whether the system-managed goenv is available
-  ansible.builtin.stat:
-    path: /home/linuxbrew/.linuxbrew/bin/goenv
-  register: shared_goenv
+- name: Check the goenv global version
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.shell: >-
+    test "$(cat {{ (profile_target_home + '/.local/share/devops-toolkit/goenv/version') | quote }} 2>/dev/null)"
+    = {{ go_version | quote }}
+  args:
+    executable: /bin/sh
+  register: user_go_global
+  changed_when: false
+  failed_when: false
   when: configure_go | bool
 
-- name: Install Go through shared goenv when available
+- name: Install and select the configured Go version
   become: "{{ profile_use_become }}"
   become_user: "{{ profile_target_user }}"
   ansible.builtin.shell: |
-    export GOENV_ROOT={{ profile_target_home | quote }}'/.goenv'
-    export PATH="/home/linuxbrew/.linuxbrew/bin:$GOENV_ROOT/bin:$PATH"
+    export GOENV_ROOT={{ (profile_target_home + '/.local/share/devops-toolkit/goenv') | quote }}
+    export PATH="$GOENV_ROOT/bin:$PATH"
     goenv install -s {{ go_version | quote }}
     goenv global {{ go_version | quote }}
   args:
@@ -186,13 +339,7 @@
     HOME: "{{ profile_target_home }}"
   when:
     - configure_go | bool
-    - not user_go.stat.exists
-    - shared_goenv.stat.exists
-
-- name: Report unavailable Go installation without changing system state
-  ansible.builtin.debug:
-    msg: "Go skipped: system-managed goenv is not installed."
-  when:
-    - configure_go | bool
-    - not user_go.stat.exists
-    - not shared_goenv.stat.exists
+    - >-
+      user_go.rc != 0 or
+      ('go version go' ~ go_version ~ ' ') not in (user_go.stdout | default('')) or
+      user_go_global.rc != 0

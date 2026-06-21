@@ -26,24 +26,34 @@
           - ansible_env.HOME == user_only_home
         fail_msg: "user-only may only configure the authenticated non-root account and its real HOME."
 
+    - name: Resolve dependencies required by enabled user modules
+      ansible.builtin.set_fact:
+        user_only_required_commands: >-
+          {{
+            (['git'] if ((configure_git | bool) or (configure_shell | bool) or (configure_node | bool) or (configure_go | bool)) else []) +
+            (['curl'] if ((configure_uv | bool) or (configure_node | bool) or (configure_go | bool)) else []) +
+            (['zsh'] if (configure_shell | bool) else []) +
+            (['cc', 'make'] if (configure_go | bool) else [])
+          }}
+        user_only_dependency_allowlist: >-
+          {{
+            (['git'] if ((configure_git | bool) or (configure_shell | bool) or (configure_node | bool) or (configure_go | bool)) else []) +
+            (['curl'] if ((configure_uv | bool) or (configure_node | bool) or (configure_go | bool)) else []) +
+            (['zsh'] if (configure_shell | bool) else []) +
+            (['build-essential'] if (configure_go | bool) else [])
+          }}
+
     - name: Check required user-profile commands
       ansible.builtin.shell: "command -v {{ item }}"
       args:
         executable: /bin/sh
-      loop:
-        - curl
-        - git
-        - zsh
+      loop: "{{ user_only_required_commands | unique }}"
       register: user_only_command_checks
       changed_when: false
       failed_when: false
 
     - name: Record missing dependencies
       ansible.builtin.set_fact:
-        user_only_dependency_allowlist:
-          - curl
-          - git
-          - zsh
         user_only_missing_commands: >-
           {{ user_only_command_checks.results
              | selectattr('rc', 'ne', 0)
@@ -63,9 +73,10 @@
     - name: Install only whitelisted user-profile dependencies
       become: true
       ansible.builtin.apt:
-        name: "{{ user_only_dependency_allowlist }}"
+        name: "{{ user_only_dependency_allowlist | unique }}"
         state: present
         update_cache: true
+        cache_valid_time: "{{ apt_cache_valid_time }}"
       when:
         - user_only_missing_commands | length > 0
         - user_only_allow_system_dependencies | bool

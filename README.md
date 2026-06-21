@@ -107,6 +107,8 @@ vim ansible/inventories/user-only.ini
 
 - user-only 拒绝 root，且要求登录用户、目标用户和 HOME 所有者一致。
 - user-only 默认不使用 sudo；缺少 `curl`、`git`、`zsh` 时会退出。
+- user-only 配置 Go 时还需要 `cc` 和 `make`；缺少时会提示管理员安装 `build-essential`。
+- Oh My Zsh、插件、Linuxbrew 和语言工具使用集中版本配置，重复执行不会自动跟随上游分支。
 - 设置 `user_only_allow_system_dependencies=true` 后，只允许通过 sudo 安装上述白名单依赖。
 - 不在 inventory 中保存 SSH 密码或 sudo 密码。
 - 默认开启 SSH 主机指纹校验。

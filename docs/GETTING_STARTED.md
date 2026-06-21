@@ -278,7 +278,7 @@ sudo apt install -y curl git zsh
 - 通过 passwd 数据库解析真实 HOME。
 - 要求 SSH 登录用户、实际用户和 HOME 一致。
 - 用户角色所有写入均指向当前 HOME。
-- 不安装共享 Linuxbrew；只使用系统已经存在的 Linuxbrew/goenv。
+- 不安装共享 Linuxbrew；goenv 和 Go 安装在当前用户 HOME 内。
 
 ### 删除托管配置
 

@@ -64,13 +64,42 @@
   loop: "{{ target_authorized_keys }}"
   no_log: true
 
+- name: Check the legacy passwordless sudo file
+  become: true
+  ansible.builtin.stat:
+    path: "/etc/sudoers.d/{{ target_user }}"
+  register: legacy_sudoers_file
+
+- name: Read the legacy passwordless sudo file
+  become: true
+  ansible.builtin.slurp:
+    path: "/etc/sudoers.d/{{ target_user }}"
+  register: legacy_sudoers_content
+  when: legacy_sudoers_file.stat.exists
+
+- name: Remove the legacy sudo file only when it exactly matches DevOpsToolkit content
+  become: true
+  ansible.builtin.file:
+    path: "/etc/sudoers.d/{{ target_user }}"
+    state: absent
+  when:
+    - legacy_sudoers_file.stat.exists
+    - (legacy_sudoers_content.content | b64decode) == (target_user ~ ' ALL=(ALL) NOPASSWD:ALL\n')
+
 - name: Configure optional passwordless sudo for the target account
   become: true
   ansible.builtin.copy:
-    dest: "/etc/sudoers.d/{{ target_user }}"
+    dest: "/etc/sudoers.d/90-devops-toolkit-{{ target_user }}"
     content: "{{ target_user }} ALL=(ALL) NOPASSWD:ALL\n"
     owner: root
     group: root
     mode: "0440"
     validate: "visudo -cf %s"
   when: target_passwordless_sudo | bool
+
+- name: Remove managed passwordless sudo when disabled
+  become: true
+  ansible.builtin.file:
+    path: "/etc/sudoers.d/90-devops-toolkit-{{ target_user }}"
+    state: absent
+  when: not target_passwordless_sudo | bool

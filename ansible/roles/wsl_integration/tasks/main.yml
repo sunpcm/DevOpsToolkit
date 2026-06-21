@@ -5,17 +5,21 @@
   ansible.builtin.command: cmd.exe /c echo %USERNAME%
   register: windows_account
   changed_when: false
+  when: configure_wsl_integration | bool
 
 - name: Verify Docker Desktop integration when requested
   become: true
   become_user: "{{ target_user }}"
   ansible.builtin.command: docker version
   changed_when: false
-  when: enable_wsl_docker_integration | bool
+  when:
+    - configure_wsl_integration | bool
+    - enable_wsl_docker_integration | bool
 
 - name: Normalize and validate the Windows account
   ansible.builtin.set_fact:
     windows_user: "{{ windows_account.stdout | trim }}"
+  when: configure_wsl_integration | bool
 
 - name: Refuse an invalid Windows account path
   ansible.builtin.assert:
@@ -23,6 +27,7 @@
       - windows_user | length > 0
       - "'/' not in windows_user"
       - "'\\\\' not in windows_user"
+  when: configure_wsl_integration | bool
 
 - name: Install WSL helper functions in the target HOME
   become: true
@@ -36,6 +41,7 @@
       paste() { powershell.exe -NoProfile -Command Get-Clipboard | sed 's/\r$//'; }
       export WINUSER={{ windows_user | quote }}
       export WINHOME="/mnt/c/Users/$WINUSER"
+  when: configure_wsl_integration | bool
 
 - name: Load WSL helpers from the managed user shell file
   become: true
@@ -45,6 +51,9 @@
     marker: "# {mark} DEVOPSTOOLKIT WSL INTEGRATION"
     block: |
       [ -r "$HOME/.config/devops-toolkit/wsl.sh" ] && source "$HOME/.config/devops-toolkit/wsl.sh"
+  when:
+    - configure_wsl_integration | bool
+    - configure_shell | bool
 
 - name: Check expected Windows directories
   ansible.builtin.stat:
@@ -54,6 +63,7 @@
     - { src: Desktop, dest: desktop }
     - { src: Documents, dest: documents }
   register: windows_directories
+  when: configure_wsl_integration | bool
 
 - name: Link existing Windows directories without replacing user files
   become: true
@@ -63,7 +73,36 @@
     dest: "{{ target_account_home }}/{{ item.item.dest }}"
     state: link
     force: false
-  loop: "{{ windows_directories.results }}"
+  loop: "{{ windows_directories.results | default([]) }}"
   loop_control:
     label: "{{ item.item.dest }}"
-  when: item.stat.exists
+  when:
+    - configure_wsl_integration | bool
+    - item.stat.exists
+
+- name: Check the managed shell file before removing WSL integration
+  become: true
+  become_user: "{{ target_user }}"
+  ansible.builtin.stat:
+    path: "{{ target_account_home }}/.config/devops-toolkit/shell.zsh"
+  register: managed_shell_file
+  when: not configure_wsl_integration | bool
+
+- name: Remove the managed WSL shell loader when disabled
+  become: true
+  become_user: "{{ target_user }}"
+  ansible.builtin.blockinfile:
+    path: "{{ target_account_home }}/.config/devops-toolkit/shell.zsh"
+    marker: "# {mark} DEVOPSTOOLKIT WSL INTEGRATION"
+    state: absent
+  when:
+    - not configure_wsl_integration | bool
+    - managed_shell_file.stat.exists
+
+- name: Remove the managed WSL helper file when disabled
+  become: true
+  become_user: "{{ target_user }}"
+  ansible.builtin.file:
+    path: "{{ target_account_home }}/.config/devops-toolkit/wsl.sh"
+    state: absent
+  when: not configure_wsl_integration | bool

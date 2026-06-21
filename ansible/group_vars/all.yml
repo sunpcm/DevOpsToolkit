@@ -22,21 +22,32 @@ git_editor: nvim
 git_default_branch: main
 git_pull_rebase: "false"
 
-nvm_version: v0.39.7
+nvm_version: bab86d5de571015b63fd8fc30b47bbe072a1290e
 node_version: "24.11.1"
 go_version: "1.22.1"
-uv_install_url: https://astral.sh/uv/install.sh
+uv_version: "0.9.18"
+uv_install_url: "https://astral.sh/uv/{{ uv_version }}/install.sh"
+goenv_version: "3.1.4"
 
-ohmyzsh_version: master
+# Immutable revisions keep repeated runs reproducible. Update them deliberately.
+ohmyzsh_version: c954bbb168fc645592c50017de0d0e138db8df5f
 zsh_theme: agnoster
 zsh_plugins:
   - git
   - zsh-autosuggestions
   - zsh-syntax-highlighting
+zsh_plugin_sources:
+  zsh-autosuggestions:
+    repo: https://github.com/zsh-users/zsh-autosuggestions
+    version: 0e810e5afa27acbd074398eefbe28d13005dbc15
+  zsh-syntax-highlighting:
+    repo: https://github.com/zsh-users/zsh-syntax-highlighting
+    version: 5eb677bb0fa9a3e60f0eff031dc13926e093df92
 
 # System profile
 system_timezone: Asia/Shanghai
 system_locale: en_US.UTF-8
+apt_cache_valid_time: 3600
 system_packages:
   - build-essential
   - ca-certificates
@@ -48,6 +59,7 @@ system_packages:
   - zsh
 
 install_linuxbrew: true
+linuxbrew_version: 686144996e76cda071d5829d1c180704dd271fc3
 linuxbrew_packages:
   - bat
   - btop
