@@ -8,22 +8,43 @@
   ansible.builtin.apt:
     name:
       - ca-certificates
-      - python3-debian
     state: present
     update_cache: true
     cache_valid_time: "{{ apt_cache_valid_time }}"
 
-- name: Configure the Docker deb822 repository
+- name: Create the APT keyring directory
   become: true
-  ansible.builtin.deb822_repository:
-    name: docker
-    types: [deb]
-    uris: https://download.docker.com/linux/ubuntu
-    suites: ["{{ ansible_distribution_release }}"]
-    components: [stable]
-    architectures: ["{{ docker_deb_arch }}"]
-    signed_by: https://download.docker.com/linux/ubuntu/gpg
-    state: present
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Download the Docker repository signing key
+  become: true
+  ansible.builtin.get_url:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    dest: /etc/apt/keyrings/docker.asc
+    owner: root
+    group: root
+    mode: "0644"
+  register: docker_repository_key
+
+- name: Configure the Docker deb822 source
+  become: true
+  ansible.builtin.copy:
+    dest: /etc/apt/sources.list.d/docker.sources
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      Types: deb
+      URIs: https://download.docker.com/linux/ubuntu
+      Suites: {{ ansible_distribution_release }}
+      Components: stable
+      Architectures: {{ docker_deb_arch }}
+      Signed-By: /etc/apt/keyrings/docker.asc
   register: docker_repository
 
 - name: Install Docker Engine and Compose
@@ -36,7 +57,7 @@
       - docker-ce-cli
       - docker-compose-plugin
     state: present
-    update_cache: "{{ docker_repository.changed }}"
+    update_cache: "{{ docker_repository_key.changed or docker_repository.changed }}"
 
 - name: Enable Docker
   become: true
