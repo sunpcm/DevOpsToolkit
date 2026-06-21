@@ -28,6 +28,8 @@
 
 安装完成后会在交互终端自动启动向导。选择 `Ubuntu` → `当前服务器本地执行`，即可创建目标用户并配置系统；普通用户执行同一命令时只安装到 `~/.local`，且绝不提权。
 
+安装器会同时验证 Release 的 SHA256 和 Sigstore 身份，要求产物来自本仓库的 Release workflow 与对应 tag；验证失败不会降级安装。首次运行会下载并缓存固定版本 Cosign。
+
 生产环境建议固定版本：
 
 ```bash
@@ -157,6 +159,7 @@ vim ansible/inventories/user-only.ini
 - 设置 `user_only_allow_system_dependencies=true` 后，只允许通过 sudo 安装上述白名单依赖。
 - 不在 inventory 中保存 SSH 密码或 sudo 密码。
 - 默认开启 SSH 主机指纹校验。
+- Release 同时执行 SHA256 与 Sigstore/Cosign 身份验证，任一失败都不会切换已安装版本。
 - 用户 Shell 配置写入 `~/.config/devops-toolkit/shell.zsh`，仅在现有 `.zshrc` 中增加一个托管 source 区块。
 
 ## 文档
@@ -175,7 +178,7 @@ vim ansible/inventories/user-only.ini
 ./tests/verify-ansible.sh
 ```
 
-该检查覆盖新旧入口的 Bash 语法、全部新 Playbook 的 Ansible 语法，以及全局提权、主机指纹和弃用模块检查。
+该检查覆盖新旧入口的 Bash 语法、全部 Playbook 的 Ansible 语法、安装器失败边界、Release 包内容、Sigstore 身份参数、Action 固定引用，以及全局提权、主机指纹和弃用模块检查。
 
 ## 兼容入口
 

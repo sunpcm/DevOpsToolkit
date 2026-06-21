@@ -33,6 +33,20 @@ export PATH="$HOME/.local/bin:$PATH"
 
 普通用户安装绝不提权。缺少 Python、Ansible、Git、curl 或 OpenSSL 时，安装器会停止，并给出需要管理员安装的依赖。
 
+## 安装器验证顺序
+
+安装器不会下载完成后立即解压到正式目录，而是按以下顺序处理：
+
+1. 下载压缩包、SHA256 文件和 Sigstore bundle。
+2. 验证压缩包 SHA256。
+3. 在权限为 `0700` 的临时目录中检查 tar 路径并解包。
+4. 核对包内 `VERSION` 与请求的版本。
+5. 下载或复用固定版本 Cosign，并用安装器内置 SHA256 校验 Cosign 本身。
+6. 验证 Release 的 OIDC issuer、仓库、workflow、tag ref 和触发事件。
+7. 安装版本内 Ansible collections；全部成功后才原子切换 `current`。
+
+任何一步失败，当前已安装版本都不会切换。Cosign 验证需要访问 Sigstore 信任根和透明日志服务；受限网络应显式放行，不要通过删除验证逻辑绕过。
+
 ## 固定版本和安装选项
 
 生产环境推荐固定版本：
@@ -128,3 +142,36 @@ ansible-galaxy collection install -r ansible/requirements.yml
 - 首次 SSH 连接仍会正常校验主机指纹，安装方式不会关闭该保护。
 
 完整信任模型和 GitHub 手工加固清单见[发布供应链安全](SUPPLY_CHAIN_SECURITY.md)。
+
+## 签名验证故障排查
+
+### Release 缺少 `.sigstore.json`
+
+通常表示该版本发布不完整或早于签名机制。不要手工伪造空 bundle，也不要改成只验证 SHA256；应重新发布新版本。
+
+### Cosign SHA256 校验失败
+
+不要执行已下载的 Cosign。先确认系统与架构：
+
+```bash
+uname -s
+uname -m
+```
+
+然后检查网络代理是否返回了登录页、错误页或被替换的下载内容。安装器当前只支持 Linux/macOS 的 AMD64 与 ARM64。
+
+### Sigstore 身份验证失败
+
+这表示签名不存在、签名不绑定当前压缩包，或者证书身份不是本仓库的 Release workflow 和对应 tag。该错误不能通过重算 SHA256 修复，应检查 GitHub Actions 的 Release 运行记录和三个 Release 资产是否来自同一次发布。
+
+### 网络或证书错误
+
+确认系统时间、CA 证书和 HTTPS 代理正确：
+
+```bash
+date -u
+curl -I https://github.com
+curl -I https://tuf-repo-cdn.sigstore.dev
+```
+
+网络恢复后重新运行安装器即可；失败过程不会删除旧版本。

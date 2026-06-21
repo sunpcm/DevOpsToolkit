@@ -48,6 +48,8 @@ sudo ./bin/devops-toolkit
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/sunpcm/DevOpsToolkit/main/install.sh)"
 ```
 
+安装阶段会验证 SHA256 和 Sigstore 发布身份；签名或网络验证失败时不会启动向导，也不会降级为未签名安装。详细故障排查见[安装、升级与回滚](INSTALLATION.md)。
+
 首个 Release 发布前，或需要审查源码时使用 clone：
 
 ```bash
