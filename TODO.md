@@ -53,11 +53,15 @@
 
 ### P0-3：迁移到受支持的 Ansible 控制端基线
 
-- [ ] 作出并记录控制端决策：推荐 Python 3.12+ 与受支持的 `ansible-core 2.21.x` 精确补丁版本；不要继续发布只允许 `<2.19` 的 EOL runtime。
-- [ ] 将 Ansible 安装到 DevOpsToolkit 自有隔离 runtime，移除系统 Python 的 `pip --break-system-packages` 路径。
-- [ ] 明确 Ubuntu 22.04 的边界：可继续作为受管目标；若保留本机/WSL 控制端模式，则必须提供隔离 Python 3.12 runtime，否则标记为不支持。
-- [ ] 更新 collections 到与新 core 兼容的受支持版本，并在 Python/Ansible/目标 OS 矩阵中验证。
-- [ ] 更新 README、安装文档、交互文档、CI 矩阵和错误提示，避免继续推荐 EOL Ansible。
+本地实现提交与真实 VM 证据见
+[`archive/progress/2026-09-22-ansible-p0-3-runtime.md`](archive/progress/2026-09-22-ansible-p0-3-runtime.md)。
+已固定 Python 3.12–3.14 / core 2.21.4、隔离 venv、22.04 目标边界及三项 collections，
+并更新 README、安装/交互文档和 CI 定义。当前仍是未发布的本地分支。
+
+- [ ] 推送前独立复核本地提交，并取得 GitHub Validate 在 Python 3.12、3.14 上对同一 SHA 的真实通过结果；
+      本地 macOS Python 3.14 门禁与 Ubuntu 24.04 Python 3.12 runtime/两版目标 VM smoke 不等于远端矩阵通过。
+- [ ] 新版本发布前重新验证 2.21.4 runtime 与三项 collections 的 Release 构建、签名、安装及回滚门槛；
+      不把本地测试 tarball 视为正式 Release。
 
 验收证据：全新控制端不修改系统 Python，能够离线复用已安装 runtime；支持矩阵全部通过 `verify-ansible.sh` 和真实 VM smoke；
 重复安装 runtime 不产生变化，旧 runtime 的迁移/回滚路径有记录。
