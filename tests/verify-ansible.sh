@@ -35,13 +35,23 @@ bash -n \
   "${ROOT_DIR}/tests/test-installer.sh" \
   "${ROOT_DIR}/tests/test-release.sh" \
   "${ROOT_DIR}/tests/verify-idempotence.sh" \
-  "${ROOT_DIR}/tests/multipass-smoke.sh"
+  "${ROOT_DIR}/tests/multipass-smoke.sh" \
+  "${ROOT_DIR}/AcmeConfig/acme-init.sh" \
+  "${ROOT_DIR}/AcmeConfig/acme-check.sh" \
+  "${ROOT_DIR}/AcmeConfig/acme-cleanup.sh" \
+  "${ROOT_DIR}/AcmeConfig/tests/vm-smoke.sh" \
+  "${ROOT_DIR}/AcmeConfig/bin/acme-add" \
+  "${ROOT_DIR}/AcmeConfig/bin/acme-list" \
+  "${ROOT_DIR}/AcmeConfig/bin/acme-revoke"
 
 python3 -c 'import sys; from pathlib import Path; p=Path(sys.argv[1]); compile(p.read_text(), str(p), "exec")' \
   "${ROOT_DIR}/bin/devops-toolkit"
+python3 -c 'import sys; from pathlib import Path; p=Path(sys.argv[1]); compile(p.read_text(), str(p), "exec")' \
+  "${ROOT_DIR}/AcmeConfig/libexec/acme-manager"
 python3 -c 'import runpy, stat, sys; from pathlib import Path; m=runpy.run_path(sys.argv[1]); p=Path(sys.argv[2]); m["secure_write"](p, "{}\n"); assert stat.S_IMODE(p.stat().st_mode) == 0o600' \
   "${ROOT_DIR}/bin/devops-toolkit" "${TMP_DIR}/sensitive-vars.json"
 python3 "${ROOT_DIR}/tests/test-wizard.py"
+python3 "${ROOT_DIR}/AcmeConfig/tests/test_acme_manager.py"
 "${ROOT_DIR}/bin/devops-toolkit" --help >/dev/null
 [[ "$("${ROOT_DIR}/bin/devops-toolkit" --version)" == "development" ]]
 # 主推入口是 bash -c "$(curl ... install.sh)"，此时 BASH_SOURCE 为空；
@@ -96,7 +106,39 @@ if command -v shellcheck >/dev/null 2>&1; then
     "${ROOT_DIR}/install.sh" \
     "${ROOT_DIR}/scripts/build-release.sh" \
     "${ROOT_DIR}/tests/test-installer.sh" \
-    "${ROOT_DIR}/tests/test-release.sh"
+    "${ROOT_DIR}/tests/test-release.sh" \
+    "${ROOT_DIR}/AcmeConfig/acme-init.sh" \
+    "${ROOT_DIR}/AcmeConfig/acme-check.sh" \
+    "${ROOT_DIR}/AcmeConfig/acme-cleanup.sh" \
+    "${ROOT_DIR}/AcmeConfig/tests/vm-smoke.sh" \
+    "${ROOT_DIR}/AcmeConfig/bin/acme-add" \
+    "${ROOT_DIR}/AcmeConfig/bin/acme-list" \
+    "${ROOT_DIR}/AcmeConfig/bin/acme-revoke"
+fi
+
+acme_init="${ROOT_DIR}/AcmeConfig/acme-init.sh"
+acme_manager="${ROOT_DIR}/AcmeConfig/libexec/acme-manager"
+if grep -Fq 'get.acme.sh' "${acme_init}" || \
+   ! grep -Fq 'ACME_SH_COMMIT="807da6498377ee5e0cf43a78091f46f12dc59a89"' "${acme_init}" || \
+   ! grep -Fq 'ACME_SH_ARCHIVE_SHA256="ddbe1bcbd1a44a2623a2af167ebdc678669e6e2eb396742f2d1d28e02dc14220"' "${acme_init}"; then
+  echo "错误：AcmeConfig 必须下载固定提交并校验归档 SHA256，不得执行 get.acme.sh。" >&2
+  exit 1
+fi
+if ! grep -Fq "usermod --groups \"\${ACME_SECRETS_GROUP}\" \"\${ACME_USER}\"" "${acme_init}" || \
+   grep -Fq 'acme 在 ssl-cert' "${ROOT_DIR}/AcmeConfig/acme-check.sh"; then
+  echo "错误：ACME 续期账户与证书消费者组没有保持隔离。" >&2
+  exit 1
+fi
+if grep -nE 'shell[[:space:]]*=[[:space:]]*True|os[.]system' "${acme_manager}"; then
+  echo "错误：ACME 管理器不得通过 shell 或拼接命令执行外部输入。" >&2
+  exit 1
+fi
+if ! grep -Fq 'User=acme' "${ROOT_DIR}/AcmeConfig/systemd/acme-renew.service" || \
+   ! grep -Fq 'User=root' "${ROOT_DIR}/AcmeConfig/systemd/acme-deploy.service" || \
+   ! grep -Fq 'ReadWritePaths=/var/lib/acme/certs /var/lib/acme/deploy-queue /var/lib/acme/deploy-failed' \
+     "${ROOT_DIR}/AcmeConfig/systemd/acme-deploy.service"; then
+  echo "错误：ACME 续期与证书发布的 systemd 权限边界不完整。" >&2
+  exit 1
 fi
 
 if grep -R -nE 'apt_key:|apt_repository:' "${ROOT_DIR}/ansible"; then

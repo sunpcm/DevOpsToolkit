@@ -1,0 +1,32 @@
+[Unit]
+Description=Deploy staged ACME certificates through the root boundary
+After=acme-renew.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+ExecStart=/usr/local/libexec/devops-toolkit/acme-manager process-queue
+NoNewPrivileges=true
+CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE
+SystemCallArchitectures=native
+RestrictNamespaces=true
+ProtectProc=invisible
+PrivateNetwork=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+ReadOnlyPaths=/etc/acme /var/lib/acme/staging
+ReadWritePaths=/var/lib/acme/certs /var/lib/acme/deploy-queue /var/lib/acme/deploy-failed
+RestrictAddressFamilies=AF_UNIX
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true

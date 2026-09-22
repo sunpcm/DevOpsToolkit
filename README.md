@@ -181,7 +181,7 @@ vim ansible/inventories/user-only.ini
 - [交互式向导说明](docs/INTERACTIVE.md)
 - [配置、安全与故障排查](docs/CONFIGURATION.md)
 - [Multipass 真实环境测试](docs/MULTIPASS_TESTING.md)
-- [ACME 证书管理](AcmeConfig/README.md)
+- [ACME 证书管理（安全重构中，暂勿用于生产）](AcmeConfig/README.md)
 - [历史文档](archive/README.md)
 
 ## 验证代码

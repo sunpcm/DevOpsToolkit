@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch for validated ACME certificate deployment requests
+
+[Path]
+PathExistsGlob=/var/lib/acme/deploy-queue/*
+Unit=acme-deploy.service
+
+[Install]
+WantedBy=multi-user.target

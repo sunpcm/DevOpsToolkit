@@ -1,115 +1,174 @@
-#!/bin/bash
-
+#!/usr/bin/env bash
 set -euo pipefail
 
-# ============================================================================
-# ACME.sh 清理脚本
-# 功能：清理失败的安装，为重新安装做准备
-# 用法：sudo bash acme-cleanup.sh
-# ============================================================================
+readonly ACME_BASE="/var/lib/acme"
+readonly ACME_ETC="/etc/acme"
+readonly DEFAULT_BACKUP_ROOT="/var/backups/devops-toolkit-acme"
 
-ACME_HOME="/var/lib/acme"
+APPLY=0
+BACKUP_ROOT="${DEFAULT_BACKUP_ROOT}"
 
-# 颜色输出
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+usage() {
+  cat <<'EOF'
+用法：sudo ./acme-cleanup.sh [--yes] [--backup-dir /绝对路径]
 
-log_info() {
-    echo -e "${GREEN}[INFO]${NC} $*"
+默认只显示清理范围，不修改系统。传入 --yes 后，脚本会先创建仅 root 可读的
+备份，再停用 unit 并删除 DevOpsToolkit ACME 的固定路径。不会删除系统用户或组。
+EOF
 }
 
-log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $*"
+fail() {
+  printf '错误：%s\n' "$*" >&2
+  exit 1
 }
 
-log_error() {
-    echo -e "${RED}[ERROR]${NC} $*"
+info() {
+  printf '==> %s\n' "$*"
 }
 
-# 检查是否 root
-if [[ $EUID -ne 0 ]]; then
-    log_error "此脚本必须以 root 身份运行"
-    exit 1
-fi
+parse_arguments() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --yes)
+        APPLY=1
+        shift
+        ;;
+      --backup-dir)
+        [[ $# -ge 2 ]] || fail "--backup-dir 缺少路径。"
+        BACKUP_ROOT="$2"
+        shift 2
+        ;;
+      -h | --help)
+        usage
+        exit 0
+        ;;
+      *)
+        fail "未知参数：$1"
+        ;;
+    esac
+  done
+}
 
-log_info "========================================"
-log_info "ACME.sh 清理脚本"
-log_info "========================================"
+validate_fixed_paths() {
+  local resolved_backup_root
+  [[ "${ACME_BASE}" == "/var/lib/acme" ]] || fail "ACME_BASE 安全校验失败。"
+  [[ "${ACME_ETC}" == "/etc/acme" ]] || fail "ACME_ETC 安全校验失败。"
+  [[ "${BACKUP_ROOT}" == /* && "${BACKUP_ROOT}" != "/" ]] || \
+    fail "备份目录必须是非根目录的绝对路径。"
+  [[ "/${BACKUP_ROOT#/}" != *"/../"* && "${BACKUP_ROOT}" != */.. ]] || \
+    fail "备份目录不得包含 ..。"
+  resolved_backup_root="$(realpath -m -- "${BACKUP_ROOT}")"
+  case "${resolved_backup_root}" in
+    / | "${ACME_BASE}" | "${ACME_BASE}"/* | "${ACME_ETC}" | "${ACME_ETC}"/*)
+      fail "备份目录与待清理目录重叠：${resolved_backup_root}"
+      ;;
+  esac
+}
 
-# 停止和禁用 systemd 服务
-log_info "停止 systemd 服务..."
-systemctl stop acme-renew.timer 2>/dev/null || true
-systemctl stop acme-renew.service 2>/dev/null || true
-systemctl disable acme-renew.timer 2>/dev/null || true
-systemctl disable acme-renew.service 2>/dev/null || true
-rm -f /etc/systemd/system/acme-renew.service
-rm -f /etc/systemd/system/acme-renew.timer
-systemctl daemon-reload
-systemctl reset-failed acme-renew.service 2>/dev/null || true
-systemctl reset-failed acme-renew.timer 2>/dev/null || true
+print_scope() {
+  cat <<EOF
+将备份（如存在）：
+  ${ACME_BASE}
+  ${ACME_ETC}
 
-# 清理 acme.sh 安装
-log_info "清理 acme.sh 安装..."
-if [[ -d "$ACME_HOME/home/.acme.sh" ]]; then
-    rm -rf "$ACME_HOME/home/.acme.sh"
-    log_info "✓ 已清理 $ACME_HOME/home/.acme.sh"
-fi
+将停用：
+  acme-renew.timer
+  acme-renew.service
+  acme-deploy.path
+  acme-deploy.service
 
-if [[ -d "$ACME_HOME/.acme.sh" ]]; then
-    rm -rf "$ACME_HOME/.acme.sh"
-    log_info "✓ 已清理 $ACME_HOME/.acme.sh"
-fi
+将删除：
+  ${ACME_BASE}
+  ${ACME_ETC}
+  /usr/local/libexec/devops-toolkit/acme-manager
+  /usr/local/bin/acme-add
+  /usr/local/bin/acme-list
+  /usr/local/bin/acme-revoke
+  /etc/systemd/system/acme-renew.service
+  /etc/systemd/system/acme-renew.timer
+  /etc/systemd/system/acme-deploy.service
+  /etc/systemd/system/acme-deploy.path
+  /etc/logrotate.d/acme
 
-if [[ -f "$ACME_HOME/home/acme-install.sh" ]]; then
-    rm -f "$ACME_HOME/home/acme-install.sh"
-    log_info "✓ 已删除 $ACME_HOME/home/acme-install.sh"
-fi
+不会删除：acme 用户、acme/acme-secrets/ssl-cert 组。
+EOF
+}
 
-declare -a backup_dirs=()
-shopt -s nullglob
-backup_dirs=("$ACME_HOME"/home/.acme.sh.backup.*)
-shopt -u nullglob
-if (( ${#backup_dirs[@]} )); then
-    rm -rf "${backup_dirs[@]}"
-    log_info "✓ 已清理 ${#backup_dirs[@]} 个 acme.sh 备份目录"
-fi
+create_backup() {
+  local timestamp backup_directory archive
+  local -a relative_paths=()
+  timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  backup_directory="${BACKUP_ROOT}/${timestamp}"
+  archive="${backup_directory}/acme-state.tar.gz"
 
-# 清理配置文件
-log_info "清理配置文件..."
-if [[ -f "$ACME_HOME/.profile" ]]; then
-    rm -f "$ACME_HOME/.profile"
-    log_info "✓ 已删除 $ACME_HOME/.profile"
-fi
+  [[ ! -L "${BACKUP_ROOT}" ]] || fail "拒绝符号链接备份目录。"
+  [[ ! -e "${backup_directory}" ]] || fail "备份目标已存在：${backup_directory}"
+  install -d -o root -g root -m 0700 "${BACKUP_ROOT}" "${backup_directory}"
+  [[ -d "${BACKUP_ROOT}" && ! -L "${BACKUP_ROOT}" ]] || fail "拒绝符号链接备份目录。"
+  [[ -d "${backup_directory}" && ! -L "${backup_directory}" ]] || \
+    fail "拒绝符号链接备份目标。"
 
-if [[ -d "$ACME_HOME/config" ]]; then
-    find "$ACME_HOME/config" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-    log_info "✓ 已清空 $ACME_HOME/config"
-fi
+  [[ ! -e "${ACME_BASE}" ]] || relative_paths+=("${ACME_BASE#/}")
+  [[ ! -e "${ACME_ETC}" ]] || relative_paths+=("${ACME_ETC#/}")
+  if ((${#relative_paths[@]} == 0)); then
+    printf '未发现 ACME 状态目录；无需创建状态归档。\n' >"${backup_directory}/EMPTY"
+    chmod 0600 "${backup_directory}/EMPTY"
+  else
+    tar --create --gzip --file "${archive}" --directory / -- "${relative_paths[@]}"
+    chown root:root "${archive}"
+    chmod 0600 "${archive}"
+  fi
 
-if [[ -d "$ACME_HOME/certs" ]]; then
-    find "$ACME_HOME/certs" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-    log_info "✓ 已清空 $ACME_HOME/certs"
-fi
+  printf 'created_utc=%s\nacme_base=%s\nacme_etc=%s\n' \
+    "${timestamp}" "${ACME_BASE}" "${ACME_ETC}" >"${backup_directory}/MANIFEST"
+  chmod 0600 "${backup_directory}/MANIFEST"
+  info "备份已创建：${backup_directory}"
+}
 
-if [[ -d "$ACME_HOME/logs" ]]; then
-    find "$ACME_HOME/logs" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-    log_info "✓ 已清空 $ACME_HOME/logs"
-fi
+stop_units() {
+  local unit
+  for unit in acme-renew.timer acme-renew.service acme-deploy.path acme-deploy.service; do
+    systemctl disable --now "${unit}" >/dev/null 2>&1 || true
+  done
+}
 
-# 清理 logrotate
-rm -f /etc/logrotate.d/acme
+remove_managed_paths() {
+  rm -f -- \
+    /usr/local/libexec/devops-toolkit/acme-manager \
+    /usr/local/bin/acme-add \
+    /usr/local/bin/acme-list \
+    /usr/local/bin/acme-revoke \
+    /etc/systemd/system/acme-renew.service \
+    /etc/systemd/system/acme-renew.timer \
+    /etc/systemd/system/acme-deploy.service \
+    /etc/systemd/system/acme-deploy.path \
+    /etc/logrotate.d/acme
+  rm -rf -- "${ACME_BASE}" "${ACME_ETC}"
+  systemctl daemon-reload
+  systemctl reset-failed \
+    acme-renew.service acme-deploy.service >/dev/null 2>&1 || true
+}
 
-# 清理 DNS 配置
-log_info "清理 DNS 配置..."
-rm -f /etc/acme/dns-config
-rmdir /etc/acme 2>/dev/null || true
+main() {
+  parse_arguments "$@"
+  [[ "${EUID}" -eq 0 ]] || fail "必须以 root 身份运行。"
+  command -v install >/dev/null 2>&1 || fail "缺少命令：install"
+  command -v realpath >/dev/null 2>&1 || fail "缺少命令：realpath"
+  command -v systemctl >/dev/null 2>&1 || fail "缺少命令：systemctl"
+  command -v tar >/dev/null 2>&1 || fail "缺少命令：tar"
+  validate_fixed_paths
+  print_scope
 
-# 清理辅助脚本
-log_info "清理辅助脚本..."
-rm -f /usr/local/bin/acme-add
-rm -f /usr/local/bin/acme-list
-rm -f /usr/local/bin/acme-revoke
+  if [[ "${APPLY}" -ne 1 ]]; then
+    info "以上为 dry-run；未修改系统。确认后使用 --yes。"
+    return 0
+  fi
 
-log_info "✓ 清理完成，现在可以重新运行 acme-init.sh"
+  umask 077
+  create_backup
+  stop_units
+  remove_managed_paths
+  info "清理完成；备份保留在 ${BACKUP_ROOT}。"
+}
+
+main "$@"

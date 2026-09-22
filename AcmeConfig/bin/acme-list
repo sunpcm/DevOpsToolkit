@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+exec /usr/local/libexec/devops-toolkit/acme-manager list "$@"

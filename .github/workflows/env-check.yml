@@ -47,7 +47,9 @@ jobs:
         run: yamllint .
 
       - name: Ruff
-        run: ruff check bin/devops-toolkit tests/test-wizard.py
+        run: >-
+          ruff check bin/devops-toolkit tests/test-wizard.py
+          AcmeConfig/libexec/acme-manager AcmeConfig/tests/test_acme_manager.py
 
       - name: Actionlint
         run: actionlint

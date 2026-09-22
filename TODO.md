@@ -1,44 +1,127 @@
 # DevOpsToolkit TODO
 
-> 更新日期：2026-08-01
+> 更新日期：2026-09-22
 >
-> 原则：这里只保留尚未完成、可验证的工作；已完成阶段的详细记录移入
-> [`archive/progress/`](archive/progress/)。
+> 原则：这里只保留尚未完成、能够独立验收的工作。完成项及历史证据移入
+> [`archive/progress/`](archive/progress/)，不要让历史记录掩盖当前优先级。
 
-## 当前基线
+## 当前基线与边界
 
-- 唯一受支持实现是 `ansible/`，唯一受支持入口是 `bin/` 与 `install.sh`。
-- 原根目录兼容 Playbook、`wsl-dev/`、`ubuntu-server/` tracked 资产已归档；
-  `tests/verify-ansible.sh` 会阻止它们重新出现在活跃路径。
-- Ubuntu 22.04 / 24.04 已通过首次执行、第二次 `changed=0`、受控 uv 镜像和系统故障注入验证。
-- `v0.1.5` 已签名发布并验证内置 collections；macOS root 系统安装暴露出私有 `umask` 导致普通用户
-  无法解析 launcher 符号链接的问题，修复与回归护栏已完成，等待 patch Release。
-- 安装器测试已覆盖 SHA256 错误、缺少 checksum / Sigstore bundle、危险 tar、版本不匹配、
-  Ubuntu 22.04 Ansible 版本过低等失败边界。
+- 2026-09-22 review 从干净的 `main@74ef67b`（与 `origin/main` 一致）开始；以下结论以该基线为准。
+- 最新 GitHub Release 为 `v0.1.7`；Validate、Release 均成功，三个固定名称资产齐全。
+- `./tests/verify-ansible.sh`、ShellCheck、Actionlint、gitleaks 在 2026-09-22 review 中通过。
+- 唯一受支持的环境配置实现仍是 `ansible/`，受支持入口是 `bin/` 与 `install.sh`。
+- `AcmeConfig/` 不属于主线 Release，但根 README 仍向用户公开它；在完成下列 P0 安全整改前，不应宣称其为生产级。
+- 当前 GitHub 控制面尚未落实仓库文档要求：`main`/`v*` 无 ruleset，`release` Environment 无保护规则，
+  Release 未启用 immutable，Actions 未强制 SHA pin，Dependabot alerts/security updates 未启用。
+- 静态验证通过不等于真实 VM、升级回滚、SSH 登录切换或 ACME 证书续期已经完成验收。
 
-## P0：发布前阻塞项
+## P0：安全与发布阻塞项
 
-- [ ] 发布包含 macOS launcher 符号链接权限修复的 patch 版本，确认 Validate/Release 全绿、三个资产齐全，
-      并分别用 latest 与 `--version` 验证 SHA256、Sigstore 身份及普通用户执行 `devops-toolkit --version`。
+### P0-1：先隔离并重构 `AcmeConfig/`
 
-## P1：升级闭环
+已完成的本地实现、静态检查与 Ubuntu 24.04 一次性 VM 证据见
+[`archive/progress/2026-09-22-acme-p0-1-vm.md`](archive/progress/2026-09-22-acme-p0-1-vm.md)。
+这不是生产验收：VM 仅使用自签证书模拟部署，未通过真实 CA 签发。
 
-- [ ] 在真实 VM 记录一次升级与回滚：从 `v0.1.4` 升级到下一版本，确认旧版本目录保留、重复安装幂等，
-      再原子切回旧版并验证命令可用。
+- [ ] 以受控测试域名完成真正的 ACME 首次签发、DNS/webroot 挑战和模拟续期；验证 hook
+      仅在证书真实更新后 reload 对应活动服务，且支持多个消费者。
+- [ ] 将证书 key、fullchain、CA 作为一致的 bundle 切换；当前是逐文件原子替换，进程中断
+      可能短暂留下新 key/旧 cert，须做故障注入和恢复验证。
+- [ ] 确认真实 DNS provider 响应、acme.sh 持久化状态与日志不会泄露 Token、账户信息或私钥；
+      检查轮替后日志仍只有最小读取权限。
+- [ ] 扩展自动化与 VM 测试：真实签发/续期、证书 bundle 中断、Ubuntu 22.04、幂等重跑、
+      清理和恢复；静态测试不能替代真实 CA 与 systemd 行为。
 
-## 已完成项
+验收证据：ShellCheck/Bats 或同等级测试全绿；临时 VM 中完成首次签发、模拟续期、权限检查、服务 reload 和安全清理；
+报告中记录文件 owner/mode、systemd sandbox 结果及失败路径，不记录任何真实凭据。
 
-- [x] 统一 WSL2、Ubuntu、user-only 三种模式并归档重复实现。
-- [x] 固定 Oh My Zsh、Linuxbrew、插件与 uv 产物版本/校验值。
-- [x] 建立 ShellCheck、Ansible Lint、YAML Lint、Ruff、Actionlint、gitleaks 与 Ansible 2.12/2.18 CI。
-- [x] 完成 22.04 / 24.04 SSH 22 → 2222、UFW、Docker、Nginx 与二次 `changed=0` 验证。
-- [x] 修复 24.04 `ssh.socket` 端口切换并增加静态防锁死护栏。
-- [x] 建立 SHA256 + Sigstore Release、不可变安装目录、升级/回滚机制和发布手册。
-- [x] 为 uv 增加受控 HTTPS base URL，并在 22.04 / 24.04 验证固定 SHA256 产物与二次幂等。
-- [x] 增加系统故障注入：无效 sshd 配置预重启失败、陈旧 UFW profile、冲突 Docker APT 源、部分账户状态
-      中断恢复，最终均达到 `changed=0`。
-- [x] 在 Ubuntu 22.04 真实服务器完成 root 本地向导与 macOS 控制端远程向导：验证目标用户密钥登录、
-      显式 `NOPASSWD`、Shell/uv、Docker/Nginx/UFW/SSH，并且两条链路第二次执行均为 `changed=0`。
-- [x] 远程 SSH 连通性验证改用 `wait_for_connection`，支持 `~/.ssh/config` alias / ProxyJump，并增加静态护栏。
-- [x] 将固定版本 `ansible.posix` 与 `community.general` 打入已签名 Release，安装阶段不再依赖 Ansible Galaxy；
-      保留旧 Release 的显式兼容回退，并覆盖离线安装、版本校验和失败不切换测试。
+### P0-2：落实 GitHub 发布控制面
+
+- [ ] 为 `main` 建立 branch ruleset：禁止 force push/deletion，要求 Validate 必需检查；有第二维护者时再要求 approval 和防自审。
+- [ ] 为 `v*` 建立 tag ruleset：限制创建者，禁止更新和删除已发布 tag。
+- [ ] 为 `release` Environment 配置允许的 tag、审批或等价发布约束；不能继续保持空保护规则。
+- [ ] 启用 immutable releases。已有非 immutable Release 保留历史状态；后续使用新版本号发布，不复用旧 tag。
+- [ ] 将 Actions 限制为 GitHub 官方和显式审核的 Action，并在仓库设置中强制完整 commit SHA pin。
+- [ ] 启用 Dependabot alerts/security updates；另行使用 Renovate regex manager 或自有脚本维护非标准 YAML/Shell 版本与 SHA256。
+- [ ] Release workflow 必须对待发布的同一 SHA 执行完整质量门禁，不能只依赖与 Release 并行运行的另一个 Validate workflow。
+- [ ] 检查 tag commit 是 `origin/main` 的祖先，并在 Release 说明或 attestation 中记录精确 commit SHA。
+- [ ] 为高安全安装提供固定 commit 或 immutable tag 的 bootstrap 方式；把可变 `main/install.sh` 明确标为便利入口，而非完整信任链。
+
+验收证据：GitHub API 显示 rulesets、Environment protection、immutable 和 Actions 限制均已生效；创建测试 tag 时只有受保护路径可发布；
+新 Release 无法替换 tag 或资产，三个资产及 attestation/签名验证通过。
+
+### P0-3：迁移到受支持的 Ansible 控制端基线
+
+- [ ] 作出并记录控制端决策：推荐 Python 3.12+ 与受支持的 `ansible-core 2.21.x` 精确补丁版本；不要继续发布只允许 `<2.19` 的 EOL runtime。
+- [ ] 将 Ansible 安装到 DevOpsToolkit 自有隔离 runtime，移除系统 Python 的 `pip --break-system-packages` 路径。
+- [ ] 明确 Ubuntu 22.04 的边界：可继续作为受管目标；若保留本机/WSL 控制端模式，则必须提供隔离 Python 3.12 runtime，否则标记为不支持。
+- [ ] 更新 collections 到与新 core 兼容的受支持版本，并在 Python/Ansible/目标 OS 矩阵中验证。
+- [ ] 更新 README、安装文档、交互文档、CI 矩阵和错误提示，避免继续推荐 EOL Ansible。
+
+验收证据：全新控制端不修改系统 Python，能够离线复用已安装 runtime；支持矩阵全部通过 `verify-ansible.sh` 和真实 VM smoke；
+重复安装 runtime 不产生变化，旧 runtime 的迁移/回滚路径有记录。
+
+## P1：运行安全与可靠性
+
+### P1-1：把 SSH 改端口和加固改成两阶段事务
+
+- [ ] 第一阶段创建目标账户/密钥，同时放行旧端口与新端口，再修改并验证 SSH listener。
+- [ ] 从控制端使用目标普通用户和新端口建立全新连接；不能只复用现有 root ControlMaster 会话。
+- [ ] 第二阶段仅在新连接成功后关闭旧端口，并按显式选择禁用 root/password 登录。
+- [ ] 将 `disable_root_login=true` 从当前 root 会话无法自证的单阶段流程中移出，或实现可靠的连接用户切换。
+- [ ] 失败时保留旧端口和当前可用登录方式，输出恢复命令，不留下“UFW 已关旧端口但 SSH 未切换”的中间态。
+
+验收证据：Ubuntu 22.04/24.04 各验证传统 `ssh.service` 与 `ssh.socket`；注入无效 sshd 配置、新端口占用和目标用户密钥失败，均不得锁死主机。
+
+### P1-2：修正用户组件开关和依赖闭环
+
+- [ ] 拆分“管理基础 Shell 环境”与“安装 Oh My Zsh”；Node、Go、uv、Linuxbrew 环境加载不得隐式依赖 `configure_shell=true`。
+- [ ] 向导对不兼容组合给出约束或明确说明，并为全部关键开关组合增加测试。
+- [ ] user-only 按启用组件检查 `curl`/`wget` 等实际下载依赖；白名单安装后重新检查命令，不能直接假设 apt 成功等于依赖可用。
+- [ ] 明确 `configure_homebrew_environment=true` 但共享 brew 不存在时是跳过、警告还是失败，并保持幂等。
+- [ ] 为远程已有账户、仅密钥新账户、Shell 关闭但语言工具开启等路径增加向导单元测试。
+
+验收证据：每种受支持组合在干净 HOME 中执行两次，第二次 `changed=0`；新登录 Shell 能找到所选工具，未选工具不会被意外加载或删除。
+
+### P1-3：补齐第三方依赖完整性锁定
+
+- [ ] 为 `ansible.posix`、`community.general` 等 collection 保存下载产物 SHA256；构建前验证 tarball，不只读取可被伪造的 `MANIFEST.json` 版本。
+- [ ] 建立单一 lock manifest，生成或校验 `requirements.yml`、Release marker、安装器检查和测试夹具，删除多处手工重复版本。
+- [ ] 明确 apt、Docker、Homebrew formula 属于滚动更新还是可复现安装；文档不得把“Git source 固定”表述成整个系统 bit-for-bit 可复现。
+- [ ] 建立月度依赖审计：Ansible、collections、Cosign、uv、NVM、goenv、Go、Node LTS、Actions；更新必须走 PR、校验值复核和 VM smoke。
+
+验收证据：篡改 collection tarball、marker、manifest 或 checksum 任一项都会在发布前失败；依赖审计能生成只读报告，不自动合并高风险更新。
+
+### P1-4：自动化真实环境回归
+
+- [ ] PR 阶段增加可快速运行的 role/向导组合测试；不得只测试少量辅助函数。
+- [ ] 每周或发布前在一次性 VM 运行 `tests/multipass-smoke.sh`：首次收敛、二次 `changed=0`、SSH/UFW、Docker/Nginx 和故障恢复。
+- [ ] 保持 Ubuntu 版本、Ansible 版本和测试实例严格隔离；测试报告记录镜像、SHA、结果和清理状态。
+- [ ] 在没有安全可用 VM runner 时，明确保留手工 release gate，不能用容器 syntax check 冒充 systemd/UFW/SSH E2E。
+
+验收证据：计划任务和 release gate 都能产出可追溯报告；实例无论成功或失败都会安全清理，失败阻止发布。
+
+### P1-5：完成真实升级与回滚闭环
+
+- [ ] 在真实临时 VM 从 `v0.1.4` 升级到 `v0.1.7` 或后续受保护版本。
+- [ ] 验证 latest 与 `--version` 两条安装路径、SHA256、Sigstore 身份、三个 Release 资产和普通用户 `devops-toolkit --version`。
+- [ ] 验证旧版本目录保留、相同版本重复安装幂等、不同版本原子切换，并按文档原子回滚后再次运行命令。
+- [ ] 记录 macOS `sudo --system` 安装后普通用户解析 launcher 符号链接的真实结果。
+
+验收证据：将命令、环境、版本、关键输出和失败边界写入 `archive/progress/`；不得包含 Token、私钥、密码或用户真实主机信息。
+
+## P2：维护性与文档一致性
+
+- [ ] 更新 README 和全部示例版本：`v0.1.7` 已发布，不再把 `v0.1.4` 写成当前基线，也不再使用“从下一版 v0.1.5 起”。
+- [ ] 严格区分 WSL1/WSL2，并在任何 apt/system 变更前验证受支持的发行版、版本和架构。
+- [ ] 为安装器、向导和 Playbook 定义稳定的机器可读版本/能力输出，便于批量审计已安装节点。
+- [ ] 设计只读 `doctor`/preflight 命令：检查控制端 runtime、collections、SSH 配置、目标 OS、磁盘、网络和权限，不执行配置变更。
+- [ ] 评估将 `AcmeConfig/` 独立成单独仓库或正式 Ansible role；在安全模型、发布节奏和测试矩阵不同的情况下，不继续用根 README 弱耦合维护。
+
+## 完成规则
+
+- 每个任务必须有可重复命令、精确 Git SHA、测试环境和结果证据。
+- 静态检查、真实 VM、发布、安装、升级、回滚和生产使用是独立门槛，不得互相替代。
+- 任何安全门槛失败都必须 fail closed；不得为了发布而放宽 host key、签名、checksum、权限或 root/user 边界。
+- 完成项从本文件删除，并把必要证据移入 `archive/progress/`；本文件始终只表示当前未完成工作。
