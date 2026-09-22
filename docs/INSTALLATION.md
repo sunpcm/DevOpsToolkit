@@ -194,7 +194,8 @@ curl -I https://tuf-repo-cdn.sigstore.dev
 
 从 `v0.1.5` 起，Release tarball 内置并签名覆盖固定版本的 Ansible collections。
 本次未发布的 2.21 迁移将内置 `ansible.posix`、`community.general` 和其传递依赖
-`community.library_inventory_filtering_v1`。安装器会核对包内 manifest 和版本标记，安装阶段不再访问 Ansible Galaxy；
+`community.library_inventory_filtering_v1`。Release 构建先按 `ansible/collections.lock.json` 校验原始
+tarball SHA256，再校验安装后的 manifest；安装器会核对 lock 摘要、manifest 和版本标记。安装阶段不再访问 Ansible Galaxy；
 这消除了 GitHub 可达但 Galaxy 不可达时的安装单点。
 
 `v0.1.4` 及更早的历史 Release 没有内置标记。新版安装器会明确提示兼容模式，并继续通过

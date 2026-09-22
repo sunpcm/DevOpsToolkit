@@ -21,8 +21,8 @@ git switch main && git pull --ff-only
 git status --short                 # 应为空
 ```
 
-`release.yml` 只依赖 `verify-ansible.sh`，**不依赖 env-check 的 quality 作业**。所以 main 的 Validate
-徽章红着（例如 ansible-lint 历史欠债）也能发布，但推荐先让它绿。
+`release.yml` 会在同一 tag SHA 上调用完整 `env-check.yml`，quality 与 Ansible/Python 矩阵任一失败都会
+阻止发布；另一个 push 事件触发的 Validate 运行不能替代这条同 SHA 门禁。
 
 ## 发布步骤
 
@@ -41,8 +41,8 @@ git push origin "${VERSION}"
 git tag -s "${VERSION}" origin/main -m "DevOpsToolkit ${VERSION}"
 ```
 
-推送后工作流会：安装并验证固定版本 collections → `verify-ansible.sh` → 将已验证 collections 传给全新
-release runner → 构建固定名产物 → Cosign 用 GitHub OIDC 签名 → 自校验 Sigstore 身份与打包版本 →
+推送后工作流会：下载并按 lock SHA256 验证固定 collection 归档 → 从归档安装并运行 `verify-ansible.sh` →
+将原始归档和已验证 collections 传给全新 release runner → 构建固定名产物 → Cosign 用 GitHub OIDC 签名 → 自校验 Sigstore 身份与打包版本 →
 创建 Release 并上传三个资产。release runner 本身不会从 PyPI 或 Ansible Galaxy 安装依赖。
 
 ## 发布后验证
@@ -73,6 +73,7 @@ rm -rf "${TMP_DIR}"
 应只输出：
 
 ```text
+lock-sha256=<ansible/collections.lock.json 的 64 位 SHA256>
 ansible.posix=2.2.2
 community.general=13.4.0
 community.library_inventory_filtering_v1=1.1.5

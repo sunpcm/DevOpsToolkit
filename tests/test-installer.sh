@@ -4,11 +4,13 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_DIR="$(mktemp -d)"
 cleanup() {
+  local status=$?
   if [[ -n "${DEVOPS_TOOLKIT_TEST_KEEP_TMP:-}" ]]; then
     echo "保留测试目录：${TMP_DIR}" >&2
   else
     rm -rf "${TMP_DIR}"
   fi
+  return "${status}"
 }
 trap cleanup EXIT
 
@@ -60,26 +62,49 @@ EOF
 collections: []
 EOF
   if [[ "${collection_mode}" != "legacy" ]]; then
-    mkdir -p \
-      "${stage}/devops-toolkit/collections/ansible_collections/ansible/posix" \
-      "${stage}/devops-toolkit/collections/ansible_collections/community/general" \
-      "${stage}/devops-toolkit/collections/ansible_collections/community/library_inventory_filtering_v1"
-    printf '%s\n' \
-      '{"collection_info":{"namespace":"ansible","name":"posix","version":"2.2.2"}}' \
-      >"${stage}/devops-toolkit/collections/ansible_collections/ansible/posix/MANIFEST.json"
-    printf '%s\n' \
-      '{"collection_info":{"namespace":"community","name":"general","version":"13.4.0"}}' \
-      >"${stage}/devops-toolkit/collections/ansible_collections/community/general/MANIFEST.json"
-    printf '%s\n' \
-      '{"collection_info":{"namespace":"community","name":"library_inventory_filtering_v1","version":"1.1.5"}}' \
-      >"${stage}/devops-toolkit/collections/ansible_collections/community/library_inventory_filtering_v1/MANIFEST.json"
-    printf '%s\n' 'ansible.posix=2.2.2' 'community.general=13.4.0' \
-      'community.library_inventory_filtering_v1=1.1.5' \
-      >"${stage}/devops-toolkit/collections/.bundled-collections"
+    cp "${ROOT_DIR}/ansible/collections.lock.json" \
+      "${stage}/devops-toolkit/ansible/collections.lock.json"
+    python3 - \
+      "${stage}/devops-toolkit/ansible/collections.lock.json" \
+      "${stage}/devops-toolkit/collections" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+lock_path, collection_root = map(Path, sys.argv[1:])
+lock_bytes = lock_path.read_bytes()
+entries = json.loads(lock_bytes)["collections"]
+marker = [f"lock-sha256={hashlib.sha256(lock_bytes).hexdigest()}"]
+for entry in sorted(entries, key=lambda item: item["name"]):
+    namespace, name = entry["name"].split(".", 1)
+    directory = collection_root / "ansible_collections" / namespace / name
+    directory.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "collection_info": {
+            "namespace": namespace,
+            "name": name,
+            "version": entry["version"],
+        }
+    }
+    (directory / "MANIFEST.json").write_text(
+        json.dumps(manifest) + "\n", encoding="utf-8"
+    )
+    marker.append(f"{entry['name']}={entry['version']}")
+(collection_root / ".bundled-collections").write_text(
+    "\n".join(marker) + "\n", encoding="utf-8"
+)
+PY
     if [[ "${collection_mode}" == "invalid-bundle" ]]; then
       printf '%s\n' \
         '{"collection_info":{"namespace":"community","name":"general","version":"9.9.9"}}' \
         >"${stage}/devops-toolkit/collections/ansible_collections/community/general/MANIFEST.json"
+    elif [[ "${collection_mode}" == "invalid-marker" ]]; then
+      sed -i.bak '1s/[0-9a-f][0-9a-f]*$/0000000000000000000000000000000000000000000000000000000000000000/' \
+        "${stage}/devops-toolkit/collections/.bundled-collections"
+      rm -f "${stage}/devops-toolkit/collections/.bundled-collections.bak"
+    elif [[ "${collection_mode}" == "invalid-lock" ]]; then
+      printf '\n' >>"${stage}/devops-toolkit/ansible/collections.lock.json"
     fi
   fi
   mkdir -p "${output_dir}"
@@ -169,10 +194,14 @@ RELEASE_V1="${TMP_DIR}/release-v1"
 RELEASE_V2="${TMP_DIR}/release-v2"
 RELEASE_LEGACY="${TMP_DIR}/release-legacy"
 RELEASE_INVALID_BUNDLE="${TMP_DIR}/release-invalid-bundle"
+RELEASE_INVALID_MARKER="${TMP_DIR}/release-invalid-marker"
+RELEASE_INVALID_LOCK="${TMP_DIR}/release-invalid-lock"
 make_release v0.1.0 "${RELEASE_V1}"
 make_release v0.2.0 "${RELEASE_V2}"
 make_release v0.0.9 "${RELEASE_LEGACY}" legacy
 make_release v0.3.0 "${RELEASE_INVALID_BUNDLE}" invalid-bundle
+make_release v0.3.1 "${RELEASE_INVALID_MARKER}" invalid-marker
+make_release v0.3.2 "${RELEASE_INVALID_LOCK}" invalid-lock
 
 DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${RELEASE_V1}" \
   "${INSTALLER}" --user --no-run --version v0.1.0
@@ -302,6 +331,24 @@ if HOME="${INVALID_BUNDLE_HOME}" \
 fi
 [[ ! -e "${INVALID_BUNDLE_HOME}/.local/share/devops-toolkit/current" ]] || \
   fail "内置 collection 校验失败后切换了 current"
+
+for invalid_case in marker lock; do
+  invalid_home="${TMP_DIR}/invalid-${invalid_case}-home"
+  invalid_version=v0.3.1
+  invalid_release="${RELEASE_INVALID_MARKER}"
+  if [[ "${invalid_case}" == lock ]]; then
+    invalid_version=v0.3.2
+    invalid_release="${RELEASE_INVALID_LOCK}"
+  fi
+  mkdir -p "${invalid_home}"
+  if HOME="${invalid_home}" \
+    DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${invalid_release}" \
+    "${INSTALLER}" --user --no-run --version "${invalid_version}" >/dev/null 2>&1; then
+    fail "安装器接受了被篡改的 collection ${invalid_case}"
+  fi
+  [[ ! -e "${invalid_home}/.local/share/devops-toolkit/current" ]] || \
+    fail "collection ${invalid_case} 校验失败后切换了 current"
+done
 
 # Legacy releases keep the runtime Galaxy compatibility path.
 LEGACY_HOME="${TMP_DIR}/legacy-home"

@@ -34,6 +34,9 @@
 
 自 `v0.1.5` 起，签名 Release 内置固定版本的 Ansible collections，目标服务器安装阶段不再
 依赖 Ansible Galaxy；从源码运行仍需按下节安装 collections。
+Release 构建会依据 `ansible/collections.lock.json` 校验原始 tarball SHA256。该锁不覆盖 apt、Docker
+仓库或 Homebrew formula 等滚动输入，不能把它理解为整机 bit-for-bit 可复现；完整边界见
+[发布供应链安全](docs/SUPPLY_CHAIN_SECURITY.md)。
 
 生产环境建议固定版本：
 

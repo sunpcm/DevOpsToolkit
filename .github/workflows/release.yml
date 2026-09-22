@@ -44,11 +44,28 @@ jobs:
       - name: Install validation dependencies
         run: |
           python -m pip install ansible-core==2.21.4
-          ansible-galaxy collection install \
+          mkdir -p \
+            "${RUNNER_TEMP}/release-inputs/artifacts" \
+            "${RUNNER_TEMP}/release-inputs/collections"
+          python scripts/verify-collection-lock.py \
+            --lock ansible/collections.lock.json \
+            --requirements ansible/requirements.yml
+          ansible-galaxy collection download \
             --requirements-file ansible/requirements.yml \
-            --collections-path "${RUNNER_TEMP}/release-collections"
-          echo "ANSIBLE_COLLECTIONS_PATH=${RUNNER_TEMP}/release-collections" >>"${GITHUB_ENV}"
-          echo "ANSIBLE_COLLECTIONS_PATHS=${RUNNER_TEMP}/release-collections" >>"${GITHUB_ENV}"
+            --download-path "${RUNNER_TEMP}/release-inputs/artifacts" \
+            --no-deps
+          python scripts/verify-collection-lock.py \
+            --lock ansible/collections.lock.json \
+            --requirements ansible/requirements.yml \
+            --artifacts "${RUNNER_TEMP}/release-inputs/artifacts"
+          ansible-galaxy collection install \
+            "${RUNNER_TEMP}"/release-inputs/artifacts/*.tar.gz \
+            --collections-path "${RUNNER_TEMP}/release-inputs/collections"
+          python scripts/verify-collection-lock.py \
+            --lock ansible/collections.lock.json \
+            --installed "${RUNNER_TEMP}/release-inputs/collections"
+          echo "ANSIBLE_COLLECTIONS_PATH=${RUNNER_TEMP}/release-inputs/collections" >>"${GITHUB_ENV}"
+          echo "ANSIBLE_COLLECTIONS_PATHS=${RUNNER_TEMP}/release-inputs/collections" >>"${GITHUB_ENV}"
 
       - name: Validate source
         run: ./tests/verify-ansible.sh
@@ -57,7 +74,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-collections-${{ github.sha }}
-          path: ${{ runner.temp }}/release-collections
+          path: ${{ runner.temp }}/release-inputs
           if-no-files-found: error
           retention-days: 1
 
@@ -84,11 +101,12 @@ jobs:
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: release-collections-${{ github.sha }}
-          path: ${{ runner.temp }}/release-collections
+          path: ${{ runner.temp }}/release-inputs
 
       - name: Build fixed-name assets
         env:
-          DEVOPS_TOOLKIT_COLLECTIONS_SOURCE: ${{ runner.temp }}/release-collections
+          DEVOPS_TOOLKIT_COLLECTIONS_SOURCE: ${{ runner.temp }}/release-inputs/collections
+          DEVOPS_TOOLKIT_COLLECTION_ARTIFACTS: ${{ runner.temp }}/release-inputs/artifacts
         run: ./scripts/build-release.sh "${GITHUB_REF_NAME}" dist
 
       - name: Install pinned Cosign
@@ -114,9 +132,10 @@ jobs:
 
       - name: Verify Sigstore identity
         run: |
+          identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@${GITHUB_REF}"
           cosign verify-blob \
             --bundle dist/devops-toolkit.tar.gz.sigstore.json \
-            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@${GITHUB_REF}" \
+            --certificate-identity "${identity}" \
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             --certificate-github-workflow-repository "${GITHUB_REPOSITORY}" \
             --certificate-github-workflow-ref "${GITHUB_REF}" \

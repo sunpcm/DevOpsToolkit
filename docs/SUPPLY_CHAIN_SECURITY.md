@@ -17,11 +17,13 @@ Release 包含三个固定名称资产：
 
 1. Release workflow 在同一 tag SHA 上调用完整 Validate workflow，包含质量检查与 Ansible/Python 矩阵；
    并确认 tag commit 是当前 `origin/main` 的祖先。不能把另一个并行的 push 检查当作发布门禁。
-2. 在无发布权限的 job 中安装固定版本 Ansible 依赖、验证源码，并把精确版本的 collections 保存为
-   仅保留一天的 workflow artifact。
+2. 在无发布权限的 job 中下载固定版本 Ansible collection 原始归档，按
+   `ansible/collections.lock.json` 校验文件名、SHA256 和内部 manifest，再从这些已校验归档安装依赖；
+   原始归档和安装目录一起保存为仅保留一天的 workflow artifact。
 3. 验证通过后，在全新 runner 上重新 checkout 同一 tag，只恢复上一步验证过的 collections；有发布权限的
    构建 job 不运行 PyPI 或 Ansible Galaxy 安装。
-4. 构建脚本核对 collection manifest、精确版本和完整集合，再把它们写入最终 tarball；签名覆盖整个产物。
+4. 构建脚本再次核对原始归档 SHA256、`requirements.yml`、安装后 manifest、精确版本和完整集合，
+   再把 lock、collections 与绑定 lock 摘要的 marker 写入最终 tarball；签名覆盖整个产物。
 5. 下载固定版本 Cosign，使用仓库内固定的 SHA256 校验二进制。
 6. 通过 GitHub Actions OIDC 获取短期身份，不使用长期签名私钥或 GitHub Secret。
 7. 将证书、签名和透明日志证明写入 Sigstore bundle。
@@ -100,6 +102,32 @@ Release workflow 已引用该 Environment。Environment 不需要配置 Cosign �
 
 本项目引用的 GitHub Actions（包括 collections 在 job 间传递使用的 artifact actions）已固定到完整
 commit SHA，避免上游移动 tag 后改变执行代码。
+
+## 依赖锁与可复现边界
+
+`ansible/collections.lock.json` 是 collection 名称、版本、原始 tarball 文件名与 SHA256 的单一来源。
+`scripts/verify-collection-lock.py` 强制校验 `requirements.yml`、下载归档、安装目录和 Release marker；
+任一归档、checksum、manifest、marker 或 lock 被修改，Release 构建或安装都会 fail closed。
+
+这不代表整台机器可以 bit-for-bit 重建：
+
+- Ansible Core、collections、Cosign、uv 和若干 Git source 固定到版本、checksum 或 commit。
+- Ubuntu apt 包及其传递依赖跟随所配置仓库在执行时的候选版本，是滚动输入。
+- Docker CE 来自 Docker 官方 apt 仓库，当前角色没有固定完整 `.deb` 集合及仓库快照。
+- Linuxbrew bootstrap 固定 Git commit，但 `brew install` 的 formula、bottle 和依赖解析仍跟随 Homebrew 仓库。
+
+因此“Git source 固定”只保证对应源码 checkout 不漂移，不能外推为整个系统完全可复现。需要长期保存的环境
+应额外使用 apt 仓库快照、固定 `.deb`/bottle 归档及其校验值，或制作经过签名的基础镜像。
+
+## 月度只读依赖审计
+
+`.github/workflows/dependency-audit.yml` 每月一日及手工触发时运行
+`scripts/dependency-audit.py`，输出 Ansible、collections、Cosign、uv、NVM、goenv、Go、Node LTS 与
+GitHub Actions 的当前固定值、checksum 和官方复核入口。工作流只有 `contents: read`，只上传报告 artifact，
+不会创建 PR、修改依赖或自动合并。
+
+维护者查看报告后必须在官方来源核对支持周期与变更日志；更新通过独立 PR，重新复核归档 checksum，
+并通过静态门禁、篡改负向测试和一次性 VM smoke 后才能合并。高风险依赖禁止自动合并。
 
 ## 手工验证 Release
 

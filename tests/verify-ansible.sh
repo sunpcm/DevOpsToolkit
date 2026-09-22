@@ -52,6 +52,12 @@ python3 -c 'import sys; from pathlib import Path; p=Path(sys.argv[1]); compile(p
   "${ROOT_DIR}/bin/devops-toolkit"
 python3 -c 'import sys; from pathlib import Path; p=Path(sys.argv[1]); compile(p.read_text(), str(p), "exec")' \
   "${ROOT_DIR}/AcmeConfig/libexec/acme-manager"
+python3 "${ROOT_DIR}/scripts/verify-collection-lock.py" \
+  --lock "${ROOT_DIR}/ansible/collections.lock.json" \
+  --requirements "${ROOT_DIR}/ansible/requirements.yml"
+python3 "${ROOT_DIR}/scripts/dependency-audit.py" \
+  --output "${TMP_DIR}/dependency-audit.md"
+grep -Fq '# DevOpsToolkit 月度依赖审计' "${TMP_DIR}/dependency-audit.md"
 python3 -c 'import runpy, stat, sys; from pathlib import Path; m=runpy.run_path(sys.argv[1]); p=Path(sys.argv[2]); m["secure_write"](p, "{}\n"); assert stat.S_IMODE(p.stat().st_mode) == 0o600' \
   "${ROOT_DIR}/bin/devops-toolkit" "${TMP_DIR}/sensitive-vars.json"
 python3 "${ROOT_DIR}/tests/test-wizard.py"
@@ -92,15 +98,25 @@ fi
 if ! grep -Fq 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02' \
   "${release_workflow}" || \
    ! grep -Fq 'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093' \
-  "${release_workflow}" || \
-   ! grep -Fq 'DEVOPS_TOOLKIT_COLLECTIONS_SOURCE:' "${release_workflow}"; then
+     "${release_workflow}" || \
+   ! grep -Fq 'DEVOPS_TOOLKIT_COLLECTIONS_SOURCE:' "${release_workflow}" || \
+   ! grep -Fq 'DEVOPS_TOOLKIT_COLLECTION_ARTIFACTS:' "${release_workflow}"; then
   echo "错误：Release workflow 没有把 validate job 的固定 collections 传给隔离的签名 job。" >&2
   exit 1
 fi
 if ! grep -Fq 'DEVOPS_TOOLKIT_COLLECTIONS_SOURCE' \
   "${ROOT_DIR}/scripts/build-release.sh" || \
+   ! grep -Fq 'DEVOPS_TOOLKIT_COLLECTION_ARTIFACTS' \
+     "${ROOT_DIR}/scripts/build-release.sh" || \
    ! grep -Fq '.bundled-collections' "${ROOT_DIR}/scripts/build-release.sh"; then
   echo "错误：Release 构建器没有强制打包固定 Ansible collections。" >&2
+  exit 1
+fi
+if ! grep -Fq 'cron: "17 6 1 * *"' \
+  "${ROOT_DIR}/.github/workflows/dependency-audit.yml" || \
+   grep -Eq 'pull_request:|gh pr|auto-merge' \
+     "${ROOT_DIR}/.github/workflows/dependency-audit.yml"; then
+  echo "错误：月度依赖审计不是只读报告，或存在自动 PR/合并路径。" >&2
   exit 1
 fi
 if ! grep -Fq '使用 Release 内置 Ansible collections' "${ROOT_DIR}/install.sh" || \

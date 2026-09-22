@@ -395,24 +395,34 @@ read_release_version() {
 
 bundled_collections_valid() {
   local collection_dir="$1"
-  python3 - "${collection_dir}" <<'PY'
+  local lock_file="$2"
+  python3 - "${collection_dir}" "${lock_file}" <<'PY'
+import hashlib
 import json
 import sys
 from pathlib import Path
 
 root = Path(sys.argv[1])
-expected = {
-    "ansible.posix": "2.2.2",
-    "community.general": "13.4.0",
-    "community.library_inventory_filtering_v1": "1.1.5",
-}
+lock_path = Path(sys.argv[2])
 marker = root / ".bundled-collections"
-expected_marker = "".join(
-    f"{name}={version}\n" for name, version in sorted(expected.items())
-)
 try:
-    if marker.read_text(encoding="utf-8") != expected_marker:
-        raise ValueError("marker mismatch")
+    marker_lines = marker.read_text(encoding="utf-8").splitlines()
+    if marker_lines and marker_lines[0].startswith("lock-sha256="):
+        lock_bytes = lock_path.read_bytes()
+        lock_digest = hashlib.sha256(lock_bytes).hexdigest()
+        if marker_lines[0] != f"lock-sha256={lock_digest}":
+            raise ValueError("collection lock digest mismatch")
+        lock = json.loads(lock_bytes)["collections"]
+        expected = {str(item["name"]): str(item["version"]) for item in lock}
+        expected_lines = [f"{name}={version}" for name, version in sorted(expected.items())]
+        if marker_lines[1:] != expected_lines:
+            raise ValueError("collection marker mismatch")
+    else:
+        # Historical signed bundles predate collections.lock.json. Preserve
+        # compatibility by requiring their marker and manifests to agree exactly.
+        expected = dict(line.split("=", 1) for line in marker_lines)
+        if not expected:
+            raise ValueError("empty historical collection marker")
     actual = {}
     for manifest in root.glob("ansible_collections/*/*/MANIFEST.json"):
         info = json.loads(manifest.read_text(encoding="utf-8"))["collection_info"]
@@ -476,7 +486,9 @@ install_release() {
   if [[ -f "${collection_root}/.collections-ready" ]]; then
     info "Ansible collections 已就绪，跳过安装"
   elif [[ -f "${collection_root}/collections/.bundled-collections" ]]; then
-    if ! bundled_collections_valid "${collection_root}/collections"; then
+    if ! bundled_collections_valid \
+      "${collection_root}/collections" \
+      "${collection_root}/ansible/collections.lock.json"; then
       [[ "${collection_root}" != "${staging_dir}" ]] || rm -rf "${staging_dir}"
       fail "Release 内置 Ansible collections 不完整，current 未切换。"
     fi
