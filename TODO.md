@@ -85,6 +85,10 @@
 
 ### P1-2：修正用户组件开关和依赖闭环
 
+本地实现提交 `c22645e`，静态门禁与 16 组开关矩阵见
+[`archive/progress/2026-09-22-user-profile-p1-2.md`](archive/progress/2026-09-22-user-profile-p1-2.md)。
+干净 Ubuntu HOME 的两次收敛和新登录 Shell 验证尚未完成，以下条目继续保留为开放验收门槛。
+
 - [ ] 拆分“管理基础 Shell 环境”与“安装 Oh My Zsh”；Node、Go、uv、Linuxbrew 环境加载不得隐式依赖 `configure_shell=true`。
 - [ ] 向导对不兼容组合给出约束或明确说明，并为全部关键开关组合增加测试。
 - [ ] user-only 按启用组件检查 `curl`/`wget` 等实际下载依赖；白名单安装后重新检查命令，不能直接假设 apt 成功等于依赖可用。
