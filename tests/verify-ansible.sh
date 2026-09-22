@@ -69,6 +69,14 @@ if ! grep -Fq "(umask 022; ln -s \"releases/\${release_version}\"" \
 fi
 
 release_workflow="${ROOT_DIR}/.github/workflows/release.yml"
+if ! grep -Fq 'uses: ./.github/workflows/env-check.yml' "${release_workflow}" || \
+   ! grep -Fq 'needs: quality' "${release_workflow}" || \
+   ! grep -Fq "git merge-base --is-ancestor \"\${GITHUB_SHA}\" refs/remotes/origin/main" \
+     "${release_workflow}" || \
+   ! grep -Fq -- "--notes \"Source commit: \${GITHUB_SHA}\"" "${release_workflow}"; then
+  echo "错误：Release 未对同一 SHA 执行完整质量门禁、main 祖先检查或记录来源 SHA。" >&2
+  exit 1
+fi
 if ! grep -Fq 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02' \
   "${release_workflow}" || \
    ! grep -Fq 'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093' \

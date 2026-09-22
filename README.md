@@ -18,7 +18,7 @@
 
 ## 快速开始
 
-### 推荐：Release 一行安装
+### 便捷入口：Release 一行安装
 
 新 Ubuntu/WSL 已经以 root 登录时：
 
@@ -29,17 +29,19 @@
 安装完成后会在交互终端自动启动向导。选择 `Ubuntu` → `当前服务器本地执行`，即可创建目标用户并配置系统；普通用户执行同一命令时只安装到 `~/.local`，且绝不提权。
 
 安装器会同时验证 Release 的 SHA256 和 Sigstore 身份，要求产物来自本仓库的 Release workflow 与对应 tag；验证失败不会降级安装。首次运行会下载并缓存固定版本 Cosign。
+但上面的 `main/install.sh` 本身是可变的，不能视为完整的供应链信任链；高安全环境应先审查并固定安装器提交。
 
-从下一版 `v0.1.5` 起，签名 Release 还会内置固定版本的 Ansible collections，目标服务器安装阶段不再
+自 `v0.1.5` 起，签名 Release 内置固定版本的 Ansible collections，目标服务器安装阶段不再
 依赖 Ansible Galaxy；从源码运行仍需按下节安装 collections。
 
 生产环境建议固定版本：
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/sunpcm/DevOpsToolkit/main/install.sh)" -- --version v0.1.4
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/sunpcm/DevOpsToolkit/main/install.sh)" -- --version v0.1.7
 ```
 
-`v0.1.4` 是当前已发布基线；固定版本时应替换为你已审查的实际 tag。完整的安装位置、
+`v0.1.7` 是 2026-09-22 review 时的最新已发布版本；固定版本时应替换为你已审查的实际 tag。
+注意：这里只固定了 Release，未固定安装器本身。完整的安装位置、
 `--no-run`、受限网络镜像、升级、回滚和供应链边界见
 [安装、升级与回滚](docs/INSTALLATION.md)。
 

@@ -15,15 +15,17 @@ Release 包含三个固定名称资产：
 
 `.github/workflows/release.yml` 只在 `v*` tag 上运行，并获得最小的 `contents: write` 与 `id-token: write` 权限。流程会：
 
-1. 在无发布权限的 job 中安装固定版本 Ansible 依赖、验证源码，并把精确版本的 collections 保存为
+1. Release workflow 在同一 tag SHA 上调用完整 Validate workflow，包含质量检查与 Ansible/Python 矩阵；
+   并确认 tag commit 是当前 `origin/main` 的祖先。不能把另一个并行的 push 检查当作发布门禁。
+2. 在无发布权限的 job 中安装固定版本 Ansible 依赖、验证源码，并把精确版本的 collections 保存为
    仅保留一天的 workflow artifact。
-2. 验证通过后，在全新 runner 上重新 checkout 同一 tag，只恢复上一步验证过的 collections；有发布权限的
+3. 验证通过后，在全新 runner 上重新 checkout 同一 tag，只恢复上一步验证过的 collections；有发布权限的
    构建 job 不运行 PyPI 或 Ansible Galaxy 安装。
-3. 构建脚本核对 collection manifest、精确版本和完整集合，再把它们写入最终 tarball；签名覆盖整个产物。
-4. 下载固定版本 Cosign，使用仓库内固定的 SHA256 校验二进制。
-5. 通过 GitHub Actions OIDC 获取短期身份，不使用长期签名私钥或 GitHub Secret。
-6. 将证书、签名和透明日志证明写入 Sigstore bundle。
-7. 在上传 Release 前立即验证签名身份。
+4. 构建脚本核对 collection manifest、精确版本和完整集合，再把它们写入最终 tarball；签名覆盖整个产物。
+5. 下载固定版本 Cosign，使用仓库内固定的 SHA256 校验二进制。
+6. 通过 GitHub Actions OIDC 获取短期身份，不使用长期签名私钥或 GitHub Secret。
+7. 将证书、签名和透明日志证明写入 Sigstore bundle。
+8. 在上传 Release 前立即验证签名身份，并在 Release notes 前缀记录精确 source commit SHA。
 
 安装器也会下载固定版本 Cosign，并用内置的平台 SHA256 校验。验证条件不是“存在一个合法签名”即可，而是同时要求：
 
@@ -37,7 +39,7 @@ Release 包含三个固定名称资产：
 
 ## 必须手工完成的 GitHub 设置
 
-代码无法替你修改以下账号和仓库控制面。首次发布前应逐项完成。
+仓库代码不能替代以下账号和 GitHub 控制面设置。下一次发布前应逐项完成并用 API 复核。
 
 ### 1. 保护 GitHub 账号
 
@@ -82,7 +84,7 @@ Release workflow 已引用该 Environment。Environment 不需要配置 Cosign �
 
 - 限制创建权限到仓库管理员或发布角色。
 - 禁止更新和删除已经推送的 tag。
-- 如果仓库设置中提供 immutable releases，建议开启。
+- 启用仓库级 immutable releases；它只保护启用后新发布的 Release，历史版本不能追溯变更。
 
 发布后不要复用版本号。需要修复时创建新版本，例如 `v0.1.1`。
 
@@ -93,6 +95,8 @@ Release workflow 已引用该 Environment。Environment 不需要配置 Cosign �
 - Workflow permissions 默认设为 Read repository contents。
 - 不需要时关闭 Allow GitHub Actions to create and approve pull requests。
 - 只允许 GitHub 官方和经过审核的 Actions。
+- 开启“Require actions to be pinned to a full-length commit SHA”。
+- 开启 Dependabot alerts 与 security updates；固定版本与 checksum 的自动更新仍须经 PR 复核。
 
 本项目引用的 GitHub Actions（包括 collections 在 job 间传递使用的 artifact actions）已固定到完整
 commit SHA，避免上游移动 tag 后改变执行代码。
@@ -109,7 +113,7 @@ cosign version
 下载同一版本的三个资产：
 
 ```bash
-VERSION=v0.1.4
+VERSION=v0.1.7
 gh release download "${VERSION}" \
   --repo sunpcm/DevOpsToolkit \
   --pattern 'devops-toolkit.tar.gz*' \
@@ -158,7 +162,7 @@ git log -1 --show-signature
 确认工作区为空、测试通过，并核对 tag 指向：
 
 ```bash
-VERSION=v0.1.5  # 示例；必须换成尚未使用的新版本
+VERSION=v0.1.8  # 示例；必须换成尚未使用的新版本
 git tag -s "${VERSION}" -m "DevOpsToolkit ${VERSION}"
 git show --show-signature "${VERSION}"
 git push origin "${VERSION}"
@@ -173,11 +177,15 @@ git push origin "${VERSION}"
 - 安装器本身来自可变的 `main`。高安全环境应先固定并审查安装器提交：
 
 ```bash
-INSTALLER_COMMIT="替换为已审查的完整提交 SHA"
+INSTALLER_COMMIT="74ef67b11b760a63d53f4f8f975d5e19fcf07405"  # v0.1.7 示例
 curl -fsSLo /tmp/devops-toolkit-install.sh \
   "https://raw.githubusercontent.com/sunpcm/DevOpsToolkit/${INSTALLER_COMMIT}/install.sh"
+printf '%s  %s\n' \
+  '9e2d23881cbee4afbbbcf765000e4d30cbb04451ae1f3394b367a986aa8e9c1d' \
+  /tmp/devops-toolkit-install.sh | sha256sum --check --strict
 less /tmp/devops-toolkit-install.sh
-/bin/bash /tmp/devops-toolkit-install.sh --version v0.1.4
+/bin/bash /tmp/devops-toolkit-install.sh --version v0.1.7
 ```
 
+- 上例 SHA256 来自仓库 `v0.1.7` 的 `install.sh`，仅适用于该示例提交；切换版本或提交必须独立复核。
 - Cosign 信任根和透明日志验证需要网络。网络受限时安装器会安全失败，不会降级为只检查 SHA256。
