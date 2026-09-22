@@ -22,7 +22,7 @@ devops-toolkit
 
 - 创建或更新普通用户。
 - 明确选择“密码”“SSH 公钥”“两者”或“不修改已有凭据”；密码只在随后出现的隐藏输入框中输入。
-- 选择 Shell、Git、uv、Node.js、Go、Linuxbrew 和 WSL 集成。
+- 分别选择基础 Zsh、Oh My Zsh、Git、uv、Node.js、Go、Linuxbrew 环境和 WSL 集成。
 - 可检查 Docker Desktop WSL Integration。
 
 必须在 WSL 内以 root 运行：
@@ -30,6 +30,9 @@ devops-toolkit
 ```bash
 sudo ./bin/devops-toolkit
 ```
+
+Oh My Zsh 依赖基础 Zsh 管理；若只选择语言工具，向导仍会通过独立的 `.profile`/`.zshrc`
+环境 loader 使新会话找到工具，不会强制安装 Oh My Zsh。
 
 ### Ubuntu
 

@@ -55,6 +55,7 @@ python3 -c 'import sys; from pathlib import Path; p=Path(sys.argv[1]); compile(p
 python3 -c 'import runpy, stat, sys; from pathlib import Path; m=runpy.run_path(sys.argv[1]); p=Path(sys.argv[2]); m["secure_write"](p, "{}\n"); assert stat.S_IMODE(p.stat().st_mode) == 0o600' \
   "${ROOT_DIR}/bin/devops-toolkit" "${TMP_DIR}/sensitive-vars.json"
 python3 "${ROOT_DIR}/tests/test-wizard.py"
+python3 "${ROOT_DIR}/tests/test-user-profile.py"
 python3 "${ROOT_DIR}/AcmeConfig/tests/test_acme_manager.py"
 "${ROOT_DIR}/bin/devops-toolkit" --help >/dev/null
 [[ "$("${ROOT_DIR}/bin/devops-toolkit" --version)" == "development" ]]

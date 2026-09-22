@@ -315,7 +315,7 @@ sudo apt install -y curl git zsh
 
 该命令只删除：
 
-- `.zshrc` 中的 DevOpsToolkit source 区块。
+- `.zshrc` 和 `.profile` 中的 DevOpsToolkit source 区块。
 - `~/.config/devops-toolkit/`。
 
 它不会删除用户原有 `.zshrc`、Oh My Zsh、NVM、Node、uv 或 Go，避免误删安装前就存在的数据。

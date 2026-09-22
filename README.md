@@ -182,14 +182,15 @@ vim ansible/inventories/user-only.ini
 ## 安全边界
 
 - user-only 拒绝 root，且要求登录用户、目标用户和 HOME 所有者一致。
-- user-only 默认不使用 sudo；缺少 `curl`、`git`、`zsh` 时会退出。
-- user-only 配置 Go 时还需要 `cc` 和 `make`；缺少时会提示管理员安装 `build-essential`。
+- user-only 默认不使用 sudo；它会按所选组件检查 `git`、`zsh`、`curl`、`bash`、`tar`、`cc`、`make`。
+- 显式允许白名单 apt 安装后会重新检查实际命令；依赖仍缺失时会 fail closed，不把 apt 成功当成工具可用。
 - Oh My Zsh、插件、Linuxbrew 和语言工具使用集中版本配置，重复执行不会自动跟随上游分支。
 - 设置 `user_only_allow_system_dependencies=true` 后，只允许通过 sudo 安装上述白名单依赖。
 - 不在 inventory 中保存 SSH 密码或 sudo 密码。
 - 默认开启 SSH 主机指纹校验。
 - Release 同时执行 SHA256 与 Sigstore/Cosign 身份验证，任一失败都不会切换已安装版本。
-- 用户 Shell 配置写入 `~/.config/devops-toolkit/shell.zsh`，仅在现有 `.zshrc` 中增加一个托管 source 区块。
+- 基础 Zsh 配置写入 `~/.config/devops-toolkit/shell.zsh`；语言工具环境写入独立的
+  `environment.sh` 并由 `.profile`/`.zshrc` 托管区块加载，因此关闭基础 Shell 管理不会让已选工具从 PATH 消失。
 
 ## 文档
 

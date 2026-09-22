@@ -30,6 +30,7 @@ STATE_SCHEMA = 1
 PERSISTED_VARIABLES = {
     "target_user",
     "configure_shell",
+    "install_oh_my_zsh",
     "configure_git",
     "configure_uv",
     "configure_node",
@@ -355,12 +356,21 @@ def prompt_version(label: str, default: str) -> str:
     )
 
 
+def normalize_user_module_selection(values: dict[str, Any]) -> dict[str, Any]:
+    """Return a compatible copy of the selected user-profile modules."""
+    normalized = values.copy()
+    if normalized["install_oh_my_zsh"] and not normalized["configure_shell"]:
+        normalized["install_oh_my_zsh"] = False
+    return normalized
+
+
 def collect_user_modules(defaults: dict[str, Any] | None = None) -> dict[str, Any]:
     defaults = defaults or {}
     values: dict[str, Any] = multi_select(
         "选择用户环境组件：",
         [
-            ("configure_shell", "安装并管理 Zsh / Oh My Zsh", True),
+            ("configure_shell", "管理基础 Zsh 环境与常用别名", True),
+            ("install_oh_my_zsh", "安装并加载 Oh My Zsh / 插件", True),
             ("configure_git", "管理 Git 用户配置", True),
             ("configure_uv", "安装 uv", True),
             ("configure_node", "安装 NVM / Node.js", True),
@@ -369,6 +379,10 @@ def collect_user_modules(defaults: dict[str, Any] | None = None) -> dict[str, An
         ],
         defaults,
     )
+    normalized = normalize_user_module_selection(values)
+    if normalized != values:
+        print("提示：Oh My Zsh 依赖基础 Zsh 管理，已自动关闭 Oh My Zsh。")
+    values = normalized
     if values["configure_git"]:
         values["git_user_name"] = prompt("Git 用户名（留空则不修改）", defaults.get("git_user_name", ""))
         values["git_user_email"] = prompt("Git 邮箱（留空则不修改）", defaults.get("git_user_email", ""))
@@ -444,6 +458,18 @@ def local_account_exists(username: str) -> bool:
     return True
 
 
+def target_account_is_known(
+    location: str,
+    connection_user: str,
+    target_user: str,
+    local_exists: bool = False,
+) -> bool:
+    """Determine whether the credential wizard may offer the existing-user path."""
+    return (location == "local" and local_exists) or (
+        location == "remote" and connection_user == target_user
+    )
+
+
 def collect_wsl(defaults: dict[str, Any] | None = None) -> tuple[Path, str | None, dict[str, Any], list[str], dict[str, str]]:
     defaults = defaults or {}
     if os.geteuid() != 0:
@@ -512,9 +538,11 @@ def collect_ubuntu(defaults: dict[str, Any] | None = None) -> tuple[Path, str, d
         if candidate.is_file():
             default_pub = str(candidate)
     variables = {"target_user": target_user}
-    account_exists = (
-        (location == "local" and local_account_exists(target_user))
-        or (location == "remote" and connection["user"] == target_user)
+    account_exists = target_account_is_known(
+        location,
+        connection["user"],
+        target_user,
+        local_account_exists(target_user) if location == "local" else False,
     )
     variables.update(collect_target_credentials(default_pub, account_exists))
     variables.update(collect_user_modules(defaults))
@@ -618,6 +646,7 @@ def collect_user_only(defaults: dict[str, Any] | None = None) -> tuple[Path, str
 def enabled_components(variables: dict[str, Any]) -> str:
     labels = {
         "configure_shell": "Shell",
+        "install_oh_my_zsh": "Oh My Zsh",
         "configure_git": "Git",
         "configure_uv": "uv",
         "configure_node": "Node.js",

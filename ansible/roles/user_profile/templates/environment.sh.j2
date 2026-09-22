@@ -1,0 +1,23 @@
+# Managed by DevOpsToolkit. This file is sourced by login/interactive shells.
+{% if configure_uv | bool %}
+export PATH="$HOME/.local/bin:$PATH"
+{% endif %}
+
+{% if configure_homebrew_environment | bool %}
+if [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then
+  eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+fi
+{% endif %}
+
+{% if configure_node | bool %}
+export NVM_DIR="$HOME/.nvm"
+[ -r "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+{% endif %}
+
+{% if configure_go | bool %}
+export GOENV_ROOT="$HOME/.local/share/devops-toolkit/goenv"
+export PATH="$GOENV_ROOT/bin:$PATH"
+if command -v goenv >/dev/null 2>&1; then
+  eval "$(goenv init -)"
+fi
+{% endif %}

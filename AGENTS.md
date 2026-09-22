@@ -29,7 +29,7 @@ python3 tests/test-wizard.py
 # Lint (matches CI in .github/workflows/env-check.yml)
 ansible-lint ansible
 yamllint .
-ruff check bin/devops-toolkit tests/test-wizard.py
+ruff check bin/devops-toolkit tests/test-wizard.py tests/test-user-profile.py
 shellcheck install.sh scripts/build-release.sh tests/*.sh bin/*   # skips bin/devops-toolkit (Python)
 
 # Build a release tarball locally (VERSION must match ^v[0-9]+\.[0-9]+\.[0-9]+)

@@ -8,6 +8,7 @@ target_passwordless_sudo: false
 
 # User profile
 configure_shell: true
+install_oh_my_zsh: "{{ configure_shell }}"
 configure_git: true
 configure_uv: true
 configure_node: true

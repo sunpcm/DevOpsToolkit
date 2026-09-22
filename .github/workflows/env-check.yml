@@ -51,7 +51,7 @@ jobs:
 
       - name: Ruff
         run: >-
-          ruff check bin/devops-toolkit tests/test-wizard.py
+          ruff check bin/devops-toolkit tests/test-wizard.py tests/test-user-profile.py
           AcmeConfig/libexec/acme-manager AcmeConfig/tests/test_acme_manager.py
 
       - name: Actionlint

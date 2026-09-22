@@ -81,6 +81,18 @@ assert (
 )
 assert wizard["public_key_identity"]("invalid") == ""
 
+assert wizard["normalize_user_module_selection"](
+    {"configure_shell": False, "install_oh_my_zsh": True}
+) == {"configure_shell": False, "install_oh_my_zsh": False}
+assert wizard["normalize_user_module_selection"](
+    {"configure_shell": True, "install_oh_my_zsh": False}
+) == {"configure_shell": True, "install_oh_my_zsh": False}
+assert wizard["target_account_is_known"]("remote", "developer", "developer")
+assert not wizard["target_account_is_known"]("remote", "root", "developer")
+assert wizard["target_account_is_known"](
+    "local", "root", "developer", local_exists=True
+)
+
 auto_finalize_vars = {
     "configure_ssh": True,
     "target_authorized_keys": ["ssh-ed25519 AAAATEST target-comment"],

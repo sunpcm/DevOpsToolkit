@@ -39,7 +39,8 @@ vim ansible/group_vars/all.yml
 
 | 变量 | 默认值 | 说明 |
 |---|---:|---|
-| `configure_shell` | `true` | Zsh、Oh My Zsh 和插件 |
+| `configure_shell` | `true` | 基础 Zsh 环境、常用别名和提示工具初始化 |
+| `install_oh_my_zsh` | 跟随 `configure_shell` | 安装并加载 Oh My Zsh 和固定版本插件 |
 | `configure_git` | `true` | Git 全局配置 |
 | `configure_uv` | `true` | uv |
 | `configure_node` | `true` | NVM 和 Node.js |
@@ -47,6 +48,15 @@ vim ansible/group_vars/all.yml
 | `configure_homebrew_environment` | `true` | 在 Shell 中加载已有 Linuxbrew |
 | `configure_wsl_integration` | `true` | WSL Windows 互操作配置 |
 | `enable_wsl_docker_integration` | `true` | 检查 Docker Desktop 可用性 |
+
+uv、NVM/Node、goenv/Go 和共享 Linuxbrew 的环境加载写入独立的
+`~/.config/devops-toolkit/environment.sh`，由 `.profile` 和 `.zshrc` 各自的托管区块加载，
+不依赖 `configure_shell=true`。`install_oh_my_zsh=true` 则必须同时启用
+`configure_shell`；交互向导遇到不兼容组合会明确提示并关闭 Oh My Zsh。
+
+`configure_homebrew_environment=true` 但 `/home/linuxbrew/.linuxbrew/bin/brew` 不存在时，
+角色会给出警告并保留带存在性判断的 loader，不会伪装成成功加载，也不会让整次配置失败。
+以后由系统级流程安装共享 Linuxbrew 后，新 Shell 会自动加载它。
 
 Git 身份默认留空，不会写入虚假姓名或邮箱：
 
@@ -161,7 +171,8 @@ SSH 公钥可以提交，但更推荐放在环境专用变量文件中。
 
 关闭功能时，只自动删除能够确定由 DevOpsToolkit 独占管理的内容：
 
-- `configure_shell=false`：删除 `.zshrc` 中的托管 source 区块和托管 `shell.zsh`。
+- `configure_shell=false`：删除基础 Zsh source 区块和托管 `shell.zsh`，但不会影响已启用语言工具的独立环境 loader。
+- uv、Node、Go 和 Linuxbrew 环境开关全部关闭：删除 `.profile`/`.zshrc` 的环境 source 区块及托管 `environment.sh`。
 - `configure_wsl_integration=false`：删除托管 WSL source 区块和 `wsl.sh`。
 - `target_passwordless_sudo=false`：删除 `90-devops-toolkit-<user>` sudoers 文件。
 
