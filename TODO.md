@@ -70,6 +70,11 @@
 
 ### P1-1：把 SSH 改端口和加固改成两阶段事务
 
+本地两阶段实现提交 `1bb5b8c`，阶段证据与未完成的最终 VM 门槛见
+[`archive/progress/2026-09-22-ssh-p1-1-transition.md`](archive/progress/2026-09-22-ssh-p1-1-transition.md)。
+最终候选的完整双版本故障注入回归仍需在 apt 网络可用时重跑；不得将定向 SSH role 测试
+当作整套 Ubuntu bootstrap 验收。
+
 - [ ] 第一阶段创建目标账户/密钥，同时放行旧端口与新端口，再修改并验证 SSH listener。
 - [ ] 从控制端使用目标普通用户和新端口建立全新连接；不能只复用现有 root ControlMaster 会话。
 - [ ] 第二阶段仅在新连接成功后关闭旧端口，并按显式选择禁用 root/password 登录。
