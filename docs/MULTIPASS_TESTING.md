@@ -9,7 +9,7 @@ Multipass 的 `exec`、`mount` 和常规停止操作依赖虚拟机中的 SSH 22
 `Starting` 或不可达。
 
 脚本因此拒绝在非 `*-test-*` 实例上执行端口切换。端口切换后的验证改用目标用户 SSH，清理时只允许
-删除脚本生成的严格命名实例，并先强制停止这些临时实例。
+只删除脚本生成的严格命名实例，并先强制停止这些临时实例；不运行全局 `multipass purge`。
 
 ## Ubuntu 24.04 的 SSH 端口由 ssh.socket 决定
 
@@ -25,7 +25,8 @@ Ubuntu 22.10 及以后（含 24.04 LTS）默认用 systemd socket 激活 OpenSSH
 
 ## 运行
 
-宿主机需要已经具备 Multipass、Ansible、SSH、Python 3，以及仓库声明的 Ansible collections。
+宿主机需要已经具备 Multipass、Python 3.12–3.14、隔离的 ansible-core 2.21.4、SSH，
+以及仓库声明的 Ansible collections。
 脚本不会安装这些宿主机依赖。
 
 ```bash
@@ -71,7 +72,8 @@ MULTIPASS_TEST_PROXY="http://192.168.252.1:7898" \
   ./tests/multipass-smoke.sh run --with-uv
 ```
 
-该变量只会在一次性 VM 中写入测试用 `/etc/environment` 和 apt 配置，不会修改宿主机代理配置。代理
+该变量只会在一次性 VM 中写入测试用 `/etc/environment` 和 apt 配置，不会修改宿主机代理配置。
+脚本会把 Ansible SSH ControlPath 放在短路径的测试专用临时目录，避免 macOS Unix socket 路径超限。代理
 只能使用不含凭据的 `http://host:port`；测试结束后实例会被删除。
 
 在一次性实例中额外执行系统故障注入：

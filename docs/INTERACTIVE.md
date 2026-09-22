@@ -60,19 +60,18 @@ sudo ./bin/devops-toolkit
 
 安装阶段会验证 SHA256 和 Sigstore 发布身份；签名或网络验证失败时不会启动向导，也不会降级为未签名安装。详细故障排查见[安装、升级与回滚](INSTALLATION.md)。
 
-需要审查最新源码、开发调试或不使用 Release 安装器时使用 clone。源码运行要求
-`ansible-core >= 2.12`；Ubuntu 22.04 的 apt `ansible` 只有 2.10，应优先使用安装器自动补齐，
-或手工安装兼容版本：
+需要审查最新源码、开发调试或不使用 Release 安装器时使用 clone。源码控制端需要
+Python 3.12–3.14；Ubuntu 22.04 仅作为远程受管目标。Ubuntu 24.04 示例：
 
 ```bash
 apt update
-apt install -y git ansible python3-pip
+apt install -y git python3 python3-venv
 git clone https://github.com/sunpcm/DevOpsToolkit.git
 cd DevOpsToolkit
-ansible-playbook --version
-# 仅当版本低于 2.12 时执行
-python3 -m pip install 'ansible-core>=2.12,<2.19'
-ansible-galaxy collection install -r ansible/requirements.yml
+python3 -m venv .venv
+.venv/bin/python -m pip install 'ansible-core==2.21.4'
+.venv/bin/ansible-galaxy collection install -r ansible/requirements.yml
+export PATH="${PWD}/.venv/bin:${PATH}"
 ./bin/devops-toolkit
 ```
 

@@ -73,8 +73,9 @@ rm -rf "${TMP_DIR}"
 应只输出：
 
 ```text
-ansible.posix=1.5.4
-community.general=7.5.2
+ansible.posix=2.2.2
+community.general=13.4.0
+community.library_inventory_filtering_v1=1.1.5
 ```
 
 再模拟安装器的 latest 下载确认可达：

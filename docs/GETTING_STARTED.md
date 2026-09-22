@@ -6,7 +6,7 @@
 
 ### 控制端要求
 
-- `ansible-core >= 2.12`
+- Python 3.12–3.14 与隔离的 `ansible-core==2.21.4`；Ubuntu 22.04 仅可作远程受管目标
 - Git
 - SSH 客户端（远程场景）
 - 能访问 GitHub 和软件源
@@ -14,7 +14,7 @@
 安装项目依赖：
 
 ```bash
-ansible-galaxy collection install -r ansible/requirements.yml
+./.venv/bin/ansible-galaxy collection install -r ansible/requirements.yml
 ./tests/verify-ansible.sh
 ```
 
@@ -88,11 +88,11 @@ target_password_hash: "$6$..."
 
 ```bash
 sudo apt update
-sudo apt install -y ansible python3-pip git
-ansible-playbook --version
-# Ubuntu 22.04 的 apt ansible 为 2.10；仅在版本低于 2.12 时执行
-sudo python3 -m pip install 'ansible-core>=2.12,<2.19'
-ansible-galaxy collection install -r ansible/requirements.yml
+sudo apt install -y python3 python3-venv git
+python3 -m venv .venv
+.venv/bin/python -m pip install 'ansible-core==2.21.4'
+.venv/bin/ansible-galaxy collection install -r ansible/requirements.yml
+export PATH="${PWD}/.venv/bin:${PATH}"
 ```
 
 编辑公共配置：

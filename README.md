@@ -51,27 +51,29 @@
 git clone https://github.com/sunpcm/DevOpsToolkit.git
 cd DevOpsToolkit
 
-# Ubuntu / WSL2；要求 ansible-core >= 2.12
+# Ubuntu 24.04 / WSL2 Ubuntu 24.04 控制端；Ubuntu 22.04 只作为远程受管目标
 sudo apt update
-sudo apt install -y ansible python3-pip git
+sudo apt install -y python3 python3-venv git
 
-# Ubuntu 22.04 的 apt ansible 只有 2.10，需要补装兼容版本
-ansible-playbook --version
-sudo python3 -m pip install 'ansible-core>=2.12,<2.19'
+python3 -m venv .venv
+.venv/bin/python -m pip install 'ansible-core==2.21.4'
 
 # 仅密码 SSH 登录需要
 sudo apt install -y sshpass
 
 # 安装项目需要的 Ansible collection
-ansible-galaxy collection install -r ansible/requirements.yml
+.venv/bin/ansible-galaxy collection install -r ansible/requirements.yml
+export PATH="${PWD}/.venv/bin:${PATH}"
 ```
 
-macOS 控制端可使用：
+macOS 源码控制端同样使用隔离 runtime；先确认 `python3 --version` 为 3.12–3.14：
 
 ```bash
-brew install ansible
+python3 -m venv .venv
+.venv/bin/python -m pip install 'ansible-core==2.21.4'
+.venv/bin/ansible-galaxy collection install -r ansible/requirements.yml
+export PATH="${PWD}/.venv/bin:${PATH}"
 # macOS 控制端推荐使用 SSH 私钥认证
-ansible-galaxy collection install -r ansible/requirements.yml
 ```
 
 ### 使用交互式向导

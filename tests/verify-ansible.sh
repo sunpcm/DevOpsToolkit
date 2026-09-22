@@ -26,6 +26,7 @@ ansible-playbook --syntax-check -i "${TMP_DIR}/inventory.ini" \
   "${ROOT_DIR}/ansible/playbooks/user-only-remove.yml"
 
 bash -n \
+  "${ROOT_DIR}/bin/ansible-playbook" \
   "${ROOT_DIR}/bin/wsl-bootstrap" \
   "${ROOT_DIR}/bin/ubuntu-bootstrap" \
   "${ROOT_DIR}/bin/user-only" \
@@ -77,6 +78,13 @@ if ! grep -Fq 'uses: ./.github/workflows/env-check.yml' "${release_workflow}" ||
   echo "错误：Release 未对同一 SHA 执行完整质量门禁、main 祖先检查或记录来源 SHA。" >&2
   exit 1
 fi
+if grep -Fq -- '--break-system-packages' "${ROOT_DIR}/install.sh" || \
+   ! grep -Fq 'ANSIBLE_CORE_VERSION="2.21.4"' "${ROOT_DIR}/install.sh" || \
+   ! grep -Fq 'ensure_managed_runtime' "${ROOT_DIR}/install.sh" || \
+   ! grep -Fq 'community.library_inventory_filtering_v1' "${ROOT_DIR}/ansible/requirements.yml"; then
+  echo "错误：隔离 Ansible 2.21.4 runtime 或 collection 依赖锁定发生回退。" >&2
+  exit 1
+fi
 if ! grep -Fq 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02' \
   "${release_workflow}" || \
    ! grep -Fq 'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093' \
@@ -112,6 +120,7 @@ fi
 if command -v shellcheck >/dev/null 2>&1; then
   shellcheck \
     "${ROOT_DIR}/install.sh" \
+    "${ROOT_DIR}/bin/ansible-playbook" \
     "${ROOT_DIR}/scripts/build-release.sh" \
     "${ROOT_DIR}/tests/test-installer.sh" \
     "${ROOT_DIR}/tests/test-release.sh" \

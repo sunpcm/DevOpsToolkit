@@ -24,5 +24,5 @@ if [[ -d "${COLLECTIONS_DIR}/ansible_collections" ]]; then
   export ANSIBLE_COLLECTIONS_PATHS="${COLLECTIONS_DIR}"
 fi
 export ANSIBLE_CONFIG="${ROOT_DIR}/ansible/ansible.cfg"
-exec ansible-playbook "${ROOT_DIR}/ansible/playbooks/wsl-bootstrap.yml" \
+exec "${ROOT_DIR}/bin/ansible-playbook" "${ROOT_DIR}/ansible/playbooks/wsl-bootstrap.yml" \
   -e "target_user=${TARGET_USER}" "${@:2}"

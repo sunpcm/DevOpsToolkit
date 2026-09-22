@@ -629,8 +629,9 @@ def save_wizard_state(state: dict[str, Any], path: Path | None = None) -> Path:
 
 
 def run_wizard() -> int:
-    if not shutil.which("ansible-playbook"):
-        raise WizardError("找不到 ansible-playbook，请先安装 Ansible。")
+    ansible_launcher = ROOT_DIR / "bin" / "ansible-playbook"
+    if not ansible_launcher.is_file():
+        raise WizardError("找不到 DevOpsToolkit Ansible 启动器；请重新安装。")
     state = load_wizard_state()
     remembered_mode = state.get("last_mode")
     if remembered_mode not in {"wsl", "ubuntu", "user-only"}:
@@ -668,7 +669,7 @@ def run_wizard() -> int:
         temp = Path(temp_dir)
         vars_file = temp / "extra-vars.json"
         secure_write(vars_file, json.dumps(variables, ensure_ascii=False, indent=2) + "\n")
-        command = ["ansible-playbook"]
+        command = [str(ansible_launcher)]
         if inventory is not None:
             inventory_file = temp / "inventory.ini"
             secure_write(inventory_file, inventory)

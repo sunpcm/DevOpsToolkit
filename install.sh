@@ -6,11 +6,8 @@ readonly ARCHIVE_NAME="devops-toolkit.tar.gz"
 readonly CHECKSUM_NAME="${ARCHIVE_NAME}.sha256"
 readonly BUNDLE_NAME="${ARCHIVE_NAME}.sigstore.json"
 readonly COSIGN_VERSION="v3.1.1"
-readonly REQUIRED_ANSIBLE_MAJOR=2
-readonly REQUIRED_ANSIBLE_MINOR=12
-# 用范围而非精确版本：让 pip 按运行时 Python 解析可用的最高 ansible-core
-# （Ubuntu 22.04 的 Python 3.10 最高 2.17，24.04 的 3.12 可到 2.18）。
-readonly ANSIBLE_CORE_PIP_SPEC="ansible-core>=2.12,<2.19"
+readonly ANSIBLE_CORE_VERSION="2.21.4"
+readonly ANSIBLE_CORE_PIP_SPEC="ansible-core==${ANSIBLE_CORE_VERSION}"
 
 INSTALL_MODE=""
 REQUESTED_VERSION="${DEVOPS_TOOLKIT_VERSION:-}"
@@ -105,11 +102,15 @@ parse_args() {
 
 missing_core_commands() {
   local command_name
-  for command_name in curl tar python3 ansible-playbook ansible-galaxy git openssl; do
+  for command_name in curl tar python3 git openssl; do
     if ! command -v "${command_name}" >/dev/null 2>&1; then
       printf '%s\n' "${command_name}"
     fi
   done
+  if command -v python3 >/dev/null 2>&1 && \
+     ! python3 -c 'import ensurepip' >/dev/null 2>&1; then
+    printf '%s\n' python3-venv
+  fi
 }
 
 run_apt_get() {
@@ -120,26 +121,51 @@ apt_get_available() {
   command -v apt-get >/dev/null 2>&1
 }
 
-pip_install_ansible_core() {
-  local -a pip_cmd=(python3 -m pip install --upgrade "${ANSIBLE_CORE_PIP_SPEC}")
-  # PEP 668：externally-managed 环境（如 Ubuntu 24.04）需显式放行系统级安装。
-  if python3 -c 'import os, sysconfig, sys; sys.exit(0 if os.path.exists(os.path.join(sysconfig.get_path("stdlib"), "EXTERNALLY-MANAGED")) else 1)'; then
-    pip_cmd+=(--break-system-packages)
-  fi
-  "${pip_cmd[@]}"
+check_controller_python() {
+  command -v python3 >/dev/null 2>&1 || fail "缺少 Python 3.12–3.14 控制端运行时。"
+  python3 -c 'import sys; sys.exit(0 if (3, 12) <= sys.version_info[:2] <= (3, 14) else 1)' || \
+    fail "控制端需要 Python 3.12–3.14；Ubuntu 22.04/Python 3.10 仅支持作为远程受管目标。"
 }
 
-ensure_ansible_core() {
-  # 部分发行版（如 Ubuntu 22.04）apt 的 ansible 仅 2.10，低于要求；改用 pip 安装 ansible-core。
-  if ansible_core_meets_requirement; then
+managed_runtime_dir() {
+  printf '%s/runtime/ansible-core-%s\n' "$(toolkit_base_dir)" "${ANSIBLE_CORE_VERSION}"
+}
+
+managed_ansible_command() {
+  printf '%s/bin/%s\n' "$(managed_runtime_dir)" "$1"
+}
+
+managed_runtime_valid() {
+  local runtime_dir version
+  runtime_dir="$(managed_runtime_dir)"
+  [[ -f "${runtime_dir}/.ready" && -x "${runtime_dir}/bin/ansible-playbook" && \
+     -x "${runtime_dir}/bin/ansible-galaxy" ]] || return 1
+  [[ "$(cat "${runtime_dir}/.ready")" == "${ANSIBLE_CORE_VERSION}" ]] || return 1
+  version="$(ANSIBLE_LOCAL_TEMP="${TEMP_DIR:-${TMPDIR:-/tmp}}" \
+    "${runtime_dir}/bin/ansible-playbook" --version 2>/dev/null | \
+    sed -nE '1s/.*\[core ([0-9]+\.[0-9]+\.[0-9]+)\].*/\1/p')"
+  [[ "${version}" == "${ANSIBLE_CORE_VERSION}" ]]
+}
+
+ensure_managed_runtime() {
+  local runtime_dir
+  check_controller_python
+  runtime_dir="$(managed_runtime_dir)"
+  if managed_runtime_valid; then
+    info "复用隔离的 ${ANSIBLE_CORE_PIP_SPEC} runtime"
     return 0
   fi
-  command -v python3 >/dev/null 2>&1 || fail "缺少 python3，无法通过 pip 安装 ansible-core。"
-  info "apt 的 ansible 版本过低或缺失，改用 pip 安装 ${ANSIBLE_CORE_PIP_SPEC}"
-  pip_install_ansible_core || fail "pip 安装 ansible-core 失败。"
-  hash -r
-  ansible_core_meets_requirement || \
-    fail "pip 安装后仍未获得满足要求的 ansible-core（可能 PATH 未优先 /usr/local/bin）。"
+  [[ ! -e "${runtime_dir}" && ! -L "${runtime_dir}" ]] || \
+    fail "隔离 runtime ${runtime_dir} 不完整或版本不符；请先人工检查，安装器不会覆盖。"
+  mkdir -p "$(dirname "${runtime_dir}")"
+  chmod 0755 "$(dirname "${runtime_dir}")"
+  python3 -m venv "${runtime_dir}" || fail "创建隔离 runtime 失败；请安装 python3-venv。"
+  "${runtime_dir}/bin/python" -m pip install "${ANSIBLE_CORE_PIP_SPEC}" || \
+    fail "隔离 runtime 安装 ${ANSIBLE_CORE_PIP_SPEC} 失败；current 未切换。"
+  printf '%s\n' "${ANSIBLE_CORE_VERSION}" >"${runtime_dir}/.ready"
+  managed_runtime_valid || fail "隔离 runtime 自检失败；current 未切换。"
+  chmod -R a+rX "${runtime_dir}"
+  info "隔离 runtime 已就绪：${runtime_dir}"
 }
 
 install_system_dependencies() {
@@ -148,54 +174,26 @@ install_system_dependencies() {
   info "安装系统依赖"
   run_apt_get update
   DEBIAN_FRONTEND=noninteractive run_apt_get install -y \
-    ansible python3 python3-pip git curl ca-certificates openssl sshpass
-  ensure_ansible_core
+    python3 python3-venv git curl ca-certificates openssl sshpass
 }
 
 ensure_dependencies() {
   local missing
   missing="$(missing_core_commands)"
-  # 命令齐全但 ansible-core 版本过低时（如 Ubuntu 22.04 的 2.10）也需在系统模式下修复。
-  if [[ "${INSTALL_MODE}" == "system" ]] && \
-     { [[ -n "${missing}" ]] || ! ansible_core_meets_requirement; }; then
+  if [[ "${INSTALL_MODE}" == "system" && -n "${missing}" ]]; then
     install_system_dependencies
     missing="$(missing_core_commands)"
   fi
   if [[ -n "${missing}" ]]; then
     printf '缺少命令：\n%s\n' "${missing}" >&2
     if [[ "${INSTALL_MODE}" == "user" ]]; then
-      printf '普通用户安装不会提权。请让管理员安装 python3、ansible、git、curl 和 openssl。\n' >&2
+      printf '普通用户安装不会提权。请让管理员安装 Python 3.12–3.14（含 venv）、git、curl 和 openssl。\n' >&2
     fi
     exit 1
   fi
   if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
     fail "找不到 sha256sum 或 shasum。"
   fi
-}
-
-ansible_core_version() {
-  command -v ansible-playbook >/dev/null 2>&1 || return 1
-  # 兼容两种版本串：新版 "ansible-playbook [core 2.18.6]" 与旧版 "ansible-playbook 2.10.7"。
-  ansible-playbook --version 2>/dev/null | \
-    sed -nE '1s/.*(core |ansible-playbook )([0-9]+)\.([0-9]+).*/\2.\3/p'
-}
-
-ansible_core_meets_requirement() {
-  local version major minor
-  version="$(ansible_core_version)" || return 1
-  [[ -n "${version}" ]] || return 1
-  major="${version%%.*}"
-  minor="${version##*.}"
-  (( major > REQUIRED_ANSIBLE_MAJOR || \
-     (major == REQUIRED_ANSIBLE_MAJOR && minor >= REQUIRED_ANSIBLE_MINOR) ))
-}
-
-check_ansible_version() {
-  ansible_core_meets_requirement && return 0
-  local version
-  version="$(ansible_core_version || true)"
-  [[ -n "${version}" ]] || fail "无法识别 ansible-core 版本。"
-  fail "需要 ansible-core >= ${REQUIRED_ANSIBLE_MAJOR}.${REQUIRED_ANSIBLE_MINOR}，当前为 ${version}。"
 }
 
 download_base_url() {
@@ -404,8 +402,9 @@ from pathlib import Path
 
 root = Path(sys.argv[1])
 expected = {
-    "ansible.posix": "1.5.4",
-    "community.general": "7.5.2",
+    "ansible.posix": "2.2.2",
+    "community.general": "13.4.0",
+    "community.library_inventory_filtering_v1": "1.1.5",
 }
 marker = root / ".bundled-collections"
 expected_marker = "".join(
@@ -488,7 +487,7 @@ install_release() {
     mkdir -p "${collection_root}/collections"
     if ! ANSIBLE_COLLECTIONS_PATH="${collection_root}/collections" \
       ANSIBLE_COLLECTIONS_PATHS="${collection_root}/collections" \
-      ansible-galaxy collection install \
+      "$(managed_ansible_command ansible-galaxy)" collection install \
         --requirements-file "${collection_root}/ansible/requirements.yml" \
         --collections-path "${collection_root}/collections"; then
       [[ "${collection_root}" != "${staging_dir}" ]] || rm -rf "${staging_dir}"
@@ -527,8 +526,8 @@ PY
 
 main() {
   parse_args "$@"
+  check_controller_python
   ensure_dependencies
-  check_ansible_version
   umask 077
   TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/devops-toolkit-install.XXXXXX")"
   chmod 0700 "${TEMP_DIR}"
@@ -541,6 +540,7 @@ main() {
   extract_archive_safely
   release_version="$(read_release_version)"
   verify_sigstore_signature "${release_version}"
+  ensure_managed_runtime
   launcher="$(install_release "${release_version}" | tail -n 1)"
 
   info "DevOpsToolkit ${release_version} 已安装：${launcher}"

@@ -62,14 +62,19 @@ EOF
   if [[ "${collection_mode}" != "legacy" ]]; then
     mkdir -p \
       "${stage}/devops-toolkit/collections/ansible_collections/ansible/posix" \
-      "${stage}/devops-toolkit/collections/ansible_collections/community/general"
+      "${stage}/devops-toolkit/collections/ansible_collections/community/general" \
+      "${stage}/devops-toolkit/collections/ansible_collections/community/library_inventory_filtering_v1"
     printf '%s\n' \
-      '{"collection_info":{"namespace":"ansible","name":"posix","version":"1.5.4"}}' \
+      '{"collection_info":{"namespace":"ansible","name":"posix","version":"2.2.2"}}' \
       >"${stage}/devops-toolkit/collections/ansible_collections/ansible/posix/MANIFEST.json"
     printf '%s\n' \
-      '{"collection_info":{"namespace":"community","name":"general","version":"7.5.2"}}' \
+      '{"collection_info":{"namespace":"community","name":"general","version":"13.4.0"}}' \
       >"${stage}/devops-toolkit/collections/ansible_collections/community/general/MANIFEST.json"
-    printf '%s\n' 'ansible.posix=1.5.4' 'community.general=7.5.2' \
+    printf '%s\n' \
+      '{"collection_info":{"namespace":"community","name":"library_inventory_filtering_v1","version":"1.1.5"}}' \
+      >"${stage}/devops-toolkit/collections/ansible_collections/community/library_inventory_filtering_v1/MANIFEST.json"
+    printf '%s\n' 'ansible.posix=2.2.2' 'community.general=13.4.0' \
+      'community.library_inventory_filtering_v1=1.1.5' \
       >"${stage}/devops-toolkit/collections/.bundled-collections"
     if [[ "${collection_mode}" == "invalid-bundle" ]]; then
       printf '%s\n' \
@@ -109,7 +114,7 @@ MOCK_BIN="${TMP_DIR}/mock-bin"
 mkdir -p "${MOCK_BIN}"
 cat >"${MOCK_BIN}/ansible-playbook" <<'EOF'
 #!/usr/bin/env bash
-echo 'ansible-playbook [core 2.18.6]'
+echo 'ansible-playbook [core 2.21.4]'
 EOF
 cat >"${MOCK_BIN}/ansible-galaxy" <<'EOF'
 #!/usr/bin/env bash
@@ -144,6 +149,16 @@ source "${ROOT_DIR}/install.sh"
 cosign_download_base() { printf '%s\\n' 'file://${MOCK_COSIGN_DIR}'; }
 cosign_expected_sha256() {
   printf '%s\\n' "\${DEVOPS_TOOLKIT_TEST_EXPECTED_COSIGN_SHA256:-${FAKE_COSIGN_SHA256}}"
+}
+ensure_managed_runtime() {
+  local runtime_dir
+  runtime_dir="\$(managed_runtime_dir)"
+  if [[ ! -f "\${runtime_dir}/.ready" ]]; then
+    mkdir -p "\${runtime_dir}/bin"
+    cp "${MOCK_BIN}/ansible-playbook" "${MOCK_BIN}/ansible-galaxy" "\${runtime_dir}/bin/"
+    printf '%s\\n' '2.21.4' >"\${runtime_dir}/.ready"
+    printf '%s\\n' "\${runtime_dir}" >>"${TMP_DIR}/runtime-created.log"
+  fi
 }
 main "\$@"
 EOF
@@ -190,6 +205,8 @@ DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${RELEASE_V1}" \
   "${INSTALLER}" --user --no-run --version v0.1.0
 [[ "$(find "${HOME}/.local/share/devops-toolkit/releases" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')" == "1" ]] || \
   fail "重复安装产生了重复版本目录"
+[[ "$(wc -l <"${TMP_DIR}/runtime-created.log" | tr -d ' ')" == "1" ]] || \
+  fail "重复安装重建了隔离 runtime"
 [[ "$(wc -l <"${DEVOPS_TOOLKIT_TEST_GALAXY_LOG}" | tr -d ' ')" == "0" ]] || \
   fail "内置 collections 的安装或重复安装仍调用了 Galaxy"
 
@@ -334,10 +351,15 @@ PY
 
 # Dependency policy: user mode never calls apt; system mode uses only the whitelist.
 APT_LOG="${TMP_DIR}/apt.log"
+(
+  source "${ROOT_DIR}/install.sh"
+  python3() { return 1; }
+  missing_core_commands | grep -Fx python3-venv >/dev/null
+) || fail "缺少 ensurepip 时未识别 python3-venv 依赖"
 if (
   source "${ROOT_DIR}/install.sh"
   INSTALL_MODE=user
-  missing_core_commands() { echo ansible-playbook; }
+  missing_core_commands() { echo git; }
   run_apt_get() { echo "$*" >>"${APT_LOG}"; }
   ensure_dependencies
 ) >/dev/null 2>&1; then
@@ -350,7 +372,7 @@ fi
   INSTALL_MODE=system
   marker="${TMP_DIR}/deps-installed"
   missing_core_commands() {
-    [[ -e "${marker}" ]] || echo ansible-playbook
+    [[ -e "${marker}" ]] || echo git
     return 0
   }
   apt_get_available() { return 0; }
@@ -362,18 +384,7 @@ fi
   ensure_dependencies
 )
 grep -Fx 'update' "${APT_LOG}" >/dev/null
-grep -Fx 'install -y ansible python3 python3-pip git curl ca-certificates openssl sshpass' "${APT_LOG}" >/dev/null
-
-# apt 的 ansible 版本过低时，系统模式改用 pip 安装 ansible-core。
-PIP_LOG="${TMP_DIR}/pip.log"
-(
-  source "${ROOT_DIR}/install.sh"
-  # 起始不达标；模拟 pip 安装后达标。
-  ansible_core_meets_requirement() { [[ -e "${TMP_DIR}/pip-done" ]]; }
-  pip_install_ansible_core() { echo called >>"${PIP_LOG}"; : >"${TMP_DIR}/pip-done"; }
-  ensure_ansible_core
-)
-[[ -s "${PIP_LOG}" ]] || fail "ansible-core 版本过低时未触发 pip 安装"
+grep -Fx 'install -y python3 python3-venv git curl ca-certificates openssl sshpass' "${APT_LOG}" >/dev/null
 
 "${ROOT_DIR}/install.sh" --help >/dev/null
 echo "安装器测试通过。"

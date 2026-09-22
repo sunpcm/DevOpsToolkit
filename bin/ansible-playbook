@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ "$(basename "$(dirname "${ROOT_DIR}")")" == releases ]]; then
+  RUNTIME="$(dirname "$(dirname "${ROOT_DIR}")")/runtime/ansible-core-2.21.4"
+  [[ -f "${RUNTIME}/.ready" && "$(cat "${RUNTIME}/.ready")" == 2.21.4 && \
+    -x "${RUNTIME}/bin/ansible-playbook" ]] || {
+    echo "错误：隔离 Ansible runtime 缺失或不完整；请重新运行可信安装器。" >&2
+    exit 1
+  }
+  exec "${RUNTIME}/bin/ansible-playbook" "$@"
+fi
+
+# 源码 checkout 仅供开发者使用；正式 Release 一律走隔离 runtime。
+exec ansible-playbook "$@"

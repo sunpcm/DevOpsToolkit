@@ -17,7 +17,8 @@ PACKAGE_DIR="${STAGE_DIR}/devops-toolkit"
 
 if [[ -z "${COLLECTIONS_SOURCE}" || \
       ! -f "${COLLECTIONS_SOURCE}/ansible_collections/ansible/posix/MANIFEST.json" || \
-      ! -f "${COLLECTIONS_SOURCE}/ansible_collections/community/general/MANIFEST.json" ]]; then
+      ! -f "${COLLECTIONS_SOURCE}/ansible_collections/community/general/MANIFEST.json" || \
+      ! -f "${COLLECTIONS_SOURCE}/ansible_collections/community/library_inventory_filtering_v1/MANIFEST.json" ]]; then
   echo "错误：缺少固定版本 Ansible collections 构建目录。" >&2
   exit 1
 fi
@@ -37,8 +38,9 @@ from pathlib import Path
 
 root = Path(sys.argv[1])
 expected = {
-    "ansible.posix": ("ansible", "posix", "1.5.4"),
-    "community.general": ("community", "general", "7.5.2"),
+    "ansible.posix": ("ansible", "posix", "2.2.2"),
+    "community.general": ("community", "general", "13.4.0"),
+    "community.library_inventory_filtering_v1": ("community", "library_inventory_filtering_v1", "1.1.5"),
 }
 actual = {}
 for manifest in root.glob("ansible_collections/*/*/MANIFEST.json"):

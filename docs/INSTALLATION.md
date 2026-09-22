@@ -13,6 +13,7 @@
 root 模式会在 Ubuntu/WSL 上通过 apt 补齐白名单依赖，然后安装到：
 
 - 版本：`/opt/devops-toolkit/releases/<version>`
+- 隔离 Ansible：`/opt/devops-toolkit/runtime/ansible-core-2.21.4`
 - 当前版本：`/opt/devops-toolkit/current`
 - 命令：`/usr/local/bin/devops-toolkit`
 
@@ -21,6 +22,7 @@ root 模式会在 Ubuntu/WSL 上通过 apt 补齐白名单依赖，然后安装�
 普通用户执行同一命令时不会使用 sudo，安装位置为：
 
 - 版本：`~/.local/share/devops-toolkit/releases/<version>`
+- 隔离 Ansible：`~/.local/share/devops-toolkit/runtime/ansible-core-2.21.4`
 - 当前版本：`~/.local/share/devops-toolkit/current`
 - 命令：`~/.local/bin/devops-toolkit`
 
@@ -31,10 +33,10 @@ printf '\nexport PATH="$HOME/.local/bin:$PATH"\n' >>"$HOME/.profile"
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-普通用户安装绝不提权。缺少 Python、Ansible、Git、curl 或 OpenSSL 时，安装器会停止，并给出需要管理员安装的依赖。
-系统模式要求 `ansible-core >= 2.12`；Ubuntu 22.04 的 apt 版本只有 2.10，安装器会安装
-`python3-pip`，再固定到兼容范围 `ansible-core>=2.12,<2.19` 并复核版本。Ubuntu 24.04
-若触发系统 pip 保护，则只在该受控 bootstrap 步骤使用 `--break-system-packages`。
+普通用户安装绝不提权。控制端需要 Python 3.12–3.14（含 `venv`）、Git、curl 和 OpenSSL。
+安装器在自有目录创建 `ansible-core==2.21.4` 隔离 runtime，不修改系统 Python；重复安装复用已经自检的 runtime。
+Ubuntu 22.04 / Python 3.10 可作为远程受管目标，但不支持本机或 WSL 控制端模式。推荐 Ubuntu 24.04 控制端。
+这项迁移尚未发布；已发布的 `v0.1.7` 仍按其签名包内代码运行，不能把本段当作该版本的运行时保证。
 
 ## 安装器验证顺序
 
@@ -46,7 +48,7 @@ export PATH="$HOME/.local/bin:$PATH"
 4. 核对包内 `VERSION` 与请求的版本。
 5. 下载或复用固定版本 Cosign，并用安装器内置 SHA256 校验 Cosign 本身。
 6. 验证 Release 的 OIDC issuer、仓库、workflow、tag ref 和触发事件。
-7. 校验并启用签名包内的固定版本 Ansible collections；全部成功后才原子切换 `current`。历史 Release
+7. 创建或复用隔离 Ansible runtime，校验并启用签名包内的固定版本 Ansible collections；全部成功后才原子切换 `current`。历史 Release
    不含内置 collections 时才显式回退到 Ansible Galaxy 兼容安装。
 
 任何一步失败，当前已安装版本都不会切换。Cosign 验证需要访问 Sigstore 信任根和透明日志服务；受限网络应显式放行，不要通过删除验证逻辑绕过。
@@ -56,13 +58,13 @@ export PATH="$HOME/.local/bin:$PATH"
 生产环境推荐固定版本：
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/sunpcm/DevOpsToolkit/main/install.sh)" -- --version v0.1.4
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/sunpcm/DevOpsToolkit/main/install.sh)" -- --version v0.1.7
 ```
 
 也可以通过环境变量指定：
 
 ```bash
-DEVOPS_TOOLKIT_VERSION=v0.1.4 \
+DEVOPS_TOOLKIT_VERSION=v0.1.7 \
   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/sunpcm/DevOpsToolkit/main/install.sh)"
 ```
 
@@ -108,7 +110,7 @@ devops-toolkit --version
 先确认旧版本可执行，再原子替换 `current`。root 安装示例：
 
 ```bash
-test -x /opt/devops-toolkit/releases/v0.1.4/bin/devops-toolkit
+test -x /opt/devops-toolkit/releases/v0.1.7/bin/devops-toolkit
 python3 - <<'PY'
 import os
 from pathlib import Path
@@ -116,13 +118,15 @@ from pathlib import Path
 base = Path("/opt/devops-toolkit")
 temporary = base / ".current.rollback"
 temporary.unlink(missing_ok=True)
-temporary.symlink_to("releases/v0.1.4")
+temporary.symlink_to("releases/v0.1.7")
 os.replace(temporary, base / "current")
 PY
 devops-toolkit --version
 ```
 
 普通用户把 `base` 改为 `Path.home() / ".local/share/devops-toolkit"`。回滚只切换链接，不删除任何版本。
+隔离 runtime 按 core 补丁版本共存，切回旧 Release 不会删除新 runtime；旧 Release 的运行时要求以该版本签名包内代码为准。
+若新 runtime 安装中断且目录缺少 `.ready`，安装器会拒绝覆盖并保持 `current` 不变；先检查目录与日志，确认无需保留后再移走该特定目录重试。
 
 ## 从源码运行
 
@@ -131,7 +135,10 @@ CI、批量配置或需要审查 inventory 时仍推荐 clone：
 ```bash
 git clone https://github.com/sunpcm/DevOpsToolkit.git
 cd DevOpsToolkit
-ansible-galaxy collection install -r ansible/requirements.yml
+python3 -m venv .venv
+.venv/bin/python -m pip install 'ansible-core==2.21.4'
+.venv/bin/ansible-galaxy collection install -r ansible/requirements.yml
+export PATH="${PWD}/.venv/bin:${PATH}"
 ./bin/devops-toolkit
 ```
 
@@ -185,8 +192,9 @@ curl -I https://tuf-repo-cdn.sigstore.dev
 
 ### 内置 collections 与旧版本兼容
 
-从 `v0.1.5` 起，Release tarball 内置并签名覆盖固定版本的 `ansible.posix` 与
-`community.general`。安装器会核对包内 manifest 和版本标记，安装阶段不再访问 Ansible Galaxy；
+从 `v0.1.5` 起，Release tarball 内置并签名覆盖固定版本的 Ansible collections。
+本次未发布的 2.21 迁移将内置 `ansible.posix`、`community.general` 和其传递依赖
+`community.library_inventory_filtering_v1`。安装器会核对包内 manifest 和版本标记，安装阶段不再访问 Ansible Galaxy；
 这消除了 GitHub 可达但 Galaxy 不可达时的安装单点。
 
 `v0.1.4` 及更早的历史 Release 没有内置标记。新版安装器会明确提示兼容模式，并继续通过
@@ -194,7 +202,7 @@ curl -I https://tuf-repo-cdn.sigstore.dev
 Release 产物内的 collections，仍应先显式完成：
 
 ```bash
-ansible-galaxy collection install -r ansible/requirements.yml
+.venv/bin/ansible-galaxy collection install -r ansible/requirements.yml
 ```
 
 ### GitHub Release 或 Cosign 下载过慢

@@ -11,6 +11,7 @@ TEST_FAULTS=0
 TEST_PROXY="${MULTIPASS_TEST_PROXY:-}"
 MODE="run"
 WORK_DIR=""
+SSH_CONTROL_DIR=""
 declare -a REQUESTED_INSTANCES=()
 declare -a ACTIVE_INSTANCES=()
 declare -a CREATED_INSTANCES=()
@@ -90,13 +91,15 @@ cleanup_instances() {
   done
   for instance in "$@"; do
     multipass stop --force "${instance}" || true
-    multipass delete "${instance}"
+    multipass delete --purge "${instance}"
   done
-  multipass purge
 }
 
 report_exit() {
   local status="$1"
+  if [[ -n "${SSH_CONTROL_DIR}" && -d "${SSH_CONTROL_DIR}" ]]; then
+    rm -rf -- "${SSH_CONTROL_DIR}"
+  fi
   echo "测试工件保留在：${WORK_DIR}"
   if ((status != 0)) && ((${#CREATED_INSTANCES[@]} > 0)); then
     printf '临时实例已保留。确认后清理：%q cleanup' "$0"
@@ -457,6 +460,7 @@ main() {
 
   WORK_DIR="$(mktemp -d)"
   trap 'report_exit "$?"' EXIT
+  SSH_CONTROL_DIR="$(mktemp -d /tmp/devops-ssh.XXXXXX)"
   ssh-keygen -q -t ed25519 -N '' -C "devops-toolkit-multipass-${RUN_ID}" \
     -f "${WORK_DIR}/id_ed25519"
 
@@ -480,6 +484,7 @@ main() {
 
   export ANSIBLE_CONFIG="${ROOT_DIR}/ansible/ansible.cfg"
   export ANSIBLE_LOCAL_TEMP="${WORK_DIR}/ansible-local"
+  export ANSIBLE_SSH_CONTROL_PATH_DIR="${SSH_CONTROL_DIR}"
   unset ANSIBLE_REMOTE_TEMP
   mkdir -p "${ANSIBLE_LOCAL_TEMP}"
 

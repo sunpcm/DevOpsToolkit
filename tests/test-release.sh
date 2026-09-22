@@ -8,13 +8,17 @@ trap 'rm -rf "${TMP_DIR}"' EXIT
 COLLECTIONS_FIXTURE="${TMP_DIR}/collections"
 mkdir -p \
   "${COLLECTIONS_FIXTURE}/ansible_collections/ansible/posix" \
-  "${COLLECTIONS_FIXTURE}/ansible_collections/community/general"
+  "${COLLECTIONS_FIXTURE}/ansible_collections/community/general" \
+  "${COLLECTIONS_FIXTURE}/ansible_collections/community/library_inventory_filtering_v1"
 printf '%s\n' \
-  '{"collection_info":{"namespace":"ansible","name":"posix","version":"1.5.4"}}' \
+  '{"collection_info":{"namespace":"ansible","name":"posix","version":"2.2.2"}}' \
   >"${COLLECTIONS_FIXTURE}/ansible_collections/ansible/posix/MANIFEST.json"
 printf '%s\n' \
-  '{"collection_info":{"namespace":"community","name":"general","version":"7.5.2"}}' \
+  '{"collection_info":{"namespace":"community","name":"general","version":"13.4.0"}}' \
   >"${COLLECTIONS_FIXTURE}/ansible_collections/community/general/MANIFEST.json"
+printf '%s\n' \
+  '{"collection_info":{"namespace":"community","name":"library_inventory_filtering_v1","version":"1.1.5"}}' \
+  >"${COLLECTIONS_FIXTURE}/ansible_collections/community/library_inventory_filtering_v1/MANIFEST.json"
 
 DEVOPS_TOOLKIT_COLLECTIONS_SOURCE="${COLLECTIONS_FIXTURE}" \
   "${ROOT_DIR}/scripts/build-release.sh" v0.1.0 "${TMP_DIR}/dist" >/dev/null
@@ -27,13 +31,33 @@ tar -xzf "${TMP_DIR}/dist/devops-toolkit.tar.gz" -C "${TMP_DIR}/unpacked"
 PACKAGE="${TMP_DIR}/unpacked/devops-toolkit"
 test "$(cat "${PACKAGE}/VERSION")" = "v0.1.0"
 test -x "${PACKAGE}/bin/devops-toolkit"
+test -x "${PACKAGE}/bin/ansible-playbook"
 test -f "${PACKAGE}/ansible/requirements.yml"
 test -f "${PACKAGE}/docs/INSTALLATION.md"
 test -f "${PACKAGE}/collections/.bundled-collections"
 test -f "${PACKAGE}/collections/ansible_collections/ansible/posix/MANIFEST.json"
 test -f "${PACKAGE}/collections/ansible_collections/community/general/MANIFEST.json"
-grep -Fx 'ansible.posix=1.5.4' "${PACKAGE}/collections/.bundled-collections" >/dev/null
-grep -Fx 'community.general=7.5.2' "${PACKAGE}/collections/.bundled-collections" >/dev/null
+test -f "${PACKAGE}/collections/ansible_collections/community/library_inventory_filtering_v1/MANIFEST.json"
+grep -Fx 'ansible.posix=2.2.2' "${PACKAGE}/collections/.bundled-collections" >/dev/null
+grep -Fx 'community.general=13.4.0' "${PACKAGE}/collections/.bundled-collections" >/dev/null
+grep -Fx 'community.library_inventory_filtering_v1=1.1.5' "${PACKAGE}/collections/.bundled-collections" >/dev/null
+mkdir -p "${TMP_DIR}/installed/releases" \
+  "${TMP_DIR}/installed/runtime/ansible-core-2.21.4/bin"
+cp -R "${PACKAGE}" "${TMP_DIR}/installed/releases/v0.1.0"
+installed_launcher="${TMP_DIR}/installed/releases/v0.1.0/bin/ansible-playbook"
+if "${installed_launcher}" --version >/dev/null 2>&1; then
+  echo "错误：正式安装缺少隔离 runtime 时回退到了环境中的 Ansible。" >&2
+  exit 1
+fi
+ln -s "$(command -v ansible-playbook)" \
+  "${TMP_DIR}/installed/runtime/ansible-core-2.21.4/bin/ansible-playbook"
+printf '%s\n' '2.21.4' >"${TMP_DIR}/installed/runtime/ansible-core-2.21.4/.ready"
+ANSIBLE_LOCAL_TEMP="${TMP_DIR}" "${installed_launcher}" --version >/dev/null
+printf '%s\n' 'broken' >"${TMP_DIR}/installed/runtime/ansible-core-2.21.4/.ready"
+if "${installed_launcher}" --version >/dev/null 2>&1; then
+  echo "错误：正式安装接受了版本标记不符的隔离 runtime。" >&2
+  exit 1
+fi
 test ! -e "${PACKAGE}/archive"
 test ! -e "${PACKAGE}/tests"
 test ! -e "${PACKAGE}/wsl-dev"
