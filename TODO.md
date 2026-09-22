@@ -99,12 +99,15 @@
 
 ### P1-3：补齐第三方依赖完整性锁定
 
-- [ ] 为 `ansible.posix`、`community.general` 等 collection 保存下载产物 SHA256；构建前验证 tarball，不只读取可被伪造的 `MANIFEST.json` 版本。
-- [ ] 建立单一 lock manifest，生成或校验 `requirements.yml`、Release marker、安装器检查和测试夹具，删除多处手工重复版本。
-- [ ] 明确 apt、Docker、Homebrew formula 属于滚动更新还是可复现安装；文档不得把“Git source 固定”表述成整个系统 bit-for-bit 可复现。
-- [ ] 建立月度依赖审计：Ansible、collections、Cosign、uv、NVM、goenv、Go、Node LTS、Actions；更新必须走 PR、校验值复核和 VM smoke。
+- [x] 为 `ansible.posix`、`community.general` 等 collection 保存下载产物 SHA256；构建前验证 tarball，不只读取可被伪造的 `MANIFEST.json` 版本。
+- [x] 建立单一 lock manifest，生成或校验 `requirements.yml`、Release marker、安装器检查和测试夹具，删除多处手工重复版本。
+- [x] 明确 apt、Docker、Homebrew formula 属于滚动更新还是可复现安装；文档不得把“Git source 固定”表述成整个系统 bit-for-bit 可复现。
+- [x] 建立月度依赖审计：Ansible、collections、Cosign、uv、NVM、goenv、Go、Node LTS、Actions；更新必须走 PR、校验值复核和 VM smoke。
 
 验收证据：篡改 collection tarball、marker、manifest 或 checksum 任一项都会在发布前失败；依赖审计能生成只读报告，不自动合并高风险更新。
+
+本地实现提交 `306b1d4`；官方归档 SHA256、离线安装复核、篡改矩阵、完整静态门禁及未执行的
+远端边界见 [`archive/progress/2026-09-22-supply-chain-p1-3.md`](archive/progress/2026-09-22-supply-chain-p1-3.md)。
 
 ### P1-4：自动化真实环境回归
 
