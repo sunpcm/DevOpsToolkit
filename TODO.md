@@ -22,16 +22,16 @@
 
 已完成的本地实现、静态检查与 Ubuntu 24.04 一次性 VM 证据见
 [`archive/progress/2026-09-22-acme-p0-1-vm.md`](archive/progress/2026-09-22-acme-p0-1-vm.md)。
+整组证书原子发布、故障恢复及多消费者复测见
+[`archive/progress/2026-09-22-acme-p0-1-bundle.md`](archive/progress/2026-09-22-acme-p0-1-bundle.md)。
 这不是生产验收：VM 仅使用自签证书模拟部署，未通过真实 CA 签发。
 
 - [ ] 以受控测试域名完成真正的 ACME 首次签发、DNS/webroot 挑战和模拟续期；验证 hook
       仅在证书真实更新后 reload 对应活动服务，且支持多个消费者。
-- [ ] 将证书 key、fullchain、CA 作为一致的 bundle 切换；当前是逐文件原子替换，进程中断
-      可能短暂留下新 key/旧 cert，须做故障注入和恢复验证。
 - [ ] 确认真实 DNS provider 响应、acme.sh 持久化状态与日志不会泄露 Token、账户信息或私钥；
       检查轮替后日志仍只有最小读取权限。
-- [ ] 扩展自动化与 VM 测试：真实签发/续期、证书 bundle 中断、Ubuntu 22.04、幂等重跑、
-      清理和恢复；静态测试不能替代真实 CA 与 systemd 行为。
+- [ ] 扩展真实环境回归：Ubuntu 22.04 的真实签发/续期，以及从备份恢复到真实消费者；
+      自签证书、隔离恢复和静态测试不能替代真实 CA 与真实服务行为。
 
 验收证据：ShellCheck/Bats 或同等级测试全绿；临时 VM 中完成首次签发、模拟续期、权限检查、服务 reload 和安全清理；
 报告中记录文件 owner/mode、systemd sandbox 结果及失败路径，不记录任何真实凭据。
