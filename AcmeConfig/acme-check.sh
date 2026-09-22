@@ -198,40 +198,82 @@ check_systemd() {
 }
 
 check_certificate_material() {
-  local path mode owner
-  local -a keys=() certificates=() symlinks=() pending=() failed=()
+  local domain_dir domain current target revision_dir activated
+  local key_file fullchain_file ca_file
+  local -a domains=() unexpected=() symlinks=() pending=() failed=()
   printf '\n== 证书与队列 ==\n'
   if [[ ! -d "${ACME_BASE}/certs" ]]; then
     fail_check "证书目录不存在。"
     return
   fi
 
-  mapfile -d '' keys < <(find "${ACME_BASE}/certs" -maxdepth 1 -type f -name '*.key' -print0)
-  mapfile -d '' certificates < <(find "${ACME_BASE}/certs" -maxdepth 1 -type f \( -name '*.crt' -o -name '*.ca' \) -print0)
+  mapfile -d '' domains < <(find "${ACME_BASE}/certs" -mindepth 1 -maxdepth 1 -type d -print0)
+  mapfile -d '' unexpected < <(find "${ACME_BASE}/certs" -mindepth 1 -maxdepth 1 \
+    -type f ! -name '.deploy.lock' -print0)
   mapfile -d '' symlinks < <(find "${ACME_BASE}/certs" -maxdepth 1 -type l -print0)
-  if ((${#symlinks[@]} == 0)); then
-    pass "证书目录中无符号链接。"
+  if ((${#unexpected[@]} > 0 || ${#symlinks[@]} > 0)); then
+    fail_check "证书根目录存在旧版平铺文件或非法链接，须人工迁移。"
   else
-    fail_check "证书目录中存在 ${#symlinks[@]} 个符号链接。"
+    pass "证书根目录没有旧版平铺文件或非法链接。"
   fi
 
-  for path in "${keys[@]}"; do
-    mode="$(stat -c '%a' "${path}")"
-    owner="$(stat -c '%U:%G' "${path}")"
-    [[ "${mode}" == 640 && "${owner}" == root:ssl-cert ]] || \
-      fail_check "私钥权限异常：${path} = ${owner} ${mode}"
-    openssl pkey -in "${path}" -noout >/dev/null 2>&1 || \
-      fail_check "私钥 PEM 无法解析：${path}"
+  if [[ -e "${ACME_BASE}/certs/.deploy.lock" ]]; then
+    check_path "${ACME_BASE}/certs/.deploy.lock" file root:root 600
+  fi
+  for domain_dir in "${domains[@]}"; do
+    domain="$(basename "${domain_dir}")"
+    if [[ ! "${domain}" =~ ^[a-z0-9.-]+$ || "${domain}" != *.* ]]; then
+      fail_check "证书 bundle 目录名非法：${domain_dir}"
+      continue
+    fi
+    check_path "${domain_dir}" dir root:ssl-cert 750
+    check_path "${domain_dir}/revisions" dir root:ssl-cert 750
+    current="${domain_dir}/current"
+    if find "${domain_dir}" -type l ! -path "${current}" -print -quit | grep -q .; then
+      fail_check "证书 bundle 中存在非 current 符号链接：${domain_dir}"
+    fi
+    if [[ ! -L "${current}" ]]; then
+      fail_check "当前证书指针缺失或不是链接：${current}"
+      continue
+    fi
+    target="$(readlink "${current}")"
+    if [[ ! "${target}" =~ ^revisions/[0-9a-f]{32}$ ]]; then
+      fail_check "当前证书指针目标非法：${current}"
+      continue
+    fi
+    revision_dir="${domain_dir}/${target}"
+    check_path "${revision_dir}" dir root:ssl-cert 750
+    key_file="${revision_dir}/privkey.pem"
+    fullchain_file="${revision_dir}/fullchain.pem"
+    ca_file="${revision_dir}/ca.pem"
+    check_path "${key_file}" file root:ssl-cert 640
+    check_path "${fullchain_file}" file root:ssl-cert 644
+    check_path "${ca_file}" file root:ssl-cert 644
+    if [[ -f "${key_file}" && -f "${fullchain_file}" && -f "${ca_file}" ]]; then
+      openssl pkey -in "${key_file}" -noout >/dev/null 2>&1 || \
+        fail_check "私钥 PEM 无法解析：${key_file}"
+      openssl x509 -in "${fullchain_file}" -noout >/dev/null 2>&1 || \
+        fail_check "证书 PEM 无法解析：${fullchain_file}"
+      openssl x509 -in "${ca_file}" -noout >/dev/null 2>&1 || \
+        fail_check "CA PEM 无法解析：${ca_file}"
+      if ! diff -q \
+        <(openssl pkey -in "${key_file}" -pubout 2>/dev/null) \
+        <(openssl x509 -in "${fullchain_file}" -pubkey -noout 2>/dev/null) \
+        >/dev/null; then
+        fail_check "私钥与证书公钥不匹配：${domain}"
+      fi
+    fi
+    activated="${domain_dir}/.activated"
+    if [[ -e "${activated}" || -L "${activated}" ]]; then
+      check_path "${activated}" file root:ssl-cert 600
+      if [[ "$(<"${activated}")" != "${target#revisions/}" ]]; then
+        warn "${domain} 的新证书尚未完成 reload；保留队列请求后重试。"
+      fi
+    else
+      warn "${domain} 缺少激活标记；请检查部署队列。"
+    fi
   done
-  for path in "${certificates[@]}"; do
-    mode="$(stat -c '%a' "${path}")"
-    owner="$(stat -c '%U:%G' "${path}")"
-    [[ "${mode}" == 644 && "${owner}" == root:ssl-cert ]] || \
-      fail_check "证书权限异常：${path} = ${owner} ${mode}"
-    openssl x509 -in "${path}" -noout >/dev/null 2>&1 || \
-      fail_check "证书 PEM 无法解析：${path}"
-  done
-  pass "已检查 ${#keys[@]} 个私钥和 ${#certificates[@]} 个证书文件。"
+  pass "已检查 ${#domains[@]} 个证书 bundle。"
 
   mapfile -d '' pending < <(find "${ACME_BASE}/deploy-queue" -mindepth 1 -maxdepth 1 -print0)
   mapfile -d '' failed < <(find "${ACME_BASE}/deploy-failed" -mindepth 1 -maxdepth 1 -print0)

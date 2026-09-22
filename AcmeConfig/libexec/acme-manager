@@ -10,16 +10,19 @@ validated root deployment boundary.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import grp
 import os
 import pwd
 import re
+import secrets
 import shutil
 import stat
 import subprocess
 import sys
 import tempfile
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Sequence
@@ -33,6 +36,7 @@ MANAGER_PATH = Path("/usr/local/libexec/devops-toolkit/acme-manager")
 DOMAIN_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 SERVICE_NAME_RE = re.compile(r"^[A-Za-z0-9_.@-]+$")
+REVISION_RE = re.compile(r"^[0-9a-f]{32}$")
 FORBIDDEN_ENV_NAMES = {
     "BASH_ENV",
     "ENV",
@@ -49,6 +53,10 @@ FORBIDDEN_ENV_NAMES = {
 
 class ManagerError(RuntimeError):
     """A user-facing validation or deployment failure."""
+
+
+class PublicationUncertain(ManagerError):
+    """The current pointer may have switched; retain the queue marker."""
 
 
 @dataclass(frozen=True)
@@ -339,6 +347,164 @@ def _validate_certificate_bundle(domain: str, staged: dict[str, bytes]) -> None:
         )
 
 
+def _secure_directory(path: Path, *, owner_uid: int, group_gid: int, mode: int) -> None:
+    try:
+        details = path.lstat()
+    except FileNotFoundError as exc:
+        raise ManagerError(f"证书目录缺失：{path}") from exc
+    if (
+        not stat.S_ISDIR(details.st_mode)
+        or details.st_uid != owner_uid
+        or details.st_gid != group_gid
+        or stat.S_IMODE(details.st_mode) != mode
+    ):
+        raise ManagerError(f"证书目录类型或权限不安全：{path}")
+
+
+def _ensure_bundle_directory(path: Path, *, owner_uid: int, group_gid: int) -> None:
+    if not path.exists() and not path.is_symlink():
+        path.mkdir(mode=0o750)
+        os.chown(path, owner_uid, group_gid)
+        os.chmod(path, 0o750)
+    _secure_directory(path, owner_uid=owner_uid, group_gid=group_gid, mode=0o750)
+
+
+def _fsync_directory(path: Path) -> None:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _current_revision(
+    domain_directory: Path, *, owner_uid: int, group_gid: int
+) -> tuple[str, dict[str, bytes]] | None:
+    current = domain_directory / "current"
+    if not current.exists() and not current.is_symlink():
+        return None
+    if not current.is_symlink():
+        raise ManagerError(f"当前证书指针不是符号链接：{current}")
+    target = os.readlink(current)
+    if not target.startswith("revisions/") or not REVISION_RE.fullmatch(target[10:]):
+        raise ManagerError(f"当前证书指针目标非法：{current}")
+    revision = target[10:]
+    revision_directory = domain_directory / "revisions" / revision
+    _secure_directory(
+        revision_directory, owner_uid=owner_uid, group_gid=group_gid, mode=0o750
+    )
+    content: dict[str, bytes] = {}
+    for kind, name in (("key", "privkey.pem"), ("crt", "fullchain.pem"), ("ca", "ca.pem")):
+        path = revision_directory / name
+        details = _secure_regular_file(path, expected_uid=owner_uid, expected_links=1)
+        expected_mode = 0o640 if kind == "key" else 0o644
+        if details.st_gid != group_gid or stat.S_IMODE(details.st_mode) != expected_mode:
+            raise ManagerError(f"当前证书文件权限不安全：{path}")
+        if details.st_size <= 0 or details.st_size > MAX_MANAGED_FILE_SIZE:
+            raise ManagerError(f"当前证书文件大小非法：{path}")
+        content[kind] = path.read_bytes()
+    return revision, content
+
+
+def _published_revision(
+    layout: Layout,
+    domain: str,
+    staged: dict[str, bytes],
+    *,
+    owner_uid: int,
+    group_gid: int,
+) -> str:
+    for suffix in ("key", "crt", "ca"):
+        legacy = layout.certs / f"{domain}.{suffix}"
+        if legacy.exists() or legacy.is_symlink():
+            raise ManagerError(f"存在旧版平铺证书，须先迁移消费者路径：{legacy}")
+    domain_directory = layout.certs / domain
+    _ensure_bundle_directory(domain_directory, owner_uid=owner_uid, group_gid=group_gid)
+    revisions = domain_directory / "revisions"
+    _ensure_bundle_directory(revisions, owner_uid=owner_uid, group_gid=group_gid)
+    current = _current_revision(domain_directory, owner_uid=owner_uid, group_gid=group_gid)
+    if current is not None and current[1] == staged:
+        return current[0]
+
+    revision = secrets.token_hex(16)
+    destination = revisions / revision
+    if destination.exists() or destination.is_symlink():
+        raise ManagerError(f"证书 revision 已存在：{destination}")
+    prepared = Path(tempfile.mkdtemp(prefix=".pending-", dir=revisions))
+    os.chown(prepared, owner_uid, group_gid)
+    try:
+        for kind, name in (
+            ("key", "privkey.pem"),
+            ("crt", "fullchain.pem"),
+            ("ca", "ca.pem"),
+        ):
+            _atomic_install(
+                prepared / name,
+                staged[kind],
+                mode=0o640 if kind == "key" else 0o644,
+                owner_uid=owner_uid,
+                group_gid=group_gid,
+            )
+        os.chmod(prepared, 0o750)
+        _fsync_directory(prepared)
+        os.replace(prepared, destination)
+    except (ManagerError, OSError):
+        if prepared.exists() and not prepared.is_symlink():
+            shutil.rmtree(prepared)
+        raise
+    _fsync_directory(revisions)
+
+    pointer = domain_directory / f".current-{revision}"
+    pointer.symlink_to(f"revisions/{revision}")
+    try:
+        os.replace(pointer, domain_directory / "current")
+    except OSError:
+        try:
+            pointer.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+    try:
+        _fsync_directory(domain_directory)
+    except OSError as exc:
+        raise PublicationUncertain(f"证书指针可能已切换，保留部署请求：{domain}") from exc
+    return revision
+
+
+def _activated_revision(domain_directory: Path, *, owner_uid: int) -> str | None:
+    marker = domain_directory / ".activated"
+    if not marker.exists() and not marker.is_symlink():
+        return None
+    details = _secure_regular_file(marker, expected_uid=owner_uid, expected_links=1)
+    if stat.S_IMODE(details.st_mode) != 0o600 or details.st_size != 33:
+        raise ManagerError(f"激活标记权限或内容非法：{marker}")
+    value = marker.read_text(encoding="ascii").strip()
+    if not REVISION_RE.fullmatch(value):
+        raise ManagerError(f"激活标记内容非法：{marker}")
+    return value
+
+
+@contextmanager
+def _deployment_lock(certs: Path, *, owner_uid: int):
+    path = certs / ".deploy.lock"
+    flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        details = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(details.st_mode)
+            or details.st_uid != owner_uid
+            or details.st_nlink != 1
+            or stat.S_IMODE(details.st_mode) != 0o600
+        ):
+            raise ManagerError(f"部署锁文件不安全：{path}")
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(descriptor)
+
+
 def _move_failed_marker(
     layout: Layout,
     marker: Path,
@@ -443,12 +609,40 @@ def process_queue(
         require_root()
     acme_uid, _, cert_group_gid = identity or account_ids()
     layout.certs.mkdir(mode=0o750, parents=True, exist_ok=True)
+    if not stat.S_ISDIR(layout.certs.lstat().st_mode):
+        raise ManagerError(f"证书根目录不是普通目录：{layout.certs}")
     os.chown(layout.certs, deployed_owner_uid, cert_group_gid)
     os.chmod(layout.certs, 0o750)
+    with _deployment_lock(layout.certs, owner_uid=deployed_owner_uid):
+        return _process_queue_locked(
+            layout,
+            acme_uid=acme_uid,
+            cert_group_gid=cert_group_gid,
+            deployed_owner_uid=deployed_owner_uid,
+            config_owner_uid=config_owner_uid,
+            reload_runner=reload_runner,
+        )
 
-    processed: list[Path] = []
+
+def _process_queue_locked(
+    layout: Layout,
+    *,
+    acme_uid: int,
+    cert_group_gid: int,
+    deployed_owner_uid: int,
+    config_owner_uid: int,
+    reload_runner: Callable[..., subprocess.CompletedProcess[str]],
+) -> int:
+    processed: list[tuple[Path, str, str, bool]] = []
     failures = 0
-    for marker in sorted(layout.queue.iterdir() if layout.queue.exists() else []):
+    markers = sorted(layout.queue.iterdir() if layout.queue.exists() else [])
+    if not markers:
+        return 0
+    services = _read_reload_services(
+        layout.reload_services, expected_uid=config_owner_uid
+    )
+    for marker in markers:
+        published = False
         try:
             domain = normalize_primary_domain(marker.name)
             _secure_regular_file(marker, expected_uid=acme_uid, expected_links=1)
@@ -464,28 +658,27 @@ def process_queue(
                 ),
             }
             _validate_certificate_bundle(domain, staged)
-            _atomic_install(
-                layout.certs / f"{domain}.key",
-                staged["key"],
-                mode=0o640,
+            revision = _published_revision(
+                layout,
+                domain,
+                staged,
                 owner_uid=deployed_owner_uid,
                 group_gid=cert_group_gid,
             )
-            for suffix in ("crt", "ca"):
-                _atomic_install(
-                    layout.certs / f"{domain}.{suffix}",
-                    staged[suffix],
-                    mode=0o644,
-                    owner_uid=deployed_owner_uid,
-                    group_gid=cert_group_gid,
-                )
-            processed.append(marker)
+            published = True
+            activated = _activated_revision(
+                layout.certs / domain, owner_uid=deployed_owner_uid
+            )
+            processed.append((marker, domain, revision, activated != revision))
             print(f"已部署证书：{domain}")
+        except PublicationUncertain as exc:
+            failures += 1
+            print(f"部署状态待确认：{marker.name}: {exc}", file=sys.stderr)
         except (ManagerError, OSError) as exc:
             failures += 1
             print(f"部署失败：{marker.name}: {exc}", file=sys.stderr)
             try:
-                if marker.exists() or marker.is_symlink():
+                if not published and (marker.exists() or marker.is_symlink()):
                     _move_failed_marker(
                         layout,
                         marker,
@@ -496,14 +689,19 @@ def process_queue(
             except OSError as move_exc:
                 print(f"无法隔离失败 marker：{move_exc}", file=sys.stderr)
 
-    if processed:
-        services = _read_reload_services(
-            layout.reload_services,
-            expected_uid=config_owner_uid,
-        )
+    if any(needs_reload for _, _, _, needs_reload in processed):
         _reload_active_services(services, runner=reload_runner)
-        for marker in processed:
-            marker.unlink(missing_ok=True)
+    for marker, domain, revision, needs_reload in processed:
+        if needs_reload:
+            _atomic_install(
+                layout.certs / domain / ".activated",
+                f"{revision}\n".encode("ascii"),
+                mode=0o600,
+                owner_uid=deployed_owner_uid,
+                group_gid=cert_group_gid,
+            )
+            _fsync_directory(layout.certs / domain)
+        marker.unlink(missing_ok=True)
     return 1 if failures else 0
 
 
@@ -576,9 +774,14 @@ def list_certificates(args: argparse.Namespace, layout: Layout) -> int:
 def revoke_certificate(args: argparse.Namespace, layout: Layout) -> int:
     require_root()
     domain = normalize_primary_domain(args.domain)
-    certificate = layout.certs / f"{domain}.crt"
-    if not certificate.is_file() or certificate.is_symlink():
-        raise ManagerError(f"证书文件不存在或不安全：{certificate}")
+    owner_uid = os.geteuid()
+    _, _, group_gid = account_ids()
+    domain_directory = layout.certs / domain
+    _secure_directory(domain_directory, owner_uid=owner_uid, group_gid=group_gid, mode=0o750)
+    current = _current_revision(domain_directory, owner_uid=owner_uid, group_gid=group_gid)
+    if current is None:
+        raise ManagerError(f"当前证书不存在：{domain_directory}")
+    certificate = domain_directory / "current" / "fullchain.pem"
     subprocess.run(
         ["openssl", "x509", "-in", str(certificate), "-noout", "-subject", "-dates"],
         check=False,
@@ -601,10 +804,10 @@ def revoke_certificate(args: argparse.Namespace, layout: Layout) -> int:
         ],
     )
     run_as_acme(layout, ["--remove", "-d", domain, "--ecc"])
-    for directory in (layout.certs, layout.staging, layout.queue):
-        for suffix in ("key", "crt", "ca") if directory != layout.queue else ("",):
-            name = domain if not suffix else f"{domain}.{suffix}"
-            (directory / name).unlink(missing_ok=True)
+    shutil.rmtree(domain_directory)
+    for suffix in ("key", "crt", "ca"):
+        (layout.staging / f"{domain}.{suffix}").unlink(missing_ok=True)
+    (layout.queue / domain).unlink(missing_ok=True)
     print(f"已吊销并移除证书：{domain}")
     return 0
 

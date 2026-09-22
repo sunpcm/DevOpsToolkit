@@ -92,6 +92,7 @@ class QueueDeploymentTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         root = Path(self.temporary.name)
+        self.root = root
         self.layout = manager.Layout(base=root / "state", etc=root / "etc")
         for directory in (
             self.layout.staging,
@@ -106,6 +107,7 @@ class QueueDeploymentTests(unittest.TestCase):
         self.gid = os.getegid()
         self.identity = (self.uid, self.gid, self.gid)
         key_path = root / "test.key"
+        self.key_path = key_path
         cert_path = root / "test.crt"
         subprocess.run(
             [
@@ -146,6 +148,19 @@ class QueueDeploymentTests(unittest.TestCase):
         marker.chmod(0o600)
         return marker
 
+    def renew(self) -> None:
+        renewed = self.root / "renewed.crt"
+        subprocess.run(
+            [
+                "openssl", "req", "-x509", "-key", str(self.key_path),
+                "-out", str(renewed), "-days", "2", "-subj", "/CN=example.com",
+                "-addext", "subjectAltName=DNS:example.com",
+            ],
+            check=True,
+            capture_output=True,
+        )
+        self.cert = renewed.read_bytes()
+
     def process(self, **kwargs) -> int:
         return manager.process_queue(
             self.layout,
@@ -160,15 +175,21 @@ class QueueDeploymentTests(unittest.TestCase):
         marker = self.stage()
         self.assertEqual(self.process(), 0)
         self.assertFalse(marker.exists())
-        self.assertEqual((self.layout.certs / "example.com.key").read_bytes(), self.key)
-        self.assertEqual((self.layout.certs / "example.com.crt").read_bytes(), self.cert)
+        bundle = self.layout.certs / "example.com" / "current"
+        self.assertTrue(bundle.is_symlink())
+        self.assertEqual((bundle / "privkey.pem").read_bytes(), self.key)
+        self.assertEqual((bundle / "fullchain.pem").read_bytes(), self.cert)
+        self.assertEqual((bundle / "ca.pem").read_bytes(), self.cert)
         self.assertEqual(
-            stat.S_IMODE((self.layout.certs / "example.com.key").stat().st_mode),
+            stat.S_IMODE((bundle / "privkey.pem").stat().st_mode),
             0o640,
         )
         self.assertEqual(
-            stat.S_IMODE((self.layout.certs / "example.com.crt").stat().st_mode),
+            stat.S_IMODE((bundle / "fullchain.pem").stat().st_mode),
             0o644,
+        )
+        self.assertEqual(
+            stat.S_IMODE((bundle / "ca.pem").stat().st_mode), 0o644
         )
 
     def test_rejects_staged_symlink_and_quarantines_marker(self) -> None:
@@ -179,7 +200,7 @@ class QueueDeploymentTests(unittest.TestCase):
 
         self.assertEqual(self.process(), 1)
         self.assertFalse(marker.exists())
-        self.assertFalse((self.layout.certs / "example.com.key").exists())
+        self.assertFalse((self.layout.certs / "example.com").exists())
         failed = list(self.layout.failed.iterdir())
         self.assertEqual(len(failed), 1)
         self.assertTrue(failed[0].name.startswith("example.com."))
@@ -191,7 +212,7 @@ class QueueDeploymentTests(unittest.TestCase):
         )
         self.assertEqual(self.process(), 1)
         self.assertFalse(marker.exists())
-        self.assertFalse((self.layout.certs / "example.com.key").exists())
+        self.assertFalse((self.layout.certs / "example.com").exists())
 
     def test_rejects_hardlinked_marker_without_mutating_target(self) -> None:
         self.stage()
@@ -233,12 +254,165 @@ class QueueDeploymentTests(unittest.TestCase):
             self.stage()
             self.assertEqual(self.process(reload_runner=runner), 0)
 
+            self.stage()
+            self.assertEqual(self.process(reload_runner=runner), 0)
+
+            self.renew()
+            self.stage()
+            self.assertEqual(self.process(reload_runner=runner), 0)
+
         self.assertEqual(
             calls,
             [
                 ["/bin/systemctl", "is-active", "--quiet", "nginx.service"],
                 ["/bin/systemctl", "reload-or-restart", "nginx.service"],
+                ["/bin/systemctl", "is-active", "--quiet", "nginx.service"],
+                ["/bin/systemctl", "reload-or-restart", "nginx.service"],
             ],
+        )
+
+    def test_failed_pointer_switch_preserves_complete_old_bundle(self) -> None:
+        self.stage()
+        self.assertEqual(self.process(), 0)
+        bundle = self.layout.certs / "example.com" / "current"
+        old_target = os.readlink(bundle)
+        old_cert = (bundle / "fullchain.pem").read_bytes()
+        self.renew()
+        marker = self.stage()
+        original_replace = manager.os.replace
+
+        def fail_switch(source, destination):
+            if Path(destination).name == "current":
+                raise OSError("injected pointer failure")
+            return original_replace(source, destination)
+
+        with mock.patch.object(manager.os, "replace", side_effect=fail_switch):
+            self.assertEqual(self.process(), 1)
+
+        self.assertFalse(marker.exists())
+        self.assertEqual(os.readlink(bundle), old_target)
+        self.assertEqual((bundle / "fullchain.pem").read_bytes(), old_cert)
+        self.assertEqual((bundle / "privkey.pem").read_bytes(), self.key)
+
+    def test_failed_revision_preparation_removes_partial_directory(self) -> None:
+        marker = self.stage()
+        original_install = manager._atomic_install
+
+        def fail_fullchain(path, *args, **kwargs):
+            if Path(path).name == "fullchain.pem":
+                raise OSError("injected revision preparation failure")
+            return original_install(path, *args, **kwargs)
+
+        with mock.patch.object(manager, "_atomic_install", side_effect=fail_fullchain):
+            self.assertEqual(self.process(), 1)
+
+        self.assertFalse(marker.exists())
+        revisions = self.layout.certs / "example.com" / "revisions"
+        self.assertEqual(list(revisions.iterdir()), [])
+
+    def test_directory_sync_failure_keeps_marker_for_recovery(self) -> None:
+        self.stage()
+        self.assertEqual(self.process(), 0)
+        bundle = self.layout.certs / "example.com" / "current"
+        old_revision = os.readlink(bundle)
+        self.renew()
+        marker = self.stage()
+        original_sync = manager._fsync_directory
+        domain_directory = self.layout.certs / "example.com"
+
+        def fail_after_switch(path):
+            if path == domain_directory:
+                raise OSError("injected directory sync failure")
+            return original_sync(path)
+
+        with mock.patch.object(manager, "_fsync_directory", side_effect=fail_after_switch):
+            self.assertEqual(self.process(), 1)
+
+        self.assertTrue(marker.exists())
+        new_revision = os.readlink(bundle)
+        self.assertNotEqual(old_revision, new_revision)
+        self.assertEqual((bundle / "fullchain.pem").read_bytes(), self.cert)
+        self.assertEqual(self.process(), 0)
+        self.assertFalse(marker.exists())
+        self.assertEqual(os.readlink(bundle), new_revision)
+
+    def test_switch_followed_by_reload_failure_recovers_without_new_revision(self) -> None:
+        self.layout.reload_services.write_text("nginx.service\n", encoding="utf-8")
+        original_which = manager.shutil.which
+
+        def failing_runner(command, **_kwargs):
+            if "reload-or-restart" in command:
+                raise OSError("injected reload failure")
+            return subprocess.CompletedProcess(command, 0)
+
+        with mock.patch.object(
+            manager.shutil, "which",
+            side_effect=lambda name: "/bin/systemctl" if name == "systemctl" else original_which(name),
+        ):
+            self.stage()
+            self.assertEqual(
+                self.process(
+                    reload_runner=lambda command, **kwargs: subprocess.CompletedProcess(command, 0)
+                ),
+                0,
+            )
+            bundle = self.layout.certs / "example.com" / "current"
+            old_revision = os.readlink(bundle)
+            self.renew()
+            marker = self.stage()
+            with self.assertRaises(OSError):
+                self.process(reload_runner=failing_runner)
+            self.assertTrue(marker.exists())
+            new_revision = os.readlink(bundle)
+            self.assertNotEqual(new_revision, old_revision)
+            self.assertEqual((bundle / "fullchain.pem").read_bytes(), self.cert)
+
+            calls = []
+
+            def successful_runner(command, **_kwargs):
+                calls.append(command)
+                return subprocess.CompletedProcess(command, 0)
+
+            self.assertEqual(self.process(reload_runner=successful_runner), 0)
+            self.assertFalse(marker.exists())
+            self.assertEqual(os.readlink(bundle), new_revision)
+            self.assertIn("reload-or-restart", calls[-1])
+
+    def test_legacy_flat_file_blocks_bundle_publish(self) -> None:
+        legacy = self.layout.certs / "example.com.key"
+        self.layout.certs.mkdir(mode=0o750)
+        legacy.write_bytes(self.key)
+        marker = self.stage()
+        self.assertEqual(self.process(), 1)
+        self.assertFalse(marker.exists())
+        self.assertEqual(legacy.read_bytes(), self.key)
+        self.assertFalse((self.layout.certs / "example.com").exists())
+
+    def test_reload_multiple_active_consumers_only(self) -> None:
+        self.layout.reload_services.write_text(
+            "nginx.service\nxray.service\ninactive.service\nnginx.service\n",
+            encoding="utf-8",
+        )
+        calls: list[list[str]] = []
+
+        def runner(command, **_kwargs):
+            calls.append(command)
+            return subprocess.CompletedProcess(
+                command, 3 if command[-1] == "inactive.service" else 0
+            )
+
+        original_which = manager.shutil.which
+        with mock.patch.object(
+            manager.shutil,
+            "which",
+            side_effect=lambda name: "/bin/systemctl" if name == "systemctl" else original_which(name),
+        ):
+            self.stage()
+            self.assertEqual(self.process(reload_runner=runner), 0)
+
+        self.assertEqual(
+            [command[-1] for command in calls if "reload-or-restart" in command],
+            ["nginx.service", "xray.service"],
         )
 
 

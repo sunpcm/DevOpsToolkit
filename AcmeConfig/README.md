@@ -32,9 +32,11 @@ acme 用户（nologin） ── 读取 DNS 密钥 ──> /etc/acme/dns-config
     │
     │ root oneshot 校验 owner、文件类型、大小、PEM 和域名
     ▼
-/var/lib/acme/certs
-    ├── *.key  root:ssl-cert 0640
-    └── *.crt  root:ssl-cert 0644
+/var/lib/acme/certs/<domain>/
+    ├── revisions/<id>/privkey.pem   root:ssl-cert 0640
+    ├── revisions/<id>/fullchain.pem root:ssl-cert 0644
+    ├── revisions/<id>/ca.pem        root:ssl-cert 0644
+    └── current -> revisions/<id>    单一原子切换点
               │
               └── 仅配置的活动 service 执行 reload-or-restart
 ```
@@ -46,7 +48,9 @@ acme 用户（nologin） ── 读取 DNS 密钥 ──> /etc/acme/dns-config
 - 续期服务以 `acme` 运行；只有独立的部署 oneshot 以 root 运行。
 - 部署进程拒绝 staging 符号链接、错误 owner、异常大小和非 PEM 内容，并用 OpenSSL
   校验证书有效期、域名、链及私钥公钥匹配关系。
-- 只有证书确实部署成功后，才会 reload 当前处于 active 状态的配置服务。
+- 每个证书 revision 的三个文件均准备、校验并同步后，才原子切换 `current` 链接；旧 revision
+  保留用于人工回退。切换后 reload 失败会保留请求，重跑继续 reload；相同材料不重复 reload。
+- 只有证书确实更新且部署成功后，才会 reload 当前处于 active 状态的配置服务。
 - DNS 配置使用受限的 `KEY=value` 解析器，不 `source` 文件。
 
 ## 初始化
@@ -125,6 +129,22 @@ sudo acme-revoke example.com
 转为小写并校验；通配符只允许 DNS 验证。
 
 ## 证书消费者 reload
+
+消费者应引用同一域名 bundle 下的稳定路径，例如 Nginx 的
+`ssl_certificate /var/lib/acme/certs/example.com/current/fullchain.pem;` 与
+`ssl_certificate_key /var/lib/acme/certs/example.com/current/privkey.pem;`。
+不要再使用旧版 `/var/lib/acme/certs/example.com.{key,crt,ca}` 平铺路径。
+单个 `current` 指针的切换是原子的；但独立进程跨越切换时分别打开两个文件，仍可能观察到不同
+revision。部署锁会串行化本工具的切换，服务只在切换完成后 reload；需要更强快照语义的消费者
+应先打开/固定同一 revision 目录，再读取三项材料。
+管理器不会自动删除旧 revision，以免破坏仍持有旧文件或显式固定 revision 的消费者；管理员应
+监控 `/var/lib/acme/certs` 容量，并只在确认没有消费者引用后人工归档或删除非 current revision。
+
+若机器上存在旧版平铺证书，管理器会拒绝自动部署，避免静默留下旧消费者路径。
+迁移须在计划维护窗口中先备份证书和消费者配置，暂时清空 reload allowlist，将旧文件移到
+root-only 的安全备份目录，发布新 bundle，再把所有消费者配置改为上述 `current/` 路径，
+独立验证配置与新证书后手工 reload，最后恢复 allowlist。期间不要重启仍引用旧路径的服务；
+若任一步失败，先从备份恢复旧路径和配置。此流程尚未在真实消费者上验收，不可直接用于生产。
 
 编辑 root 拥有的 allowlist，每行一个 systemd service：
 
