@@ -38,7 +38,8 @@ Ubuntu 22.10 及以后（含 24.04 LTS）默认用 systemd socket 激活 OpenSSH
 - 创建 `devops-toolkit-2204-test-*` 和 `devops-toolkit-2404-test-*`；
 - 验证实例版本、Apple Silicon 架构、联网和宿主项目标记文件传输；
 - 生成一次性 SSH 密钥并配置 root bootstrap 入口；
-- 创建 `devops_test`，将 SSH 从 22 切到 2222，并验证 UFW 未锁死连接；
+- 创建 `devops_test`；prepare 保留 22/2222，随后从普通用户 2222 独立连接执行 finalize，
+  最后验证 listener/UFW 已移除 22；
 - 安装并检查 Docker 和 Nginx；
 - 第二次执行必须满足 `changed=0`、`unreachable=0`、`failed=0`；
 - 全部成功后自动清理临时实例；失败时保留实例、测试密钥和日志，并输出清理命令。
@@ -82,7 +83,7 @@ MULTIPASS_TEST_PROXY="http://192.168.252.1:7898" \
 ./tests/multipass-smoke.sh run --with-faults
 ```
 
-该模式验证无效 sshd 配置在重启前失败、陈旧 UFW profile 在启用默认拒绝前原地收敛、旧 Docker `.list`
+该模式验证无效 sshd 配置在重启前失败、新端口占用时 fail closed、陈旧 UFW profile 在启用默认拒绝前原地收敛、旧 Docker `.list`
 源在任何 apt 操作前移除，以及账户创建完成后发生受控中断时，完整重跑和第二次执行仍能达到
 `changed=0`。故障模式不会在非 `*-test-*` 实例上切换 SSH 端口；不要把这组测试手工复制到长期服务器。
 

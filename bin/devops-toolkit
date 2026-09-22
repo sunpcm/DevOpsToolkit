@@ -219,6 +219,39 @@ def read_public_keys(value: str) -> list[str]:
     return keys
 
 
+def public_key_identity(value: str) -> str:
+    """Return the key type and payload, excluding a mutable comment."""
+    fields = value.split()
+    return " ".join(fields[:2]) if len(fields) >= 2 else ""
+
+
+def can_auto_finalize_ubuntu(
+    location: str,
+    connection: dict[str, str],
+    variables: dict[str, Any],
+    connection_public_keys: list[str],
+) -> bool:
+    """Only auto-finalize when the SSH identity is installed for the target."""
+    connection_identities = {
+        identity
+        for key in connection_public_keys
+        if (identity := public_key_identity(key))
+    }
+    target_identities = {
+        identity
+        for key in variables["target_authorized_keys"]
+        if (identity := public_key_identity(key))
+    }
+    return bool(
+        location == "remote"
+        and variables["configure_ssh"]
+        and connection["auth"] == "key"
+        and connection_identities
+        and connection_identities <= target_identities
+        and variables["target_passwordless_sudo"]
+    )
+
+
 def collect_public_keys(default_public_key: str = "", required: bool = False) -> list[str]:
     if default_public_key:
         hint = f" [{default_public_key}]（回车使用默认，输入 - 跳过）"
@@ -465,21 +498,24 @@ def collect_ubuntu(defaults: dict[str, Any] | None = None) -> tuple[Path, str, d
         args: list[str] = []
     else:
         inventory, connection, args = collect_connection("ubuntu_servers", "root")
-        if connection["user"] != "root":
-            raise WizardError("当前 ubuntu-bootstrap 只支持 root SSH 登录。")
     target_user = prompt(
         "要创建/配置的普通用户",
         str(defaults.get("target_user")) if defaults.get("target_user") else None,
         validator=lambda value: value != "root" and bool(USERNAME_RE.fullmatch(value)),
         error="请输入合法的非 root Linux 用户名。",
     )
+    if location == "remote" and connection["user"] not in {"root", target_user}:
+        raise WizardError("Ubuntu 模式只接受首次 root 或已托管的目标普通用户连接。")
     default_pub = ""
     if connection["private_key"]:
         candidate = Path(connection["private_key"] + ".pub")
         if candidate.is_file():
             default_pub = str(candidate)
     variables = {"target_user": target_user}
-    account_exists = location == "local" and local_account_exists(target_user)
+    account_exists = (
+        (location == "local" and local_account_exists(target_user))
+        or (location == "remote" and connection["user"] == target_user)
+    )
     variables.update(collect_target_credentials(default_pub, account_exists))
     variables.update(collect_user_modules(defaults))
     variables.update(
@@ -501,12 +537,23 @@ def collect_ubuntu(defaults: dict[str, Any] | None = None) -> tuple[Path, str, d
     variables["ssh_port"] = int(managed_port)
     variables["disable_root_login"] = False
     variables["disable_password_auth"] = False
+    auto_finalize = can_auto_finalize_ubuntu(
+        location,
+        connection,
+        variables,
+        read_public_keys(default_pub) if default_pub else [],
+    )
     if (
         variables["configure_ssh"]
         and connection["auth"] == "key"
         and variables["target_authorized_keys"]
     ):
-        variables["disable_password_auth"] = confirm("确认新用户密钥登录后，禁用 SSH 密码认证", False)
+        variables["disable_password_auth"] = confirm(
+            "普通用户新端口密钥登录验证成功后，禁用 SSH 密码认证", False
+        )
+        variables["disable_root_login"] = confirm(
+            "普通用户新端口登录验证成功后，禁用 SSH root 登录", False
+        )
     elif variables["configure_ssh"] and connection["auth"] == "password":
         print("提示：当前使用密码连接，本次不会关闭 SSH 密码认证。")
     elif variables["configure_ssh"] and connection["auth"] == "local":
@@ -525,6 +572,14 @@ def collect_ubuntu(defaults: dict[str, Any] | None = None) -> tuple[Path, str, d
         extra = input("额外放行端口（例如 8080/tcp,53/udp；留空跳过）: ")
         ports.extend(parse_extra_ports(extra))
     variables["firewall_allowed_ports"] = ports
+    variables["ssh_finalize_key_verified"] = False
+    variables["ssh_wizard_auto_finalize"] = auto_finalize
+    variables["ssh_transition_host"] = connection["host"]
+    if variables["configure_ssh"] and not auto_finalize:
+        print(
+            "提示：本次只执行 SSH 安全准备阶段，保留当前端口和认证方式。"
+            "请从普通用户新端口连接运行 ubuntu-ssh-finalize。"
+        )
     summary = {
         "模式": "Ubuntu bootstrap",
         "主机": connection["host"],
@@ -535,6 +590,7 @@ def collect_ubuntu(defaults: dict[str, Any] | None = None) -> tuple[Path, str, d
             "password": "SSH 密码",
             "local": "当前服务器本地执行",
         }[connection["auth"]],
+        "SSH 收敛": "自动两阶段验证" if auto_finalize else "仅安全准备阶段",
     }
     return ANSIBLE_DIR / "playbooks" / "ubuntu-bootstrap.yml", inventory, variables, args, summary
 
@@ -683,6 +739,47 @@ def run_wizard() -> int:
             environment["ANSIBLE_COLLECTIONS_PATH"] = str(collections_dir)
             environment["ANSIBLE_COLLECTIONS_PATHS"] = str(collections_dir)
         result = subprocess.run(command, env=environment, check=False)
+        if (
+            result.returncode == 0
+            and mode == "ubuntu"
+            and variables.get("ssh_wizard_auto_finalize")
+        ):
+            print(
+                "\n==> 使用普通用户和新端口建立独立 SSH 连接并执行第二阶段"
+            )
+            variables["ssh_finalize_key_verified"] = True
+            secure_write(
+                vars_file,
+                json.dumps(variables, ensure_ascii=False, indent=2) + "\n",
+            )
+            finalize_inventory = temp / "finalize-inventory.ini"
+            secure_write(
+                finalize_inventory,
+                "[ubuntu_servers]\n"
+                f"wizard_target ansible_host={variables['ssh_transition_host']} "
+                f"ansible_user={variables['target_user']} "
+                f"ansible_port={variables['ssh_port']}\n\n"
+                "[ubuntu_servers:vars]\n"
+                "ansible_python_interpreter=/usr/bin/python3\n",
+            )
+            finalize_command = [
+                str(ansible_launcher),
+                "-i",
+                str(finalize_inventory),
+                str(ANSIBLE_DIR / "playbooks" / "ubuntu-ssh-finalize.yml"),
+                "-e",
+                f"@{vars_file}",
+                *extra_args,
+            ]
+            result = subprocess.run(finalize_command, env=environment, check=False)
+            if result.returncode != 0:
+                print(
+                    "错误：SSH 第二阶段未完整完成。finalize 可能已经切换监听端口和认证策略，"
+                    "但尚未收敛 UFW；不要假定旧端口仍可用。保留当前连接，检查新端口登录、"
+                    "sudo sshd -t 与 sudo ufw app info DevOpsToolkit；修复后从普通用户"
+                    "新端口重跑 ubuntu-ssh-finalize。",
+                    file=sys.stderr,
+                )
     if result.returncode == 0:
         state["schema"] = STATE_SCHEMA
         state["last_mode"] = mode

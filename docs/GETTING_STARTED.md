@@ -200,7 +200,8 @@ ssh root@203.0.113.10
 
 ### SSH 加固注意事项
 
-默认不会禁用 root 登录或密码认证。当前 `ubuntu-bootstrap` 后续仍要求 root SSH，因此不要在需要继续维护的机器上设置 `disable_root_login: true`。
+默认不会禁用 root 登录或密码认证。首次 bootstrap 可使用 root；完成 finalize 后，后续
+`ubuntu-bootstrap` 也支持从同一目标普通用户连接并通过 sudo 管理，因此禁用 root 登录不会切断维护入口。
 
 确认 root 已经可以使用密钥连接，并测试目标用户密钥后，可以仅禁用 SSH 密码认证：
 
@@ -211,11 +212,13 @@ target_authorized_keys:
   - "ssh-ed25519 AAAAC3... workstation"
 ```
 
-Playbook 会先配置 UFW、写入 OpenSSH drop-in、执行 `sshd -t`，然后才重启 SSH。即便如此，也必须：
+`ubuntu-bootstrap` 只进入双端口 prepare 状态，不会立即关闭旧端口或新应用认证禁用。必须：
 
 1. 保持当前 root 会话不关闭。
 2. 在另一个终端测试目标用户的新连接。
-3. 确认密钥、端口和 sudo 符合预期后，再退出当前会话。
+3. 将 inventory 改为目标普通用户和新端口，运行 `bin/ubuntu-ssh-finalize`；禁用密码时额外传入
+   `-e ssh_finalize_key_verified=true`。
+4. finalize 成功并确认旧端口已从 listener/UFW 移除后，再退出当前会话。
 
 ### 验证
 

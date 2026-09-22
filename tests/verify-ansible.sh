@@ -21,6 +21,8 @@ ansible-playbook --syntax-check -i 'localhost,' "${ROOT_DIR}/ansible/playbooks/w
 ansible-playbook --syntax-check -i "${TMP_DIR}/inventory.ini" \
   "${ROOT_DIR}/ansible/playbooks/ubuntu-bootstrap.yml"
 ansible-playbook --syntax-check -i "${TMP_DIR}/inventory.ini" \
+  "${ROOT_DIR}/ansible/playbooks/ubuntu-ssh-finalize.yml"
+ansible-playbook --syntax-check -i "${TMP_DIR}/inventory.ini" \
   "${ROOT_DIR}/ansible/playbooks/user-only.yml"
 ansible-playbook --syntax-check -i "${TMP_DIR}/inventory.ini" \
   "${ROOT_DIR}/ansible/playbooks/user-only-remove.yml"
@@ -29,6 +31,7 @@ bash -n \
   "${ROOT_DIR}/bin/ansible-playbook" \
   "${ROOT_DIR}/bin/wsl-bootstrap" \
   "${ROOT_DIR}/bin/ubuntu-bootstrap" \
+  "${ROOT_DIR}/bin/ubuntu-ssh-finalize" \
   "${ROOT_DIR}/bin/user-only" \
   "${ROOT_DIR}/bin/user-only-remove" \
   "${ROOT_DIR}/install.sh" \
@@ -104,7 +107,7 @@ if ! grep -Fq '使用 Release 内置 Ansible collections' "${ROOT_DIR}/install.s
   echo "错误：安装器没有区分内置 collections 与旧版 Galaxy 兼容路径。" >&2
   exit 1
 fi
-for entrypoint in wsl-bootstrap ubuntu-bootstrap user-only user-only-remove; do
+for entrypoint in wsl-bootstrap ubuntu-bootstrap ubuntu-ssh-finalize user-only user-only-remove; do
   if ! grep -Fq 'ANSIBLE_COLLECTIONS_PATH=' "${ROOT_DIR}/bin/${entrypoint}" || \
      ! grep -Fq 'ANSIBLE_COLLECTIONS_PATHS=' "${ROOT_DIR}/bin/${entrypoint}"; then
     echo "错误：${entrypoint} 没有加载 Release 内置 Ansible collections。" >&2
@@ -121,6 +124,7 @@ if command -v shellcheck >/dev/null 2>&1; then
   shellcheck \
     "${ROOT_DIR}/install.sh" \
     "${ROOT_DIR}/bin/ansible-playbook" \
+    "${ROOT_DIR}/bin/ubuntu-ssh-finalize" \
     "${ROOT_DIR}/scripts/build-release.sh" \
     "${ROOT_DIR}/tests/test-installer.sh" \
     "${ROOT_DIR}/tests/test-release.sh" \
@@ -220,17 +224,16 @@ if ! grep -Fq 'when: firewall_managed_allow_rule_exists | bool' "${firewall_task
   exit 1
 fi
 
-# 锁定 24.04 改端口修复：Ubuntu 22.10+（含 24.04）的 OpenSSH 监听端口由 ssh.socket 决定，
-# 只改 sshd_config 的 Port 无效。若下列任一环节缺失，socket 激活主机改端口不会生效，叠加
-# UFW 只放行新端口会把主机锁死。
+# 锁定 SSH 两阶段事务：prepare 必须保留可信旧端口，finalize 必须从普通用户新端口连接执行；
+# Ubuntu 22.10+ 的 ssh.socket 与传统 ssh.service 必须使用同一端口集合。
 ssh_security_role="${ROOT_DIR}/ansible/roles/ssh_security"
-if ! grep -Eq 'ListenStream=.*ssh_port' \
+if ! grep -Eq 'ListenStream=.*port' \
   "${ssh_security_role}/templates/ssh.socket-override.conf.j2" 2>/dev/null; then
-  echo "错误：ssh_security 未通过 ssh.socket 的 ListenStream 绑定托管端口；socket 激活的 Ubuntu 改 SSH 端口会失效并可能锁死主机。" >&2
+  echo "错误：ssh_security 未通过 ssh.socket 绑定两阶段端口集合。" >&2
   exit 1
 fi
 if ! grep -Fq 'ssh.socket-override.conf.j2' \
-  "${ssh_security_role}/tasks/main.yml" 2>/dev/null; then
+  "${ssh_security_role}/tasks/configure.yml" 2>/dev/null; then
   echo "错误：ssh_security 的任务未写入 ssh.socket 端口覆盖文件。" >&2
   exit 1
 fi
@@ -239,11 +242,17 @@ if ! grep -Eq 'name:[[:space:]]*ssh\.socket' \
   echo "错误：ssh_security 的 handler 未重启 ssh.socket，端口变更不会生效。" >&2
   exit 1
 fi
-if ! grep -Fq 'ansible.builtin.wait_for_connection:' \
+if ! grep -Fq 'ssh_transition_connection_port' \
   "${ssh_security_role}/tasks/main.yml" 2>/dev/null || \
-   grep -Fq 'ansible.builtin.wait_for:' \
-  "${ssh_security_role}/tasks/main.yml" 2>/dev/null; then
-  echo "错误：SSH 端口切换必须通过 wait_for_connection 验证，避免 SSH alias 或 ProxyJump 被当作 DNS 主机名。" >&2
+   ! grep -Fq "ansible_facts['user_id'] == target_user" \
+  "${ssh_security_role}/tasks/finalize.yml" 2>/dev/null || \
+   ! grep -Fq 'ansible.builtin.include_role:' \
+  "${ROOT_DIR}/ansible/playbooks/ubuntu-ssh-finalize.yml" 2>/dev/null || \
+   ! grep -Fq 'tasks_from: finalize' \
+  "${ROOT_DIR}/ansible/playbooks/ubuntu-ssh-finalize.yml" 2>/dev/null || \
+   ! grep -Fq 'firewall_prepare_allowed_ports' \
+  "${ROOT_DIR}/ansible/playbooks/ubuntu-bootstrap.yml" 2>/dev/null; then
+  echo "错误：SSH prepare/finalize 事务或旧端口 UFW 回退边界发生回退。" >&2
   exit 1
 fi
 

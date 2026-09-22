@@ -1,0 +1,25 @@
+---
+- name: Finalize Ubuntu SSH from the verified target-user connection
+  hosts: ubuntu_servers
+  gather_facts: true
+  vars_files:
+    - ../group_vars/all.yml
+  pre_tasks:
+    - name: Require the explicit target account
+      ansible.builtin.assert:
+        that:
+          - target_user | length > 0
+          - target_user != 'root'
+          - target_user is match('^[a-z_][a-z0-9_-]*[$]?$')
+        fail_msg: "ubuntu-ssh-finalize requires -e target_user=<user>."
+
+  tasks:
+    - name: Apply SSH hardening from the verified target-user connection
+      ansible.builtin.include_role:
+        name: ssh_security
+        tasks_from: finalize
+
+    - name: Remove the fallback port from the managed firewall profile
+      ansible.builtin.include_role:
+        name: firewall
+      when: enable_firewall | bool

@@ -75,6 +75,49 @@ with tempfile.TemporaryDirectory() as directory:
 assert wizard["project_default_version"]("node_version")
 assert wizard["project_default_version"]("go_version")
 
+assert (
+    wizard["public_key_identity"]("ssh-ed25519 AAAATEST first-comment")
+    == wizard["public_key_identity"]("ssh-ed25519 AAAATEST changed-comment")
+)
+assert wizard["public_key_identity"]("invalid") == ""
+
+auto_finalize_vars = {
+    "configure_ssh": True,
+    "target_authorized_keys": ["ssh-ed25519 AAAATEST target-comment"],
+    "target_passwordless_sudo": True,
+}
+auto_finalize_connection = {"auth": "key"}
+assert wizard["can_auto_finalize_ubuntu"](
+    "remote",
+    auto_finalize_connection,
+    auto_finalize_vars,
+    ["ssh-ed25519 AAAATEST key-comment"],
+)
+assert not wizard["can_auto_finalize_ubuntu"](
+    "remote",
+    auto_finalize_connection,
+    auto_finalize_vars,
+    ["ssh-ed25519 AAAAOTHER"],
+)
+assert not wizard["can_auto_finalize_ubuntu"](
+    "remote",
+    auto_finalize_connection,
+    {**auto_finalize_vars, "target_passwordless_sudo": False},
+    ["ssh-ed25519 AAAATEST"],
+)
+assert not wizard["can_auto_finalize_ubuntu"](
+    "local",
+    auto_finalize_connection,
+    auto_finalize_vars,
+    ["ssh-ed25519 AAAATEST"],
+)
+assert not wizard["can_auto_finalize_ubuntu"](
+    "remote",
+    {"auth": "password"},
+    auto_finalize_vars,
+    ["ssh-ed25519 AAAATEST"],
+)
+
 credential_globals = wizard["collect_target_credentials"].__globals__
 original_choose = credential_globals["choose"]
 original_collect_public_keys = credential_globals["collect_public_keys"]

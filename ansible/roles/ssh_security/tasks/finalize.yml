@@ -1,0 +1,19 @@
+---
+- name: Require a new ordinary-user connection on the desired SSH port
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['user_id'] == target_user
+      - ansible_facts['user_id'] != 'root'
+      - (ansible_port | default(22) | int) == (ssh_port | int)
+      - not (disable_password_auth | bool) or (ssh_finalize_key_verified | bool)
+    fail_msg: >-
+      SSH finalize must run through a brand-new target-user connection on the
+      desired port. Disabling password authentication additionally requires
+      ssh_finalize_key_verified=true after independent key-login verification.
+
+- name: Finalize the single SSH listener and requested authentication policy
+  ansible.builtin.include_tasks: configure.yml
+  vars:
+    ssh_listener_ports:
+      - "{{ ssh_port | int }}"
+    ssh_apply_requested_hardening: true

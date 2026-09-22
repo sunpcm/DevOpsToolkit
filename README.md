@@ -7,7 +7,8 @@
 | 场景 | 登录/执行身份 | 会修改系统 | 会创建用户 | 用户配置范围 | 入口 |
 |---|---|---:|---:|---|---|
 | WSL2 初始化 | WSL 内 root | 是 | 是 | root 最小配置 + 目标用户完整配置 | `bin/wsl-bootstrap` |
-| Ubuntu 服务器初始化 | SSH root | 是 | 是 | root 最小配置 + 目标用户完整配置 | `bin/ubuntu-bootstrap` |
+| Ubuntu 服务器初始化 | 首次 root，后续目标用户 + sudo | 是 | 是 | root 最小配置 + 目标用户完整配置 | `bin/ubuntu-bootstrap` |
+| Ubuntu SSH 第二阶段 | 目标用户的新端口连接 | 是 | 否 | 收紧 SSH/UFW | `bin/ubuntu-ssh-finalize` |
 | 已有用户配置 | 普通用户密码或密钥 | 默认否 | 否 | 只修改当前用户 HOME | `bin/user-only` |
 
 如果不确定该选哪个：
@@ -139,6 +140,20 @@ vim ansible/inventories/ubuntu.ini
 
 # root 密码登录则使用 --ask-pass
 ```
+
+若修改 SSH 端口，`ubuntu-bootstrap` 只执行安全准备阶段：SSH 与 UFW 同时保留当前端口和新端口。
+从控制端确认目标普通用户能通过新端口登录并使用 sudo 后，改用该普通用户的新端口 inventory 执行：
+
+```bash
+./bin/ubuntu-ssh-finalize ansible/inventories/ubuntu-finalize.ini developer \
+  --private-key ~/.ssh/id_ed25519 \
+  -e @ansible/your-vars.yml \
+  -e ssh_finalize_key_verified=true
+```
+
+只有 finalize 成功后才会应用 `disable_root_login` / `disable_password_auth` 并从受管 UFW profile
+移除旧端口。交互式向导仅在“连接私钥对应的公钥已写入目标用户且目标用户有免密 sudo”时自动执行第二阶段；
+否则停在可恢复的双端口准备态。
 
 已有普通用户：
 

@@ -5,14 +5,16 @@
   vars_files:
     - ../group_vars/all.yml
   pre_tasks:
-    - name: Require a root SSH session and an explicit target account
+    - name: Require root or the managed sudo account and an explicit target account
       ansible.builtin.assert:
         that:
-          - ansible_facts['user_id'] == 'root'
           - target_user | length > 0
           - target_user != 'root'
           - target_user is match('^[a-z_][a-z0-9_-]*[$]?$')
-        fail_msg: "ubuntu-bootstrap requires ansible_user=root and -e target_user=<user>."
+          - ansible_facts['user_id'] in ['root', target_user]
+        fail_msg: >-
+          ubuntu-bootstrap requires either the initial root connection or the
+          managed target account with working sudo, plus -e target_user=<user>.
 
     - name: Remove conflicting legacy Docker APT sources before any package operation
       ansible.builtin.include_role:
@@ -20,15 +22,40 @@
         tasks_from: repository-cleanup
       when: install_docker | bool
 
+    - name: Record the SSH port used by this trusted bootstrap connection
+      ansible.builtin.set_fact:
+        ssh_transition_connection_port: "{{ ansible_port | default(22) | int }}"
+      when: configure_ssh | bool
+
+    - name: Keep both the trusted and desired SSH ports in the prepare firewall profile
+      ansible.builtin.set_fact:
+        firewall_prepare_allowed_ports: >-
+          {{
+            firewall_allowed_ports
+            + ([{
+              'port': ssh_transition_connection_port,
+              'proto': 'tcp',
+              'comment': 'SSH transition fallback'
+            }] if (ssh_transition_connection_port | string) not in
+              (firewall_allowed_ports | map(attribute='port') | map('string') | list)
+              else [])
+          }}
+      when:
+        - configure_ssh | bool
+        - enable_firewall | bool
+
   roles:
     - role: system_base
       vars:
         system_context: ubuntu
     - role: account_create
-    - role: firewall
-      when: enable_firewall | bool
     - role: ssh_security
       when: configure_ssh | bool
+    - role: firewall
+      vars:
+        firewall_effective_allowed_ports: >-
+          {{ firewall_prepare_allowed_ports | default(firewall_allowed_ports) }}
+      when: enable_firewall | bool
     - role: docker
       when: install_docker | bool
     - role: nginx

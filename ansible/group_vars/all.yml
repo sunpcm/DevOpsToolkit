@@ -63,6 +63,7 @@ system_packages:
   - ca-certificates
   - curl
   - git
+  - iproute2
   - locales
   - sudo
   - unzip
@@ -97,12 +98,14 @@ enable_firewall: true
 firewall_managed_profile_name: DevOpsToolkit
 firewall_allowed_ports:
   - { port: "{{ ssh_port }}", proto: tcp }
+firewall_effective_allowed_ports: "{{ firewall_allowed_ports }}"
 
 # SSH changes are deliberately conservative by default.
 configure_ssh: true
 ssh_port: 22
 disable_root_login: false
 disable_password_auth: false
+ssh_finalize_key_verified: false
 
 # user-only is strict unless this explicit exception is enabled.
 user_only_allow_system_dependencies: false

@@ -175,10 +175,43 @@ SSH 公钥可以提交，但更推荐放在环境专用变量文件中。
 ssh root@SERVER 'cp /etc/ssh/sshd_config "/etc/ssh/sshd_config.bak.$(date +%Y%m%d_%H%M%S)"'
 ```
 
-Playbook 使用 `/etc/ssh/sshd_config.d/99-devops-toolkit.conf`，并执行：
+SSH 变更是显式两阶段事务。`ubuntu-bootstrap` 的 prepare 阶段使用
+`/etc/ssh/sshd_config.d/99-devops-toolkit.conf`，先检查新端口未被其他进程占用，再让传统
+`ssh.service` 或 socket 激活的 `ssh.socket` 同时监听当前端口和新端口；UFW 的受管 profile
+也同时放行两者。prepare 不会新应用 root/password 禁用，但会保留已经生效的托管加固。
+
+每次写入都会先执行：
 
 ```bash
 /usr/sbin/sshd -t
+```
+
+prepare 成功后，在控制端建立全新的目标普通用户连接，不要复用 root ControlMaster：
+
+```bash
+ssh -F /dev/null -o IdentitiesOnly=yes -i ~/.ssh/id_ed25519 \
+  -p 2222 developer@SERVER 'sudo true'
+```
+
+然后把 finalize inventory 的 `ansible_user` 和 `ansible_port` 分别设为目标普通用户和新端口，执行：
+
+```bash
+./bin/ubuntu-ssh-finalize ansible/inventories/ubuntu-finalize.ini developer \
+  --private-key ~/.ssh/id_ed25519 \
+  -e @ansible/your-vars.yml \
+  -e ssh_finalize_key_verified=true
+```
+
+finalize 会拒绝 root 连接、错误端口，以及在禁用密码认证时未经显式确认的密钥验证。它先收敛单一
+新端口并应用认证策略，成功后才从 UFW profile 移除旧端口。prepare 失败时旧端口与原认证方式
+仍保留；finalize 若在 SSH 收敛后、UFW 收敛前失败，旧端口可能已关闭。两种失败都不要关闭当前
+会话，先用以下只读命令检查实际状态，再从仍可用的普通用户新端口重跑 finalize：
+
+```bash
+sudo /usr/sbin/sshd -t
+sudo ss -lntp
+sudo ufw app info DevOpsToolkit
+sudo systemctl status ssh.service ssh.socket --no-pager
 ```
 
 如果要删除管理配置，先验证主配置和其他 drop-in 能维持正确登录方式：
@@ -238,7 +271,8 @@ sudo ss -lntp
 sudo ufw status verbose
 ```
 
-检查 inventory 的端口、`ssh_port`、UFW 规则和目标用户公钥是否一致。
+检查 prepare/finalize inventory 的用户和端口、`ssh_port`、UFW profile、目标用户公钥及 sudo
+是否一致。不要通过删除旧端口或手工关闭 root/password 登录来“修复”未完成的 prepare。
 
 ### WSL Docker 检查失败
 

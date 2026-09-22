@@ -166,9 +166,10 @@ write_inventory() {
   local port="$4"
   local key_file="$5"
   local known_hosts="$6"
+  local user="${7:-root}"
   cat >"${path}" <<EOF
 [ubuntu_servers]
-${name} ansible_host=${ip} ansible_user=root ansible_port=${port} ansible_ssh_private_key_file=${key_file} ansible_ssh_common_args='-o UserKnownHostsFile=${known_hosts} -o IdentitiesOnly=yes'
+${name} ansible_host=${ip} ansible_user=${user} ansible_port=${port} ansible_ssh_private_key_file=${key_file} ansible_ssh_common_args='-o UserKnownHostsFile=${known_hosts} -o IdentitiesOnly=yes'
 EOF
 }
 
@@ -200,10 +201,19 @@ verify_result() {
 id "$TARGET_USER" >/dev/null
 test -s "/home/$TARGET_USER/.ssh/authorized_keys"
 sshd -T | grep -Eq "^port ${MANAGED_SSH_PORT}$"
+sshd -T | grep -Eq '^passwordauthentication no$'
+grep -Fxq 'PasswordAuthentication no' /etc/ssh/sshd_config.d/99-devops-toolkit.conf
+grep -Fxq 'KbdInteractiveAuthentication no' /etc/ssh/sshd_config.d/99-devops-toolkit.conf
+if [ "${MANAGED_SSH_PORT}" != 22 ]; then
+  ! ss -H -ltn "sport = :22" | grep -q .
+fi
 ufw status | grep -Fq "Status: active"
 # UFW converges through the managed application profile, so "ufw status" lists the
 # profile name rather than the raw port. Assert the port via the profile itself.
 ufw app info DevOpsToolkit | grep -Fq "${MANAGED_SSH_PORT}/tcp"
+if [ "${MANAGED_SSH_PORT}" != 22 ]; then
+  ! ufw app info DevOpsToolkit | grep -Eq '(^|[|,[:space:]])22/tcp([|,[:space:]]|$)'
+fi
 systemctl is-active --quiet docker
 systemctl is-enabled --quiet docker
 systemctl is-active --quiet nginx
@@ -335,6 +345,7 @@ run_instance() {
   local known_hosts="${work_dir}/${instance}.known_hosts"
   local initial_inventory="${work_dir}/${instance}-initial.ini"
   local managed_inventory="${work_dir}/${instance}-managed.ini"
+  local target_inventory="${work_dir}/${instance}-target.ini"
   local vars_file="${work_dir}/${instance}-vars.yml"
   local second_log="${work_dir}/${instance}-second.log"
   local ip public_key initial_port
@@ -378,6 +389,12 @@ EOF
     -e "@${vars_file}"
 
   ssh-keyscan -p "${MANAGED_SSH_PORT}" -H "${ip}" >"${known_hosts}" 2>/dev/null
+  write_inventory "${target_inventory}" "${instance}" "${ip}" \
+    "${MANAGED_SSH_PORT}" "${key_file}" "${known_hosts}" "${TARGET_USER}"
+  echo "==> ${instance}: 从普通用户新端口执行 SSH finalize"
+  "${ROOT_DIR}/bin/ubuntu-ssh-finalize" "${target_inventory}" "${TARGET_USER}" \
+    -e "@${vars_file}" -e ssh_finalize_key_verified=true
+
   write_inventory "${managed_inventory}" "${instance}" "${ip}" \
     "${MANAGED_SSH_PORT}" "${key_file}" "${known_hosts}"
 
@@ -495,7 +512,7 @@ main() {
   if ((${#CREATED_INSTANCES[@]} > 0)) && ((KEEP_INSTANCES == 0)); then
     cleanup_instances "${CREATED_INSTANCES[@]}"
   fi
-  echo "Multipass Ubuntu 22.04/24.04 测试全部通过。"
+  echo "请求的 Multipass Ubuntu 实例测试全部通过。"
 }
 
 main "$@"

@@ -13,7 +13,7 @@
       - item.port | int <= 65535
       - item.proto in ['tcp', 'udp']
     fail_msg: "Invalid managed firewall rule: {{ item }}"
-  loop: "{{ firewall_allowed_ports }}"
+  loop: "{{ firewall_effective_allowed_ports }}"
 
 - name: Detect an existing DevOpsToolkit-managed allow rule
   become: true
