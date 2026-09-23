@@ -368,6 +368,7 @@ run_fault_injections() {
   local firewall_log="${work_dir}/${instance}-firewall-recovery.log"
   local partial_playbook="${work_dir}/${instance}-partial-account.yml"
   local partial_log="${work_dir}/${instance}-partial-account.log"
+  local resume_first_log="${work_dir}/${instance}-resume-first.log"
   local resume_log="${work_dir}/${instance}-resume-second.log"
   local occupied_playbook="${work_dir}/${instance}-occupied-port.yml"
   local occupied_log="${work_dir}/${instance}-occupied-port.log"
@@ -487,8 +488,13 @@ EOF
   fi
   grep -Fq 'Controlled interruption for idempotence testing' "${partial_log}" || \
     die "${instance}: 未观察到受控中断标记"
-  "${ROOT_DIR}/bin/ubuntu-bootstrap" "${inventory}" "${resume_user}" \
-    -e "@${vars_file}" >/dev/null
+  CURRENT_STAGE="${instance}:resume-bootstrap"
+  if ! "${ROOT_DIR}/bin/ubuntu-bootstrap" "${inventory}" "${resume_user}" \
+      -e "@${vars_file}" >"${resume_first_log}" 2>&1; then
+    tail -n 60 "${resume_first_log}" >&2
+    die "${instance}: 中断后的首次完整重跑失败"
+  fi
+  CURRENT_STAGE="${instance}:resume-idempotence"
   "${ROOT_DIR}/bin/ubuntu-bootstrap" "${inventory}" "${resume_user}" \
     -e "@${vars_file}" | tee "${resume_log}"
   assert_recap_clean "${resume_log}"
