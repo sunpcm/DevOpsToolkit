@@ -485,6 +485,31 @@ raise SystemExit(0 if actual == expected else 1)
 PY
 }
 
+system_release_tree_valid() {
+  local release_root="$1"
+  python3 - "${release_root}" <<'PY'
+import os
+import stat
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1]).resolve(strict=True)
+for path in (root, *root.rglob("*")):
+    entry = path.lstat()
+    if entry.st_uid != 0 or entry.st_gid != 0:
+        raise SystemExit(f"non-root owner: {path}")
+    if stat.S_ISLNK(entry.st_mode):
+        try:
+            target = path.resolve(strict=True)
+            target.relative_to(root)
+        except (OSError, RuntimeError, ValueError):
+            raise SystemExit(f"unsafe symlink: {path}") from None
+        continue
+    if entry.st_mode & 0o022 or not (stat.S_ISDIR(entry.st_mode) or stat.S_ISREG(entry.st_mode)):
+        raise SystemExit(f"unsafe mode or file type: {path}")
+PY
+}
+
 install_release() {
   local release_version="$1" verified_sha source_dir base_dir bin_dir
   source_dir="${TEMP_DIR}/extracted/devops-toolkit"
@@ -530,6 +555,8 @@ install_release() {
 
   local collection_root
   if [[ -e "${target_dir}" || -L "${target_dir}" ]]; then
+    [[ ! -L "${target_dir}" && -d "${target_dir}" ]] || \
+      fail "版本目录不能是符号链接或非目录：${target_dir}。"
     [[ -f "${target_dir}/.release-sha256" ]] || \
       fail "版本目录 ${target_dir} 已存在但缺少校验记录，拒绝覆盖。"
     [[ "$(cat "${target_dir}/.release-sha256")" == "${verified_sha}" ]] || \
@@ -550,12 +577,9 @@ install_release() {
   fi
 
   if [[ "${INSTALL_MODE}" == "system" ]]; then
-    local unsafe_entry
-    unsafe_entry="$(find "${collection_root}" \
-      \( -type l -o ! -uid 0 -o ! -gid 0 -o -perm -020 -o -perm -002 \) \
-      -print -quit)"
-    if [[ -n "${unsafe_entry}" && "${collection_root}" != "${staging_dir}" ]]; then
-      fail "已有系统版本包含非 root 所有权、可写权限或符号链接，拒绝复用：${unsafe_entry}。请先从可信 Release 重建该版本。"
+    if [[ "${collection_root}" != "${staging_dir}" ]] && \
+      ! system_release_tree_valid "${collection_root}"; then
+      fail "已有系统版本存在不安全所有权、权限或逃逸链接，拒绝复用；请先从可信 Release 重建该版本。"
     fi
   fi
 
@@ -589,11 +613,8 @@ install_release() {
   chmod 0600 "${collection_root}/.release-sha256" "${collection_root}/.collections-ready"
 
   if [[ "${INSTALL_MODE}" == "system" ]]; then
-    unsafe_entry="$(find "${collection_root}" \
-      \( -type l -o ! -uid 0 -o ! -gid 0 -o -perm -020 -o -perm -002 \) \
-      -print -quit)"
-    [[ -z "${unsafe_entry}" ]] || \
-      fail "系统版本权限验证失败，current 未切换：${unsafe_entry}。"
+    system_release_tree_valid "${collection_root}" || \
+      fail "系统版本权限验证失败，current 未切换。"
   fi
 
   if [[ "${collection_root}" == "${staging_dir}" ]]; then
