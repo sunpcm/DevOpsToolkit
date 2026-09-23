@@ -18,6 +18,7 @@ STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 SOURCE_SHA="unknown"
 SOURCE_DIRTY="unknown"
 ANSIBLE_CORE_VERSION="unknown"
+CURRENT_STAGE="preflight"
 declare -a REQUESTED_INSTANCES=()
 declare -a ACTIVE_INSTANCES=()
 declare -a CREATED_INSTANCES=()
@@ -169,6 +170,7 @@ managed_ssh_port=${MANAGED_SSH_PORT}
 test_uv=${TEST_UV}
 test_faults=${TEST_FAULTS}
 test_hosts=${TEST_HOSTS}
+last_stage=${CURRENT_STAGE}
 cleanup_status=${cleanup_status}
 EOF
   chmod 0644 "${report_tmp}"
@@ -375,6 +377,7 @@ run_fault_injections() {
   [[ "${MANAGED_SSH_PORT}" != 2223 ]] || occupied_port=2224
 
   echo "==> ${instance}: 故障注入（无效 SSH 配置不得重启）"
+  CURRENT_STAGE="${instance}:invalid-sshd"
   cp "${vars_file}" "${invalid_vars}"
   printf '\ndisable_root_login: true\n' >>"${invalid_vars}"
   printf 'DefinitelyInvalidDirective yes\n' | \
@@ -394,6 +397,7 @@ run_fault_injections() {
   echo "${instance}: SSH 预重启校验与恢复通过"
 
   echo "==> ${instance}: 故障注入（陈旧 UFW profile）"
+  CURRENT_STAGE="${instance}:firewall-recovery"
   ssh_as_target "${ip}" "${key_file}" "${known_hosts}" \
     sudo sh -eu -s -- "${MANAGED_SSH_PORT}" <<'EOF'
 managed_ssh_port="$1"
@@ -427,6 +431,7 @@ EOF
   echo "${instance}: UFW profile 与旧 Docker APT 源冲突恢复，SSH 仍可达"
 
   echo "==> ${instance}: 故障注入（新 SSH 端口被其他服务占用）"
+  CURRENT_STAGE="${instance}:occupied-ssh-port"
   cat >"${occupied_playbook}" <<EOF
 ---
 - name: Refuse an occupied desired SSH port
@@ -461,6 +466,7 @@ EOF
   echo "${instance}: 被占用端口安全拒绝，原 SSH 连接仍可达"
 
   echo "==> ${instance}: 故障注入（部分账户状态后完整重跑）"
+  CURRENT_STAGE="${instance}:interrupted-bootstrap"
   cat >"${partial_playbook}" <<EOF
 ---
 - name: Create a controlled partial bootstrap state
@@ -542,6 +548,7 @@ EOF
     "${initial_port}" "${key_file}" "${known_hosts}"
 
   echo "==> ${instance}: 首次配置（SSH ${initial_port} -> ${MANAGED_SSH_PORT}）"
+  CURRENT_STAGE="${instance}:initial-bootstrap"
   "${ROOT_DIR}/bin/ubuntu-bootstrap" "${initial_inventory}" "${TARGET_USER}" \
     -e "@${vars_file}"
 
@@ -550,6 +557,7 @@ EOF
     "${MANAGED_SSH_PORT}" "${key_file}" "${known_hosts}" "${TARGET_USER}"
   if ((TEST_FAULTS == 1)); then
     echo "==> ${instance}: 故障注入（未确认密钥不得关闭旧 SSH 端口）"
+    CURRENT_STAGE="${instance}:unverified-key"
     if "${ROOT_DIR}/bin/ubuntu-ssh-finalize" "${target_inventory}" "${TARGET_USER}" \
         -e "@${vars_file}" -e ssh_finalize_key_verified=false \
         >"${unverified_log}" 2>&1; then
@@ -562,6 +570,7 @@ EOF
       "root@${ip}" true || die "${instance}: 密钥确认失败后旧 SSH 连接不可达"
   fi
   echo "==> ${instance}: 从普通用户新端口执行 SSH finalize"
+  CURRENT_STAGE="${instance}:ssh-finalize"
   "${ROOT_DIR}/bin/ubuntu-ssh-finalize" "${target_inventory}" "${TARGET_USER}" \
     -e "@${vars_file}" -e ssh_finalize_key_verified=true
 
@@ -569,11 +578,14 @@ EOF
     "${MANAGED_SSH_PORT}" "${key_file}" "${known_hosts}"
 
   echo "==> ${instance}: 第二次配置（幂等性）"
+  CURRENT_STAGE="${instance}:second-bootstrap"
   "${ROOT_DIR}/bin/ubuntu-bootstrap" "${managed_inventory}" "${TARGET_USER}" \
     -e "@${vars_file}" | tee "${second_log}"
 
   assert_recap_clean "${second_log}"
+  CURRENT_STAGE="${instance}:service-verification"
   verify_result "${instance}" "${ip}" "${key_file}" "${known_hosts}"
+  CURRENT_STAGE="${instance}:fault-injections"
   if ((TEST_FAULTS == 1)); then
     run_fault_injections "${instance}" "${ip}" "${key_file}" "${known_hosts}" \
       "${managed_inventory}" "${vars_file}" "${work_dir}"
@@ -699,6 +711,7 @@ main() {
     run_instance "${instance}" "${WORK_DIR}" "${WORK_DIR}/id_ed25519"
   done
 
+  CURRENT_STAGE="complete"
   echo "请求的 Multipass Ubuntu 实例测试全部通过。"
 }
 

@@ -54,6 +54,7 @@ fi
 grep -Fxq 'result=passed' "${REPORT_FILE}"
 grep -Fxq 'source_dirty=false' "${REPORT_FILE}"
 grep -Fxq 'test_faults=1' "${REPORT_FILE}"
+grep -Fxq 'last_stage=preflight' "${REPORT_FILE}"
 grep -Fxq "test_hosts=${TEST_HOSTS}" "${REPORT_FILE}"
 grep -Fxq 'cleanup_status=passed' "${REPORT_FILE}"
 [[ ! -e "${WORK_DIR}" && ! -e "${SSH_CONTROL_DIR}" ]]
