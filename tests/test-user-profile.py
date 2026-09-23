@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import itertools
 import re
+import subprocess
+import tempfile
 from pathlib import Path
 
 
@@ -40,6 +42,55 @@ for flags in itertools.product((False, True), repeat=len(tokens)):
     rendered = render_boolean_blocks(environment_template, values)
     for key, token in tokens.items():
         assert (token in rendered) is values[key], (values, key, rendered)
+
+    # A token in a template is not proof that a POSIX shell can source it.
+    # Use a fresh HOME for every combination and harmless local stand-ins so
+    # the test needs neither network access nor real runtime installations.
+    with tempfile.TemporaryDirectory(prefix="devops-profile-matrix-") as home_dir:
+        home = Path(home_dir)
+        config_file = home / ".config/devops-toolkit/environment.sh"
+        config_file.parent.mkdir(parents=True)
+        config_file.write_text(rendered, encoding="utf-8")
+
+        uv = home / ".local/bin/uv"
+        uv.parent.mkdir(parents=True)
+        uv.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        uv.chmod(0o755)
+
+        nvm = home / ".nvm/nvm.sh"
+        nvm.parent.mkdir(parents=True)
+        nvm.write_text("NVM_MATRIX_LOADED=1\n", encoding="utf-8")
+
+        goenv = home / ".local/share/devops-toolkit/goenv/bin/goenv"
+        goenv.parent.mkdir(parents=True)
+        goenv.write_text(
+            "#!/bin/sh\n"
+            "if [ \"$1\" = init ] && [ \"$2\" = - ]; then\n"
+            "  printf 'GOENV_MATRIX_LOADED=1\\n'\n"
+            "fi\n",
+            encoding="utf-8",
+        )
+        goenv.chmod(0o755)
+
+        shell_env = {"HOME": str(home), "PATH": "/usr/bin:/bin"}
+        result = subprocess.run(
+            [
+                "/bin/sh",
+                "-c",
+                '. "$HOME/.config/devops-toolkit/environment.sh"; '
+                'printf "uv=%s\\nnvm=%s\\ngoenv=%s\\n" '
+                '"$(command -v uv || :)" "${NVM_MATRIX_LOADED-}" '
+                '"${GOENV_MATRIX_LOADED-}"',
+            ],
+            env=shell_env,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        observed = dict(line.split("=", 1) for line in result.stdout.splitlines())
+        assert (observed["uv"] == str(uv)) is values["configure_uv"], values
+        assert (observed["nvm"] == "1") is values["configure_node"], values
+        assert (observed["goenv"] == "1") is values["configure_go"], values
 
 shell_template = (TEMPLATE_DIR / "shell.zsh.j2").read_text(encoding="utf-8")
 without_oh_my_zsh = render_boolean_blocks(
