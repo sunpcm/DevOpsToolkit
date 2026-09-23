@@ -522,6 +522,9 @@ run_instance() {
   local vars_file="${work_dir}/${instance}-vars.yml"
   local second_log="${work_dir}/${instance}-second.log"
   local unverified_log="${work_dir}/${instance}-unverified-key.log"
+  local wrong_key_file="${work_dir}/${instance}-wrong-key"
+  local wrong_key_log="${work_dir}/${instance}-wrong-key.log"
+  local root_disabled_log="${work_dir}/${instance}-root-disabled.log"
   local ip public_key initial_port
 
   check_instance "${instance}"
@@ -570,6 +573,24 @@ EOF
   write_inventory "${target_inventory}" "${instance}" "${ip}" \
     "${MANAGED_SSH_PORT}" "${key_file}" "${known_hosts}" "${TARGET_USER}"
   if ((TEST_FAULTS == 1)); then
+    echo "==> ${instance}: 故障注入（错误私钥不得登录目标用户）"
+    CURRENT_STAGE="${instance}:wrong-target-key"
+    ssh-keygen -q -t ed25519 -N '' -C "devops-toolkit-negative-${RUN_ID}" \
+      -f "${wrong_key_file}"
+    if ssh -F /dev/null -i "${wrong_key_file}" -o IdentitiesOnly=yes \
+        -o BatchMode=yes -o PreferredAuthentications=publickey \
+        -o PasswordAuthentication=no -o ConnectTimeout=5 \
+        -o "UserKnownHostsFile=${known_hosts}" -p "${MANAGED_SSH_PORT}" \
+        "${TARGET_USER}@${ip}" true >"${wrong_key_log}" 2>&1; then
+      die "${instance}: 错误私钥竟可登录目标用户"
+    fi
+    grep -Fq 'Permission denied' "${wrong_key_log}" || {
+      tail -n 10 "${wrong_key_log}" >&2
+      die "${instance}: 错误私钥负例未证明是认证失败"
+    }
+    ssh -F /dev/null -i "${key_file}" -o IdentitiesOnly=yes \
+      -o "UserKnownHostsFile=${known_hosts}" -p "${initial_port}" \
+      "root@${ip}" true || die "${instance}: 错误私钥后旧 SSH 连接不可达"
     echo "==> ${instance}: 故障注入（未确认密钥不得关闭旧 SSH 端口）"
     CURRENT_STAGE="${instance}:unverified-key"
     if "${ROOT_DIR}/bin/ubuntu-ssh-finalize" "${target_inventory}" "${TARGET_USER}" \
@@ -603,6 +624,28 @@ EOF
   if ((TEST_FAULTS == 1)); then
     run_fault_injections "${instance}" "${ip}" "${key_file}" "${known_hosts}" \
       "${managed_inventory}" "${vars_file}" "${work_dir}"
+    echo "==> ${instance}: 显式禁用 root 登录后验证普通用户仍可管理"
+    CURRENT_STAGE="${instance}:root-hardening"
+    "${ROOT_DIR}/bin/ubuntu-ssh-finalize" "${target_inventory}" "${TARGET_USER}" \
+      -e "@${vars_file}" -e ssh_finalize_key_verified=true \
+      -e disable_root_login=true >"${root_disabled_log}" 2>&1 || {
+        tail -n 60 "${root_disabled_log}" >&2
+        die "${instance}: 禁用 root 登录失败"
+      }
+    ssh_as_target "${ip}" "${key_file}" "${known_hosts}" \
+      sudo sshd -T | grep -Fxq 'permitrootlogin no' || \
+      die "${instance}: OpenSSH 有效配置仍允许 root 登录"
+    if ssh -F /dev/null -i "${key_file}" -o IdentitiesOnly=yes \
+        -o BatchMode=yes -o ConnectTimeout=5 \
+        -o "UserKnownHostsFile=${known_hosts}" -p "${MANAGED_SSH_PORT}" \
+        "root@${ip}" true >"${root_disabled_log}" 2>&1; then
+      die "${instance}: 显式禁用后 root 仍可登录"
+    fi
+    grep -Fq 'Permission denied' "${root_disabled_log}" || {
+      tail -n 10 "${root_disabled_log}" >&2
+      die "${instance}: root 登录负例未证明是认证拒绝"
+    }
+    ssh_as_target "${ip}" "${key_file}" "${known_hosts}" sudo true
   fi
 }
 
