@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.machinery
 import importlib.util
 import argparse
+import io
 import os
 import stat
 import subprocess
@@ -86,6 +87,40 @@ class DnsEnvironmentTests(unittest.TestCase):
         self.config.symlink_to(target)
         with self.assertRaises(manager.ManagerError):
             manager.load_dns_environment(self.config, expected_uid=os.geteuid())
+
+    def test_provider_secret_is_child_environment_not_command_argument(self) -> None:
+        layout = manager.Layout(base=self.root / "state", etc=self.root / "etc")
+        layout.acme_bin.parent.mkdir(parents=True)
+        layout.acme_bin.write_text("#!/bin/sh\n", encoding="utf-8")
+        with (
+            mock.patch.object(manager.shutil, "which", return_value="/usr/sbin/runuser"),
+            mock.patch.object(manager.subprocess, "run") as runner,
+            mock.patch.dict(os.environ, {"HOST_ONLY_SECRET": "must-not-pass"}),
+        ):
+            manager.run_as_acme(
+                layout,
+                ["--issue", "-d", "example.com"],
+                extra_environment=["CF_Token=secret-value"],
+                capture_output=True,
+            )
+        command = runner.call_args.args[0]
+        options = runner.call_args.kwargs
+        self.assertNotIn("secret-value", " ".join(command))
+        self.assertIn("--preserve-environment", command)
+        self.assertEqual(options["env"]["CF_Token"], "secret-value")
+        self.assertNotIn("HOST_ONLY_SECRET", options["env"])
+        self.assertTrue(options["capture_output"])
+
+    def test_rejects_environment_override_at_execution_boundary(self) -> None:
+        layout = manager.Layout(base=self.root / "state", etc=self.root / "etc")
+        layout.acme_bin.parent.mkdir(parents=True)
+        layout.acme_bin.write_text("#!/bin/sh\n", encoding="utf-8")
+        with mock.patch.object(manager.shutil, "which", return_value="/usr/sbin/runuser"):
+            for name in ("PATH", "USER", "LOGNAME"):
+                with self.subTest(name=name), self.assertRaises(manager.ManagerError):
+                    manager.run_as_acme(
+                        layout, ["--issue"], extra_environment=[f"{name}=malicious"]
+                    )
 
 
 class QueueDeploymentTests(unittest.TestCase):
@@ -477,6 +512,50 @@ class CertificateCommandTests(unittest.TestCase):
         self.assertIn("--keylength", commands[0])
         self.assertEqual(commands[0][commands[0].index("--keylength") + 1], "ec-256")
         self.assertIn("--ecc", commands[1])
+
+    def test_dns_issue_captures_provider_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            layout = manager.Layout(base=Path(temporary) / "state", etc=Path(temporary) / "etc")
+            args = argparse.Namespace(
+                domains=["example.com"],
+                method="dns",
+                webroot="/var/www/html",
+                dns_provider="dns_cf",
+            )
+            calls: list[dict[str, object]] = []
+
+            def capture(_layout, _arguments, **kwargs):
+                calls.append(kwargs)
+                return subprocess.CompletedProcess(_arguments, 0)
+
+            with (
+                mock.patch.object(manager, "require_root"),
+                mock.patch.object(
+                    manager,
+                    "load_dns_environment",
+                    return_value=["CF_Token=secret-value"],
+                ),
+                mock.patch.object(manager, "run_as_acme", side_effect=capture),
+                mock.patch.object(manager, "request_deploy"),
+                mock.patch.object(manager, "process_queue", return_value=0),
+            ):
+                self.assertEqual(manager.add_certificate(args, layout), 0)
+
+        self.assertEqual(calls[0]["extra_environment"], ["CF_Token=secret-value"])
+        self.assertTrue(calls[0]["capture_output"])
+
+    def test_failed_external_command_never_prints_command_or_secret(self) -> None:
+        failure = subprocess.CalledProcessError(
+            17, ["env", "CF_Token=secret-value", "acme.sh", "--issue"]
+        )
+        with (
+            mock.patch.object(manager, "add_certificate", side_effect=failure),
+            mock.patch.object(manager.sys, "stderr", new_callable=io.StringIO) as errors,
+        ):
+            self.assertEqual(manager.main(["add", "example.com"]), 17)
+        self.assertIn("exit=17", errors.getvalue())
+        self.assertNotIn("secret-value", errors.getvalue())
+        self.assertNotIn("CF_Token", errors.getvalue())
 
 
 if __name__ == "__main__":

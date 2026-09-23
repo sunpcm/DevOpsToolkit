@@ -101,6 +101,9 @@ CF_Account_ID=replace-with-account-id
 允许空行、`#` 注释、可选 `export ` 前缀以及成对的单/双引号。变量名必须符合 shell
 标识符格式；`PATH`、`HOME`、`LD_PRELOAD`、`PYTHONPATH` 等执行环境变量会被拒绝。
 应使用只允许目标 zone 的最小权限 token，并在日志或工单中隐藏值。
+管理器仅通过受控子进程环境传递 DNS 变量，不把变量值加入 `runuser` 命令参数；
+DNS 签发的终端输出会被捕获，失败摘要只显示退出码。acme.sh 自己写入的受限日志与
+持久化状态仍须在真实 provider 测试中审计，不能据此认定它们不含敏感值。
 
 ## 签发与查询
 

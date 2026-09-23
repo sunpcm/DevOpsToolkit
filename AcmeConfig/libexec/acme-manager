@@ -45,9 +45,11 @@ FORBIDDEN_ENV_NAMES = {
     "LD_AUDIT",
     "LD_LIBRARY_PATH",
     "LD_PRELOAD",
+    "LOGNAME",
     "PATH",
     "PYTHONPATH",
     "SHELLOPTS",
+    "USER",
 }
 
 
@@ -207,16 +209,23 @@ def run_as_acme(
         raise ManagerError("找不到 runuser，无法切换到 acme 账户。")
     if not layout.acme_bin.is_file():
         raise ManagerError(f"acme.sh 未安装：{layout.acme_bin}")
+    environment = {
+        "HOME": str(layout.user_home),
+        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "USER": ACME_USER,
+        "LOGNAME": ACME_USER,
+    }
+    for assignment in extra_environment:
+        name, separator, value = assignment.partition("=")
+        if not separator or not ENV_NAME_RE.fullmatch(name) or name in FORBIDDEN_ENV_NAMES:
+            raise ManagerError(f"拒绝传递非法 ACME 环境变量：{name}")
+        environment[name] = value
     command = [
         runuser,
         "--user",
         ACME_USER,
+        "--preserve-environment",
         "--",
-        "env",
-        "-i",
-        f"HOME={layout.user_home}",
-        "PATH=/usr/local/bin:/usr/bin:/bin",
-        *extra_environment,
         str(layout.acme_bin),
         *arguments,
     ]
@@ -225,6 +234,7 @@ def run_as_acme(
         check=True,
         text=True,
         capture_output=capture_output,
+        env=environment,
     )
 
 
@@ -738,7 +748,9 @@ def add_certificate(args: argparse.Namespace, layout: Layout) -> int:
         environment = load_dns_environment(layout.dns_config)
         issue_args.extend(["--dns", args.dns_provider])
     issue_args.extend(["--log", str(layout.config / f"issue-{primary}.log")])
-    run_as_acme(layout, issue_args, extra_environment=environment)
+    run_as_acme(
+        layout, issue_args, extra_environment=environment, capture_output=True
+    )
 
     reload_command = f"{MANAGER_PATH} request-deploy {primary}"
     install_args = [
@@ -851,7 +863,10 @@ def main(argv: Sequence[str] | None = None, *, layout: Layout = DEFAULT_LAYOUT) 
         if args.command == "process-queue":
             return process_queue(layout)
     except subprocess.CalledProcessError as exc:
-        print(f"外部命令失败（exit={exc.returncode}）：{' '.join(exc.cmd)}", file=sys.stderr)
+        print(
+            f"外部命令失败（exit={exc.returncode}）；请检查受限 ACME 日志。",
+            file=sys.stderr,
+        )
         return exc.returncode or 1
     except (ManagerError, OSError, UnicodeError) as exc:
         print(f"错误：{exc}", file=sys.stderr)

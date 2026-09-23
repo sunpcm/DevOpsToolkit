@@ -25,7 +25,10 @@
 [`archive/progress/2026-09-22-acme-p0-1-vm.md`](archive/progress/2026-09-22-acme-p0-1-vm.md)。
 整组证书原子发布、故障恢复及多消费者复测见
 [`archive/progress/2026-09-22-acme-p0-1-bundle.md`](archive/progress/2026-09-22-acme-p0-1-bundle.md)。
-这不是生产验收：VM 仅使用自签证书模拟部署，未通过真实 CA 签发。
+DNS Token 的 argv 与失败输出泄漏修复、本地回归及 Ubuntu 22.04 `runuser` 语义检查见
+[`archive/progress/2026-09-23-acme-p0-1-secret-argv.md`](archive/progress/2026-09-23-acme-p0-1-secret-argv.md)。
+这不是生产验收：既有部署 VM 仅使用自签证书模拟部署，新检查只验证环境传递，
+均未通过真实 CA 签发。
 
 - [ ] 以受控测试域名完成真正的 ACME 首次签发、DNS/webroot 挑战和模拟续期；验证 hook
       仅在证书真实更新后 reload 对应活动服务，且支持多个消费者。
