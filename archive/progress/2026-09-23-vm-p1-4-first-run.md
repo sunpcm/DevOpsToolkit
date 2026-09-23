@@ -55,3 +55,16 @@ Docker 官方 GPG URL 返回 HTTP 200。诊断 VM 已删除，`multipass list --
 
 GitHub 专用 `self-hosted,multipass` runner 尚未接入，计划任务与 Release 同 SHA 门禁还没有远端运行证据。
 Release workflow 会在缺少近期同 SHA 成功报告时 fail closed。
+
+第三轮从干净提交 `8ca45727e6598fee46c95c4c466c9e94cbd1873d` 运行同一双版本命令，
+并设置 `MULTIPASS_TEST_HOSTS=ports.ubuntu.com=91.189.92.19,download.docker.com=3.169.231.109`。
+两台 VM 启动成功；22.04 通过 apt 基础包安装、目标账户/密钥、SSH 双端口准备及 UFW 配置。
+首次配置在 `docker : Download the Docker repository signing key` 失败：五次重试均报
+`<urlopen error [Errno 104] Connection reset by peer>`。24.04 尚未开始 Playbook，后续收敛与故障恢复
+仍未验证。报告确认 `ansible_core=2.21.4`、`source_dirty=false`、`result=failed`、
+`cleanup_status=passed`；退出后 Multipass 实例列表为空。
+
+宿主机同一官方 GPG URL 通过现有 HTTP 代理返回 200；显式禁用代理并固定该公网 IP 时也出现
+`Connection reset by peer`。因此第三轮失败与 VM 到 Docker CDN 的直连路径一致，不能归因于
+Playbook，也不能仅凭一次诊断 VM 曾返回 200 就视为稳定可达。下一轮需给一次性 VM 提供经过
+验证且限于测试网络的代理入口，或换用具备稳定官方源直连的隔离 runner；不得放宽 GPG/签名校验。
