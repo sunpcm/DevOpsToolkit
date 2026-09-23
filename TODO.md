@@ -153,7 +153,7 @@ latest/固定版本、签名校验、重复安装、普通用户入口及原子�
 
 - [ ] 严格区分 WSL1/WSL2，并在任何 apt/system 变更前验证受支持的发行版、版本和架构。
 - [ ] 在新签名 Release 中验证安装器、向导和 Playbook 的 `--capabilities-json` 协议；本地实现与包测试不能证明远端资产已更新。
-- [ ] 设计只读 `doctor`/preflight 命令：检查控制端 runtime、collections、SSH 配置、目标 OS、磁盘、网络和权限，不执行配置变更。
+- [ ] 在一次性 Ubuntu 22.04/24.04 目标 VM 上验收只读 `doctor` 的严格主机密钥、普通用户/root 权限、SSH 配置、OS/磁盘/网络报告；本地模拟 SSH 测试不代替真实目标。
 - [ ] 在 P0-1 真实环境门槛通过后，将 `AcmeConfig/` 迁入受保护的独立仓库与签名 Release，迁移主线 CI/README 引用；不把证书生命周期塞进主线 Ansible role。
 
 `AcmeConfig/` 维护边界已评估，迁移尚未执行，故上项仍开放。决策及验收顺序见

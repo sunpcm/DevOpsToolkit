@@ -167,6 +167,41 @@ runtime、collections、SSH 或目标 OS 现状已经通过检查；运行状态
 和真实环境验收证明。`--version` 在安装器中仍表示选择要安装的 Release，不是查询命令。
 `schema=1` 的字段名与类型保持兼容；如需不兼容变更，必须升级 schema 并同步批量审计脚本。
 
+## 只读 doctor / preflight
+
+安装后运行 `devops-toolkit doctor`；源码 checkout 用 `./bin/devops-toolkit doctor`。
+默认只检查当前控制端的受支持平台、Python、Ansible runtime、锁定 collection 元数据、
+`ansible.cfg` 的 host-key/全局提权设置、可用磁盘和到 GitHub/Docker 官方端点的 TCP/443。
+它不调用 Ansible Playbook，也不安装软件；`--json` 输出 `schema=1` 报告。
+
+```bash
+devops-toolkit doctor --json
+# 离线场景仍检查其余项目，网络项显示 warn，不会伪装成通过
+devops-toolkit doctor --no-network --json
+```
+
+仅在显式指定目标时执行远程只读检查：
+
+```bash
+devops-toolkit doctor --host server.example.com --user operator \
+  --port 2222 --identity "$HOME/.ssh/id_ed25519" \
+  --known-hosts "$HOME/.ssh/known_hosts" --mode ubuntu --json
+```
+
+先通过可信渠道独立核对并写入目标 SSH 主机指纹；doctor 不用 `ssh-keyscan` 自动信任，
+拒绝缺失或组/其他用户可写的 `known_hosts`。它强制严格 host-key 检查、禁用 SSH 连接复用、
+密码交互及主机密钥自动更新，只在目标运行 Python 标准库的读取探针，并用 `sshd -t`
+验证配置；普通用户仅在非交互 sudo 可用时做该项验证。目标探针检查 Ubuntu 版本/架构、
+连接权限、磁盘和官方端点 TCP/443。`--mode user-only` 检查普通用户身份；其他 Linux 的纯
+HOME 模式只给 warning，可选 apt 安装仍限 Ubuntu 22.04/24.04。
+普通用户的 `sudo -n true` 只能证明无需交互密码，不证明拥有完成整套 bootstrap 的 sudo
+范围，因此 Ubuntu 模式在此情形报告 warning；root 登录才直接通过权限项。
+
+`pass` 表示本项检查通过，`warn` 表示跳过或无法完整验证，`fail` 会令命令退出 1；参数错误
+退出 2。网络 TCP 可达不证明代理、TLS、GitHub Release 或 Docker GPG 下载成功；collection
+检查只核对 lock 与已安装 manifest 元数据，不重新证明 Release 签名或逐文件内容。doctor
+不替代一次性 VM E2E、真实 SSH 切换或发布验收。
+
 ## 安全边界
 
 - 临时下载目录权限为 `0700`，资产文件为 `0600`。

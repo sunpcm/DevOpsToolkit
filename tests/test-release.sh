@@ -75,6 +75,8 @@ tar -xzf "${TMP_DIR}/dist/devops-toolkit.tar.gz" -C "${TMP_DIR}/unpacked"
 PACKAGE="${TMP_DIR}/unpacked/devops-toolkit"
 test "$(cat "${PACKAGE}/VERSION")" = "v0.1.0"
 test -x "${PACKAGE}/bin/devops-toolkit"
+test -x "${PACKAGE}/bin/devops-toolkit-doctor"
+"${PACKAGE}/bin/devops-toolkit" doctor --help >/dev/null
 test -x "${PACKAGE}/bin/ansible-playbook"
 test -f "${PACKAGE}/ansible/requirements.yml"
 test -f "${PACKAGE}/ansible/collections.lock.json"

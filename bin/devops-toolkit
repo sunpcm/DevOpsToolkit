@@ -871,7 +871,7 @@ def run_wizard() -> int:
 
 def print_help() -> None:
     print(
-        "用法：devops-toolkit [--help|--version|--capabilities-json]\n\n"
+        "用法：devops-toolkit [--help|--version|--capabilities-json|doctor [选项]]\n\n"
         "交互选择 WSL2、Ubuntu 或 user-only 模式、认证方式和安装组件。\n"
         "敏感变量只写入权限为 0600 的临时文件，并在执行结束后删除。\n"
         "成功后仅在 ~/.config/devops-toolkit 中保存非敏感的向导默认值。"
@@ -880,6 +880,11 @@ def print_help() -> None:
 
 def main() -> int:
     if len(sys.argv) > 1:
+        if sys.argv[1] == "doctor":
+            os.execv(
+                str(ROOT_DIR / "bin/devops-toolkit-doctor"),
+                [str(ROOT_DIR / "bin/devops-toolkit-doctor"), *sys.argv[2:]],
+            )
         if sys.argv[1] in {"-h", "--help"}:
             print_help()
             return 0

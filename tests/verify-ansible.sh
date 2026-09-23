@@ -52,6 +52,8 @@ bash -n \
 python3 -c 'import sys; from pathlib import Path; p=Path(sys.argv[1]); compile(p.read_text(), str(p), "exec")' \
   "${ROOT_DIR}/bin/devops-toolkit"
 python3 -c 'import sys; from pathlib import Path; p=Path(sys.argv[1]); compile(p.read_text(), str(p), "exec")' \
+  "${ROOT_DIR}/bin/devops-toolkit-doctor"
+python3 -c 'import sys; from pathlib import Path; p=Path(sys.argv[1]); compile(p.read_text(), str(p), "exec")' \
   "${ROOT_DIR}/AcmeConfig/libexec/acme-manager"
 python3 "${ROOT_DIR}/scripts/verify-collection-lock.py" \
   --lock "${ROOT_DIR}/ansible/collections.lock.json" \
@@ -63,6 +65,7 @@ python3 -c 'import runpy, stat, sys; from pathlib import Path; m=runpy.run_path(
   "${ROOT_DIR}/bin/devops-toolkit" "${TMP_DIR}/sensitive-vars.json"
 python3 "${ROOT_DIR}/tests/test-wizard.py"
 python3 "${ROOT_DIR}/tests/test-capabilities.py"
+python3 "${ROOT_DIR}/tests/test-doctor.py"
 python3 "${ROOT_DIR}/tests/test-user-profile.py"
 python3 "${ROOT_DIR}/tests/test-orchestration.py"
 python3 "${ROOT_DIR}/tests/test-vm-evidence.py"
