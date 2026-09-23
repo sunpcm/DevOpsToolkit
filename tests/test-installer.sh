@@ -107,6 +107,9 @@ PY
       printf '\n' >>"${stage}/devops-toolkit/ansible/collections.lock.json"
     fi
   fi
+  if [[ "${collection_mode}" == "world-writable" ]]; then
+    chmod 0777 "${stage}/devops-toolkit/VERSION"
+  fi
   mkdir -p "${output_dir}"
   COPYFILE_DISABLE=1 tar -C "${stage}" -czf "${output_dir}/devops-toolkit.tar.gz" devops-toolkit
   printf '%s  devops-toolkit.tar.gz\n' \
@@ -196,12 +199,14 @@ RELEASE_LEGACY="${TMP_DIR}/release-legacy"
 RELEASE_INVALID_BUNDLE="${TMP_DIR}/release-invalid-bundle"
 RELEASE_INVALID_MARKER="${TMP_DIR}/release-invalid-marker"
 RELEASE_INVALID_LOCK="${TMP_DIR}/release-invalid-lock"
+RELEASE_WORLD_WRITABLE="${TMP_DIR}/release-world-writable"
 make_release v0.1.0 "${RELEASE_V1}"
 make_release v0.2.0 "${RELEASE_V2}"
 make_release v0.0.9 "${RELEASE_LEGACY}" legacy
 make_release v0.3.0 "${RELEASE_INVALID_BUNDLE}" invalid-bundle
 make_release v0.3.1 "${RELEASE_INVALID_MARKER}" invalid-marker
 make_release v0.3.2 "${RELEASE_INVALID_LOCK}" invalid-lock
+make_release v0.3.3 "${RELEASE_WORLD_WRITABLE}" world-writable
 
 DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${RELEASE_V1}" \
   "${INSTALLER}" --user --no-run --version v0.1.0
@@ -238,6 +243,19 @@ DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${RELEASE_V1}" \
   fail "重复安装重建了隔离 runtime"
 [[ "$(wc -l <"${DEVOPS_TOOLKIT_TEST_GALAXY_LOG}" | tr -d ' ')" == "0" ]] || \
   fail "内置 collections 的安装或重复安装仍调用了 Galaxy"
+
+MODE_HOME="${TMP_DIR}/world-writable-home"
+mkdir -p "${MODE_HOME}"
+HOME="${MODE_HOME}" DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${RELEASE_WORLD_WRITABLE}" \
+  "${INSTALLER}" --user --no-run --version v0.3.3 >/dev/null
+python3 - "${MODE_HOME}" <<'PY'
+import stat
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1]) / ".local/share/devops-toolkit/releases/v0.3.3/VERSION"
+assert stat.S_IMODE(path.stat().st_mode) & 0o022 == 0
+PY
 
 # A tampered Cosign cache must be replaced from the pinned, verified source.
 COSIGN_CACHE="$(find "${HOME}/.local/share/devops-toolkit/tools" -type f -name 'cosign-v3.1.1-*' -print -quit)"

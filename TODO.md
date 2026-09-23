@@ -133,6 +133,10 @@ SSH/UFW/Docker/Nginx 和故障恢复见
 
 ### P1-5：完成真实升级与回滚闭环
 
+首次 24.04 临时 VM 验证发现真实 `v0.1.4` Release 安装后目录由归档的 UID 1001 持有；
+安装器本地修复与仍需重跑的验收见
+[`archive/progress/2026-09-23-installer-system-ownership.md`](archive/progress/2026-09-23-installer-system-ownership.md)。
+
 - [ ] 在真实临时 VM 从 `v0.1.4` 升级到 `v0.1.7` 或后续受保护版本。
 - [ ] 验证 latest 与 `--version` 两条安装路径、SHA256、Sigstore 身份、三个 Release 资产和普通用户 `devops-toolkit --version`。
 - [ ] 验证旧版本目录保留、相同版本重复安装幂等、不同版本原子切换，并按文档原子回滚后再次运行命令。

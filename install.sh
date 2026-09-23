@@ -401,6 +401,7 @@ verify_sigstore_signature() {
 extract_archive_safely() {
   mkdir -m 0700 "${TEMP_DIR}/extracted"
   python3 - "${TEMP_DIR}/${ARCHIVE_NAME}" "${TEMP_DIR}/extracted" <<'PY'
+import os
 import sys
 import tarfile
 from pathlib import PurePosixPath
@@ -418,6 +419,13 @@ with tarfile.open(archive, "r:gz") as package:
             raise SystemExit(f"unexpected archive root: {member.name}")
         if not (member.isfile() or member.isdir()):
             raise SystemExit(f"unsupported archive entry: {member.name}")
+        # Release archives are built on a CI runner whose numeric UID/GID must
+        # never become the owner of a root-installed executable directory.
+        member.uid = os.geteuid()
+        member.gid = os.getegid()
+        member.uname = ""
+        member.gname = ""
+        member.mode = (member.mode & 0o755) | (0o700 if member.isdir() else 0o600)
     package.extractall(destination)
 PY
 }
@@ -495,8 +503,19 @@ install_release() {
   staging_dir="${releases_dir}/.install-${release_version}-$$"
   current_link="${base_dir}/current"
   launcher_link="${bin_dir}/devops-toolkit"
+  if [[ "${INSTALL_MODE}" == "system" ]]; then
+    [[ ! -L "${base_dir}" && ! -L "${releases_dir}" ]] || \
+      fail "系统安装根目录或 releases 目录不能是符号链接。"
+  fi
   mkdir -p "${releases_dir}"
   chmod 0755 "${base_dir}" "${releases_dir}"
+  if [[ "${INSTALL_MODE}" == "system" ]]; then
+    local unsafe_root
+    unsafe_root="$(find "${base_dir}" "${releases_dir}" -maxdepth 0 \
+      \( ! -uid 0 -o ! -gid 0 -o -perm -020 -o -perm -002 \) -print -quit)"
+    [[ -z "${unsafe_root}" ]] || \
+      fail "系统安装目录必须由 root 持有且不可由组/其他用户写入：${unsafe_root}。"
+  fi
   if [[ ! -d "${bin_dir}" ]]; then
     mkdir -p "${bin_dir}"
     chmod 0755 "${bin_dir}"
@@ -521,10 +540,23 @@ install_release() {
     rm -rf "${staging_dir}"
     mkdir -m 0755 "${staging_dir}"
     cp -a "${source_dir}/." "${staging_dir}/"
+    if [[ "${INSTALL_MODE}" == "system" ]]; then
+      chown -R 0:0 "${staging_dir}"
+    fi
     chmod 0755 "${staging_dir}"
     printf '%s\n' "${verified_sha}" >"${staging_dir}/.release-sha256"
     chmod 0755 "${staging_dir}/bin/devops-toolkit"
     collection_root="${staging_dir}"
+  fi
+
+  if [[ "${INSTALL_MODE}" == "system" ]]; then
+    local unsafe_entry
+    unsafe_entry="$(find "${collection_root}" \
+      \( -type l -o ! -uid 0 -o ! -gid 0 -o -perm -020 -o -perm -002 \) \
+      -print -quit)"
+    if [[ -n "${unsafe_entry}" && "${collection_root}" != "${staging_dir}" ]]; then
+      fail "已有系统版本包含非 root 所有权、可写权限或符号链接，拒绝复用：${unsafe_entry}。请先从可信 Release 重建该版本。"
+    fi
   fi
 
   if [[ -f "${collection_root}/.collections-ready" ]]; then
@@ -552,9 +584,17 @@ install_release() {
     printf '%s\n' "${verified_sha}" >"${collection_root}/.collections-ready"
   fi
 
-  find "${collection_root}" -type d -exec chmod a+rx {} +
-  find "${collection_root}" -type f -exec chmod a+r {} +
+  find "${collection_root}" -type d -exec chmod a+rx,go-w {} +
+  find "${collection_root}" -type f -exec chmod a+r,go-w {} +
   chmod 0600 "${collection_root}/.release-sha256" "${collection_root}/.collections-ready"
+
+  if [[ "${INSTALL_MODE}" == "system" ]]; then
+    unsafe_entry="$(find "${collection_root}" \
+      \( -type l -o ! -uid 0 -o ! -gid 0 -o -perm -020 -o -perm -002 \) \
+      -print -quit)"
+    [[ -z "${unsafe_entry}" ]] || \
+      fail "系统版本权限验证失败，current 未切换：${unsafe_entry}。"
+  fi
 
   if [[ "${collection_root}" == "${staging_dir}" ]]; then
     mv "${staging_dir}" "${target_dir}"
