@@ -134,12 +134,14 @@ SSH/UFW/Docker/Nginx 和故障恢复见
 ### P1-5：完成真实升级与回滚闭环
 
 首次 24.04 临时 VM 验证发现真实 `v0.1.4` Release 安装后目录由归档的 UID 1001 持有；
-安装器本地修复与仍需重跑的验收见
+安装器本地修复及其复测过程见
 [`archive/progress/2026-09-23-installer-system-ownership.md`](archive/progress/2026-09-23-installer-system-ownership.md)。
 
-- [ ] 在真实临时 VM 从 `v0.1.4` 升级到 `v0.1.7` 或后续受保护版本。
-- [ ] 验证 latest 与 `--version` 两条安装路径、SHA256、Sigstore 身份、三个 Release 资产和普通用户 `devops-toolkit --version`。
-- [ ] 验证旧版本目录保留、相同版本重复安装幂等、不同版本原子切换，并按文档原子回滚后再次运行命令。
+从干净提交 `c2132d5` 在一次性 Ubuntu 24.04 VM 完成真实 `v0.1.4 → v0.1.7`、
+latest/固定版本、签名校验、重复安装、普通用户入口及原子回滚/前滚；见
+[`archive/progress/2026-09-23-upgrade-rollback-p1-5.md`](archive/progress/2026-09-23-upgrade-rollback-p1-5.md)。
+下列 macOS 系统安装边界仍未实测，因此 P1-5 不关闭。
+
 - [ ] 记录 macOS `sudo --system` 安装后普通用户解析 launcher 符号链接的真实结果。
 
 验收证据：将命令、环境、版本、关键输出和失败边界写入 `archive/progress/`；不得包含 Token、私钥、密码或用户真实主机信息。
