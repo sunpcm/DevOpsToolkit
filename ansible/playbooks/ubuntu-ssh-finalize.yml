@@ -67,11 +67,6 @@
           ansible.builtin.wait_for_connection:
             timeout: 45
 
-        - name: Remove the temporary SSH firewall guard after full success
-          ansible.builtin.include_role:
-            name: firewall
-            tasks_from: ssh-finalize-guard-absent
-          when: enable_firewall | bool
       rescue:
         - name: Drop the SSH control connection before recovery verification
           ansible.builtin.meta: reset_connection
@@ -97,3 +92,9 @@
               if enable_firewall | bool else 'sudo sshd -T' }}'.
               Then rerun ubuntu-ssh-finalize with the same inventory and extra vars;
               do not assume the old root port is still available.
+
+    - name: Remove the temporary SSH firewall guard after full success
+      ansible.builtin.include_role:
+        name: firewall
+        tasks_from: ssh-finalize-guard-absent
+      when: enable_firewall | bool

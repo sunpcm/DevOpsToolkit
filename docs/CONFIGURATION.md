@@ -234,6 +234,9 @@ sudo ufw app info DevOpsToolkitSSHFinalizeGuard
 sudo systemctl status ssh.service ssh.socket --no-pager
 ```
 
+如果仅临时 guard 清理失败，主 profile 与新连接已在此前验证；仍应检查实际状态，
+不要把清理错误误认为旧端口已恢复，也不要手工删除未知的 UFW 规则。
+
 如果要删除管理配置，先验证主配置和其他 drop-in 能维持正确登录方式：
 
 ```bash
