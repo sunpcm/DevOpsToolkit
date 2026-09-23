@@ -41,6 +41,11 @@ multipass() {
   printf '%s\n' "$*" >>"${TMP_DIR}/multipass.log"
   return 0
 }
+configure_test_hosts "${ACTIVE_INSTANCES[0]}"
+grep -Fq "sudo sh -c grep -Fqx '91.189.92.19 ports.ubuntu.com'" \
+  "${TMP_DIR}/multipass.log"
+grep -Fq "sudo sh -c grep -Fqx '3.169.231.109 download.docker.com'" \
+  "${TMP_DIR}/multipass.log"
 
 if ! (report_exit 0); then
   echo "错误：成功退出被错误标记为失败。" >&2

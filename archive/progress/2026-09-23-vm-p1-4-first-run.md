@@ -48,5 +48,10 @@ Docker 官方 GPG URL 返回 HTTP 200。诊断 VM 已删除，`multipass list --
 测试脚本现支持 `MULTIPASS_TEST_HOSTS`，只接受上述两个官方域名及公网 IPv4，且只写入严格
 命名的一次性 VM；映射会写进报告。地址需要在每次运行前重新查询，不用于生产主机。
 
+第二轮完整 smoke 从干净提交 `dcdc5f2` 启动了两台 VM，但在 DNS 覆盖的第一条写入后等待：
+`multipass exec ... sudo tee` 的标准输入没有结束，第二条映射未写入。确认阻塞点后发送 SIGINT；
+报告为 `result=failed`、`cleanup_status=passed`，实例列表再次为空。测试脚本现改为经过白名单
+校验的 `sudo sh -c` 非交互写入，并由本地测试检查两条命令均生成；完整 E2E 仍需重跑。
+
 GitHub 专用 `self-hosted,multipass` runner 尚未接入，计划任务与 Release 同 SHA 门禁还没有远端运行证据。
 Release workflow 会在缺少近期同 SHA 成功报告时 fail closed。

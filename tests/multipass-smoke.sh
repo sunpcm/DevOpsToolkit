@@ -249,8 +249,8 @@ configure_test_hosts() {
   for entry in "${entries[@]}"; do
     host="${entry%%=*}"
     ip="${entry#*=}"
-    printf '%s %s\n' "${ip}" "${host}" | \
-      multipass exec "${instance}" -- sudo tee -a /etc/hosts >/dev/null
+    multipass exec "${instance}" -- sudo sh -c \
+      "grep -Fqx '${ip} ${host}' /etc/hosts || printf '%s\\n' '${ip} ${host}' >>/etc/hosts"
   done
   echo "${instance}: 已加入一次性 VM 测试 DNS 覆盖：${TEST_HOSTS}"
 }
