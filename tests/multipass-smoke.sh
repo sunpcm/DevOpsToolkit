@@ -552,7 +552,9 @@ EOF
   "${ROOT_DIR}/bin/ubuntu-bootstrap" "${initial_inventory}" "${TARGET_USER}" \
     -e "@${vars_file}"
 
-  ssh-keyscan -p "${MANAGED_SSH_PORT}" -H "${ip}" >"${known_hosts}" 2>/dev/null
+  # Keep the trusted old-port entry until the negative finalize check has
+  # proved that fallback SSH remains reachable.
+  ssh-keyscan -p "${MANAGED_SSH_PORT}" -H "${ip}" >>"${known_hosts}" 2>/dev/null
   write_inventory "${target_inventory}" "${instance}" "${ip}" \
     "${MANAGED_SSH_PORT}" "${key_file}" "${known_hosts}" "${TARGET_USER}"
   if ((TEST_FAULTS == 1)); then
