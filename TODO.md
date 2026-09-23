@@ -166,6 +166,8 @@ latest/固定版本、签名校验、重复安装、普通用户入口及原子�
 机器可读能力协议的本地用例与输出边界见 [`docs/INSTALLATION.md`](docs/INSTALLATION.md)；
 提交、测试结果与远端边界见
 [`archive/progress/2026-09-23-capabilities-p2-local.md`](archive/progress/2026-09-23-capabilities-p2-local.md)。
+只读 doctor 的实现、模拟 SSH 测试和真实目标未验收边界见
+[`archive/progress/2026-09-23-doctor-p2-local.md`](archive/progress/2026-09-23-doctor-p2-local.md)。
 
 ## 完成规则
 
