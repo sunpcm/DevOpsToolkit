@@ -117,10 +117,12 @@
 ### P1-4：自动化真实环境回归
 
 本地代码提交 `b41a1e6` 已增加 PR 阶段编排测试、专用 Multipass runner workflow、机器可读报告、
-失败清理与 Release 同 SHA 报告门禁。真实 VM 已越过最初的 22.04 apt 网络问题，第三轮在 Docker
-官方 GPG 下载时遭遇直连重置，实例均已清理；
-详见 [`archive/progress/2026-09-23-vm-p1-4-first-run.md`](archive/progress/2026-09-23-vm-p1-4-first-run.md)。
-以下验收项在完整 E2E 和远端 runner 实际运行前保持开放。
+失败清理与 Release 同 SHA 报告门禁。早期网络失败与自动清理见
+[`archive/progress/2026-09-23-vm-p1-4-first-run.md`](archive/progress/2026-09-23-vm-p1-4-first-run.md)；
+从干净提交 `f40192f` 经一次性 VM 代理完成的 22.04/24.04 首次配置、二次 `changed=0`、
+SSH/UFW/Docker/Nginx 和故障恢复见
+[`archive/progress/2026-09-23-vm-p1-4-proxy-e2e.md`](archive/progress/2026-09-23-vm-p1-4-proxy-e2e.md)。
+以下验收项在远端 runner、PR 与 Release gate 实际运行前保持开放。
 
 - [ ] PR 阶段增加可快速运行的 role/向导组合测试；不得只测试少量辅助函数。
 - [ ] 每周或发布前在一次性 VM 运行 `tests/multipass-smoke.sh`：首次收敛、二次 `changed=0`、SSH/UFW、Docker/Nginx 和故障恢复。
