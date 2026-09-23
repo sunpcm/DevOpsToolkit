@@ -26,6 +26,7 @@ Options:
   --no-run           Install only; do not launch the interactive wizard.
   --user             Install below ~/.local without privilege escalation.
   --system           Install below /opt and /usr/local/bin; requires root.
+  --capabilities-json  Print machine-readable installer capabilities; no changes.
   -h, --help         Show this help.
 
 Environment:
@@ -55,6 +56,10 @@ cleanup() {
 }
 
 parse_args() {
+  if [[ "${1:-}" == "--capabilities-json" && $# -eq 1 ]]; then
+    printf '{"schema":1,"component":"installer","version":null,"ansible_core":"%s","installation_modes":["user","system"],"controller":{"macos":{"architectures":["arm64","x86_64"],"python":"3.12-3.14"},"ubuntu":{"versions":["24.04"],"architectures":["aarch64","x86_64"],"python":"3.12-3.14"}},"verification":["sha256","sigstore-identity"]}\n' "${ANSIBLE_CORE_VERSION}"
+    exit 0
+  fi
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --version)
@@ -77,6 +82,9 @@ parse_args() {
       -h|--help)
         usage
         exit 0
+        ;;
+      --capabilities-json)
+        fail "--capabilities-json 不能与安装参数组合。"
         ;;
       *)
         fail "未知参数：$1"

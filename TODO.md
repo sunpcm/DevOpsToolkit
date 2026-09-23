@@ -152,7 +152,7 @@ latest/固定版本、签名校验、重复安装、普通用户入口及原子�
 ## P2：维护性与文档一致性
 
 - [ ] 严格区分 WSL1/WSL2，并在任何 apt/system 变更前验证受支持的发行版、版本和架构。
-- [ ] 为安装器、向导和 Playbook 定义稳定的机器可读版本/能力输出，便于批量审计已安装节点。
+- [ ] 在新签名 Release 中验证安装器、向导和 Playbook 的 `--capabilities-json` 协议；本地实现与包测试不能证明远端资产已更新。
 - [ ] 设计只读 `doctor`/preflight 命令：检查控制端 runtime、collections、SSH 配置、目标 OS、磁盘、网络和权限，不执行配置变更。
 - [ ] 在 P0-1 真实环境门槛通过后，将 `AcmeConfig/` 迁入受保护的独立仓库与签名 Release，迁移主线 CI/README 引用；不把证书生命周期塞进主线 Ansible role。
 
@@ -163,6 +163,7 @@ latest/固定版本、签名校验、重复安装、普通用户入口及原子�
 [`archive/progress/2026-09-23-release-doc-version-cleanup.md`](archive/progress/2026-09-23-release-doc-version-cleanup.md)。
 平台预检的本地实现、拒绝矩阵与尚缺的真实 WSL2 验收见
 [`archive/progress/2026-09-23-platform-preflight-p2.md`](archive/progress/2026-09-23-platform-preflight-p2.md)。
+机器可读能力协议的本地用例与输出边界见 [`docs/INSTALLATION.md`](docs/INSTALLATION.md)。
 
 ## 完成规则
 

@@ -83,6 +83,23 @@ test -f "${PACKAGE}/collections/.bundled-collections"
 test -f "${PACKAGE}/collections/ansible_collections/ansible/posix/MANIFEST.json"
 test -f "${PACKAGE}/collections/ansible_collections/community/general/MANIFEST.json"
 test -f "${PACKAGE}/collections/ansible_collections/community/library_inventory_filtering_v1/MANIFEST.json"
+python3 - "${PACKAGE}" <<'PY'
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+package = Path(sys.argv[1])
+for name, component in (("devops-toolkit", "wizard"), ("ubuntu-bootstrap", "playbook")):
+    output = subprocess.check_output(
+        [str(package / "bin" / name), "--capabilities-json"], text=True
+    )
+    info = json.loads(output)
+    assert info["schema"] == 1
+    assert info["version"] == "v0.1.0"
+    assert info["component"] == component
+    assert info["ansible_core"] == "2.21.4"
+PY
 grep -E '^lock-sha256=[0-9a-f]{64}$' "${PACKAGE}/collections/.bundled-collections" >/dev/null
 python3 "${ROOT_DIR}/scripts/verify-collection-lock.py" \
   --lock "${PACKAGE}/ansible/collections.lock.json" \

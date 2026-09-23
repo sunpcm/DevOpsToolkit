@@ -147,6 +147,26 @@ export PATH="${PWD}/.venv/bin:${PATH}"
 
 源码入口的 `devops-toolkit --version` 显示 `development`；Release 安装显示对应 tag。
 
+## 批量审计的机器可读输出
+
+以下命令只读取脚本及包内元数据，不下载、不连接目标机、不执行 Playbook：
+
+```bash
+bash install.sh --capabilities-json
+./bin/devops-toolkit --capabilities-json
+./bin/ubuntu-bootstrap --capabilities-json
+./bin/wsl-bootstrap --capabilities-json
+./bin/user-only --capabilities-json
+```
+
+输出为单行 JSON，`schema=1`。安装器是可单独下载的脚本，不知道当前已安装的 Release，
+所以 `component=installer` 时 `version=null`；安装后的向导和 Playbook 包装入口从签名包内
+`VERSION` 读取具体 tag，源码 checkout 显示 `development`。包装入口的 `entrypoint` 指出
+具体 Playbook；`collections` 从包内 lock 文件读取。该输出描述**支持能力**，不表示本机
+runtime、collections、SSH 或目标 OS 现状已经通过检查；运行状态须由未来的只读 doctor
+和真实环境验收证明。`--version` 在安装器中仍表示选择要安装的 Release，不是查询命令。
+`schema=1` 的字段名与类型保持兼容；如需不兼容变更，必须升级 schema 并同步批量审计脚本。
+
 ## 安全边界
 
 - 临时下载目录权限为 `0700`，资产文件为 `0600`。

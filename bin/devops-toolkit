@@ -55,6 +55,13 @@ PUBLIC_KEY_PREFIXES = (
     "sk-ssh-ed25519@openssh.com ",
     "sk-ecdsa-sha2-nistp256@openssh.com ",
 )
+PLAYBOOK_CAPABILITIES = {
+    "wsl-bootstrap": {"mode": "wsl", "playbook": "wsl-bootstrap.yml"},
+    "ubuntu-bootstrap": {"mode": "ubuntu", "playbook": "ubuntu-bootstrap.yml"},
+    "ubuntu-ssh-finalize": {"mode": "ubuntu", "playbook": "ubuntu-ssh-finalize.yml"},
+    "user-only": {"mode": "user-only", "playbook": "user-only.yml"},
+    "user-only-remove": {"mode": "user-only", "playbook": "user-only-remove.yml"},
+}
 
 
 class WizardError(RuntimeError):
@@ -68,6 +75,47 @@ def toolkit_version() -> str:
         if value:
             return value
     return "development"
+
+
+def capabilities_document(entrypoint: str | None = None) -> dict[str, Any]:
+    """Describe supported behavior, not the state of the current machine."""
+    if entrypoint is not None and entrypoint not in PLAYBOOK_CAPABILITIES:
+        raise WizardError(f"未知 Playbook 入口：{entrypoint}")
+    lock = json.loads((ANSIBLE_DIR / "collections.lock.json").read_text(encoding="utf-8"))
+    return {
+        "schema": 1,
+        "component": "playbook" if entrypoint else "wizard",
+        "version": toolkit_version(),
+        "entrypoint": entrypoint,
+        "ansible_core": "2.21.4",
+        "collections": {
+            item["name"]: item["version"] for item in lock["collections"]
+        },
+        "controller": {
+            "macos": {"architectures": ["arm64", "x86_64"], "python": "3.12-3.14"},
+            "ubuntu": {
+                "versions": ["24.04"],
+                "architectures": ["aarch64", "x86_64"],
+                "python": "3.12-3.14",
+            },
+        },
+        "targets": {
+            "wsl": {
+                "generation": 2,
+                "ubuntu_versions": ["24.04"],
+                "architectures": ["aarch64", "x86_64"],
+            },
+            "ubuntu": {
+                "versions": ["22.04", "24.04"],
+                "architectures": ["aarch64", "x86_64"],
+            },
+            "user-only": {
+                "requires_non_root": True,
+                "system_dependency_ubuntu_versions": ["22.04", "24.04"],
+            },
+        },
+        "playbooks": PLAYBOOK_CAPABILITIES,
+    }
 
 
 def operator_home() -> Path:
@@ -823,7 +871,7 @@ def run_wizard() -> int:
 
 def print_help() -> None:
     print(
-        "用法：devops-toolkit [--help|--version]\n\n"
+        "用法：devops-toolkit [--help|--version|--capabilities-json]\n\n"
         "交互选择 WSL2、Ubuntu 或 user-only 模式、认证方式和安装组件。\n"
         "敏感变量只写入权限为 0600 的临时文件，并在执行结束后删除。\n"
         "成功后仅在 ~/.config/devops-toolkit 中保存非敏感的向导默认值。"
@@ -837,6 +885,20 @@ def main() -> int:
             return 0
         if sys.argv[1] == "--version":
             print(toolkit_version())
+            return 0
+        if sys.argv[1] == "--capabilities-json":
+            if len(sys.argv) == 2:
+                entrypoint = None
+            elif len(sys.argv) == 4 and sys.argv[2] == "--entrypoint":
+                entrypoint = sys.argv[3]
+            else:
+                print_help()
+                return 2
+            try:
+                print(json.dumps(capabilities_document(entrypoint), sort_keys=True))
+            except (OSError, ValueError, KeyError, WizardError) as exc:
+                print(f"错误：无法读取能力信息：{exc}", file=sys.stderr)
+                return 1
             return 0
         print_help()
         return 2
