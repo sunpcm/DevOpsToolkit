@@ -1,4 +1,4 @@
-# P1-1 两阶段 SSH 最终本地 VM 验收
+# P1-1 两阶段 SSH 主路径本地 VM 验收
 
 日期：2026-09-23。源码：干净提交 `0704fbb8fd297bce4b98c8685bca37b669539bc9`，
 macOS arm64 控制端、ansible-core 2.21.4、Multipass Ubuntu 22.04.5 / 24.04.5
@@ -36,4 +36,6 @@ Docker 官方 HTTPS URL 两次独立获取相同字节，公钥指纹为
 `9DC8 5822 9FC7 DD38 854A E2D8 8D81 803C 0EBF CD88`。轮换时须重新核对并更新固定摘要。
 
 边界：本次 `test_uv=0`；不是 PR runner、GitHub Release、真实生产主机或生产
-SSH/防火墙回滚演练。P1-4 远端计划任务和 Release gate 仍需独立验收。
+SSH/防火墙回滚演练。尤其没有在 finalize 已切换 SSH、随后 UFW 更新之前注入失败；
+该窗口的旧端口/认证方式回退尚未验证，P1-1 仍开放。P1-4 远端计划任务和 Release gate
+也需独立验收。
