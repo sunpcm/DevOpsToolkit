@@ -5,6 +5,15 @@
   vars_files:
     - ../group_vars/all.yml
   pre_tasks:
+    - name: Require a supported Ubuntu managed platform before system changes
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['distribution'] == 'Ubuntu'
+          - ansible_facts['distribution_version'] in ['22.04', '24.04']
+          - ansible_facts['architecture'] in ['x86_64', 'aarch64']
+        fail_msg: >-
+          ubuntu-bootstrap supports only Ubuntu 22.04/24.04 on x86_64 or aarch64.
+
     - name: Require root or the managed sudo account and an explicit target account
       ansible.builtin.assert:
         that:

@@ -433,5 +433,48 @@ fi
 grep -Fx 'update' "${APT_LOG}" >/dev/null
 grep -Fx 'install -y python3 python3-venv git curl ca-certificates openssl sshpass' "${APT_LOG}" >/dev/null
 
+# Platform checks run before any apt/runtime/system installation. WSL1 and
+# unsupported Linux distributions cannot be mistaken for supported WSL2.
+assert_platform() (
+  local test_os="$1" test_arch="$2" test_id="$3" test_version="$4" test_kernel="$5"
+  source "${ROOT_DIR}/install.sh"
+  uname() {
+    case "$1" in
+      -s) printf '%s\n' "${test_os}" ;;
+      -m) printf '%s\n' "${test_arch}" ;;
+      *) return 1 ;;
+    esac
+  }
+  read_controller_os_release() { printf '%s %s\n' "${test_id}" "${test_version}"; }
+  controller_kernel_release() { printf '%s\n' "${test_kernel}"; }
+  check_controller_platform
+)
+assert_platform Linux x86_64 ubuntu 24.04 6.8.0-generic || fail "Ubuntu 24.04 被错误拒绝"
+assert_platform Linux aarch64 ubuntu 24.04 5.15-microsoft-standard-WSL2 || \
+  fail "WSL2 Ubuntu 24.04 被错误拒绝"
+assert_platform Darwin arm64 ignored ignored ignored || fail "macOS arm64 被错误拒绝"
+for platform in \
+  'Linux x86_64 ubuntu 22.04 6.8.0-generic' \
+  'Linux x86_64 debian 24.04 6.8.0-generic' \
+  'Linux ppc64le ubuntu 24.04 6.8.0-generic' \
+  'Linux x86_64 ubuntu 24.04 4.4-microsoft'; do
+  # Deliberately split the fixed five-field test tuple.
+  # shellcheck disable=SC2086
+  if assert_platform ${platform} >/dev/null 2>&1; then
+    fail "不支持的平台未被拒绝：${platform}"
+  fi
+done
+GUARD_MARKER="${TMP_DIR}/platform-guard-was-bypassed"
+if (
+  source "${ROOT_DIR}/install.sh"
+  check_controller_platform() { return 1; }
+  check_controller_python() { : >"${GUARD_MARKER}"; }
+  ensure_dependencies() { : >"${GUARD_MARKER}"; }
+  main --user --no-run
+) >/dev/null 2>&1; then
+  fail "平台检查失败后安装器仍继续执行"
+fi
+[[ ! -e "${GUARD_MARKER}" ]] || fail "平台检查未在依赖安装前运行"
+
 "${ROOT_DIR}/install.sh" --help >/dev/null
 echo "安装器测试通过。"

@@ -147,6 +147,8 @@
 
 版本示例与历史版本边界的修订证据见
 [`archive/progress/2026-09-23-release-doc-version-cleanup.md`](archive/progress/2026-09-23-release-doc-version-cleanup.md)。
+平台预检的本地实现、拒绝矩阵与尚缺的真实 WSL2 验收见
+[`archive/progress/2026-09-23-platform-preflight-p2.md`](archive/progress/2026-09-23-platform-preflight-p2.md)。
 
 ## 完成规则
 

@@ -13,6 +13,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import yaml
+
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 wizard = runpy.run_path(str(ROOT_DIR / "bin" / "devops-toolkit"))
@@ -184,6 +186,88 @@ def test_playbook_role_matrix() -> None:
             assert expected_task in result.stdout, result.stdout
 
 
+def test_platform_guards_before_system_changes() -> None:
+    playbook_dir = ROOT_DIR / "ansible/playbooks"
+    cases = {
+        "wsl-bootstrap.yml": ("24.04",),
+        "ubuntu-bootstrap.yml": ("22.04", "24.04"),
+        "ubuntu-ssh-finalize.yml": ("22.04", "24.04"),
+        "user-only.yml": ("22.04", "24.04"),
+    }
+    with tempfile.TemporaryDirectory(prefix="devops-toolkit-platform-") as directory:
+        temporary = Path(directory)
+        environment = os.environ.copy()
+        environment["ANSIBLE_CONFIG"] = str(ROOT_DIR / "ansible/ansible.cfg")
+        environment["ANSIBLE_LOCAL_TEMP"] = str(temporary / "ansible-local")
+
+        def check(task: dict[str, Any], facts: dict[str, str], succeeds: bool) -> None:
+            isolated = dict(task)
+            isolated.pop("when", None)
+            payload = [{"hosts": "localhost", "gather_facts": False, "tasks": [isolated]}]
+            path = temporary / "guard.yml"
+            path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+            result = subprocess.run(
+                [
+                    "ansible-playbook",
+                    "-i",
+                    "localhost,",
+                    "-c",
+                    "local",
+                    str(path),
+                    "-e",
+                    json.dumps({"ansible_facts": facts, "wsl_kernel_release": facts}),
+                ],
+                env=environment,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            assert (result.returncode == 0) is succeeds, result.stdout + result.stderr
+
+        for playbook_name, supported_versions in cases.items():
+            playbook = yaml.safe_load((playbook_dir / playbook_name).read_text(encoding="utf-8"))
+            pre_tasks = playbook[0]["pre_tasks"]
+            guard_index = next(
+                index for index, task in enumerate(pre_tasks)
+                if "supported" in task["name"].lower()
+            )
+            assert guard_index <= 1, playbook_name
+            guard = pre_tasks[guard_index]
+            assert "ansible.builtin.assert" in guard, playbook_name
+            if playbook_name == "user-only.yml":
+                assert guard["when"] == "user_only_allow_system_dependencies | bool"
+            for version in supported_versions:
+                for architecture in ("x86_64", "aarch64"):
+                    check(
+                        guard,
+                        {
+                            "distribution": "Ubuntu",
+                            "distribution_version": version,
+                            "architecture": architecture,
+                        },
+                        True,
+                    )
+            for facts in (
+                {"distribution": "Debian", "distribution_version": "24.04", "architecture": "x86_64"},
+                {"distribution": "Ubuntu", "distribution_version": "20.04", "architecture": "x86_64"},
+                {"distribution": "Ubuntu", "distribution_version": "24.04", "architecture": "ppc64le"},
+            ):
+                check(guard, facts, False)
+
+        wsl = yaml.safe_load((playbook_dir / "wsl-bootstrap.yml").read_text(encoding="utf-8"))
+        pre_tasks = wsl[0]["pre_tasks"]
+        assert pre_tasks[2]["ansible.builtin.command"] == "cat /proc/sys/kernel/osrelease"
+        assert pre_tasks[2]["changed_when"] is False
+        marker_guard = pre_tasks[3]
+        for marker, succeeds in (
+            ("5.15.167.4-microsoft-standard-WSL2", True),
+            ("4.4.0-19041-Microsoft", False),
+            ("6.8.0-generic", False),
+        ):
+            check(marker_guard, {"stdout": marker}, succeeds)
+
+
 test_wizard_executes_prepare_and_finalize()
 test_playbook_role_matrix()
+test_platform_guards_before_system_changes()
 print("向导编排与 Playbook/role 组合测试通过。")

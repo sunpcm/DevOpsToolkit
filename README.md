@@ -70,6 +70,9 @@ sudo apt install -y sshpass
 export PATH="${PWD}/.venv/bin:${PATH}"
 ```
 
+Linux 控制端仅支持 x86_64/aarch64 的 Ubuntu 24.04；WSL 初始化还要求可验证的 WSL2 内核，
+WSL1 会在任何 apt/系统配置前被拒绝。远程受管 Ubuntu 22.04/24.04 也只支持这两种架构。
+
 macOS 源码控制端同样使用隔离 runtime；先确认 `python3 --version` 为 3.12–3.14：
 
 ```bash

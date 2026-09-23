@@ -35,7 +35,10 @@ export PATH="$HOME/.local/bin:$PATH"
 
 普通用户安装绝不提权。控制端需要 Python 3.12–3.14（含 `venv`）、Git、curl 和 OpenSSL。
 安装器在自有目录创建 `ansible-core==2.21.4` 隔离 runtime，不修改系统 Python；重复安装复用已经自检的 runtime。
-Ubuntu 22.04 / Python 3.10 可作为远程受管目标，但不支持本机或 WSL 控制端模式。推荐 Ubuntu 24.04 控制端。
+Ubuntu 22.04 / Python 3.10 可作为远程受管目标，但不支持本机或 WSL 控制端模式。Linux 控制端
+只支持 x86_64/aarch64 的 Ubuntu 24.04；macOS 控制端支持 x86_64/arm64。WSL 初始化只支持
+Ubuntu 24.04 + WSL2，WSL1 会在任何 apt 或系统配置前被拒绝。user-only 的可选系统依赖安装
+只允许 x86_64/aarch64 的 Ubuntu 22.04/24.04；纯 HOME 模式不需要该 apt 边界。
 这项迁移尚未发布；已发布的 `v0.1.7` 仍按其签名包内代码运行，不能把本段当作该版本的运行时保证。
 
 ## 安装器验证顺序

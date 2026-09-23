@@ -127,6 +127,50 @@ check_controller_python() {
     fail "控制端需要 Python 3.12–3.14；Ubuntu 22.04/Python 3.10 仅支持作为远程受管目标。"
 }
 
+read_controller_os_release() {
+  local key value os_id="" os_version=""
+  [[ -r /etc/os-release ]] || fail "Linux 控制端缺少 /etc/os-release，拒绝安装。"
+  while IFS='=' read -r key value; do
+    value="${value#\"}"
+    value="${value%\"}"
+    case "${key}" in
+      ID) os_id="${value}" ;;
+      VERSION_ID) os_version="${value}" ;;
+    esac
+  done </etc/os-release
+  printf '%s %s\n' "${os_id}" "${os_version}"
+}
+
+controller_kernel_release() {
+  [[ -r /proc/sys/kernel/osrelease ]] || fail "无法确认 Linux 内核版本，拒绝安装。"
+  cat /proc/sys/kernel/osrelease
+}
+
+check_controller_platform() {
+  local operating_system architecture os_id os_version kernel_release
+  operating_system="$(uname -s)"
+  architecture="$(uname -m)"
+  case "${operating_system}" in
+    Darwin)
+      [[ "${architecture}" == x86_64 || "${architecture}" == arm64 ]] || \
+        fail "macOS 控制端只支持 x86_64 或 arm64。"
+      ;;
+    Linux)
+      read -r os_id os_version < <(read_controller_os_release)
+      [[ "${os_id}" == ubuntu && "${os_version}" == 24.04 ]] || \
+        fail "Linux 控制端只支持 Ubuntu 24.04；Ubuntu 22.04 仅支持作为远程受管目标。"
+      [[ "${architecture}" == x86_64 || "${architecture}" == aarch64 ]] || \
+        fail "Ubuntu 控制端只支持 x86_64 或 aarch64。"
+      kernel_release="$(controller_kernel_release)"
+      if [[ "$(printf '%s' "${kernel_release}" | tr '[:upper:]' '[:lower:]')" == *microsoft* ]]; then
+        [[ "$(printf '%s' "${kernel_release}" | tr '[:upper:]' '[:lower:]')" == *microsoft*wsl2* ]] || \
+          fail "检测到 WSL1 或无法验证的 WSL 内核；只支持 WSL2。"
+      fi
+      ;;
+    *) fail "不支持的控制端系统：${operating_system}。" ;;
+  esac
+}
+
 managed_runtime_dir() {
   printf '%s/runtime/ansible-core-%s\n' "$(toolkit_base_dir)" "${ANSIBLE_CORE_VERSION}"
 }
@@ -538,6 +582,7 @@ PY
 
 main() {
   parse_args "$@"
+  check_controller_platform || return 1
   check_controller_python
   ensure_dependencies
   umask 077

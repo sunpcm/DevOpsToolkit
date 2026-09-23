@@ -6,6 +6,18 @@
   vars_files:
     - ../group_vars/all.yml
   pre_tasks:
+    - name: Require a supported Ubuntu user platform before optional package changes
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['distribution'] == 'Ubuntu'
+          - ansible_facts['distribution_version'] in ['22.04', '24.04']
+          - ansible_facts['architecture'] in ['x86_64', 'aarch64']
+        fail_msg: >-
+          user-only system dependency installation supports only Ubuntu 22.04/24.04
+          on x86_64 or aarch64; disable user_only_allow_system_dependencies
+          to keep the run confined to the authenticated HOME.
+      when: user_only_allow_system_dependencies | bool
+
     - name: Resolve the authenticated account
       ansible.builtin.getent:
         database: passwd
