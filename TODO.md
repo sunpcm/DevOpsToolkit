@@ -111,6 +111,11 @@
 
 ### P1-4：自动化真实环境回归
 
+本地代码提交 `b41a1e6` 已增加 PR 阶段编排测试、专用 Multipass runner workflow、机器可读报告、
+失败清理与 Release 同 SHA 报告门禁。首轮真实 VM 在 22.04 apt cache 网络阶段失败，实例均已清理；
+详见 [`archive/progress/2026-09-23-vm-p1-4-first-run.md`](archive/progress/2026-09-23-vm-p1-4-first-run.md)。
+以下验收项在完整 E2E 和远端 runner 实际运行前保持开放。
+
 - [ ] PR 阶段增加可快速运行的 role/向导组合测试；不得只测试少量辅助函数。
 - [ ] 每周或发布前在一次性 VM 运行 `tests/multipass-smoke.sh`：首次收敛、二次 `changed=0`、SSH/UFW、Docker/Nginx 和故障恢复。
 - [ ] 保持 Ubuntu 版本、Ansible 版本和测试实例严格隔离；测试报告记录镜像、SHA、结果和清理状态。

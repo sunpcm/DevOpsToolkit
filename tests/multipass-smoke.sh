@@ -55,6 +55,10 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || die "找不到命令：$1"
 }
 
+read_ansible_core_version() {
+  ansible-playbook --version | sed -n '1s/.*core \([0-9][0-9.]*\).*/\1/p'
+}
+
 instance_exists() {
   multipass list --format json | python3 -c '
 import json
@@ -550,7 +554,7 @@ main() {
   else
     SOURCE_DIRTY=false
   fi
-  ANSIBLE_CORE_VERSION="$(ansible-playbook --version | sed -n '1s/.*core \([^ ]*\).*/\1/p')"
+  ANSIBLE_CORE_VERSION="$(read_ansible_core_version)"
   [[ -n "${ANSIBLE_CORE_VERSION}" ]] || die "无法识别 ansible-core 版本"
 
   if [[ "${MODE}" == check ]]; then

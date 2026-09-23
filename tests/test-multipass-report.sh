@@ -8,6 +8,9 @@ trap 'rm -rf "${TMP_DIR}"' EXIT
 # shellcheck source=tests/multipass-smoke.sh
 source "${ROOT_DIR}/tests/multipass-smoke.sh"
 
+ansible-playbook() { printf '%s\n' 'ansible-playbook [core 2.21.4]'; }
+[[ "$(read_ansible_core_version)" == "2.21.4" ]]
+
 SOURCE_SHA="0123456789abcdef0123456789abcdef01234567"
 SOURCE_DIRTY=false
 ANSIBLE_CORE_VERSION=2.21.4
