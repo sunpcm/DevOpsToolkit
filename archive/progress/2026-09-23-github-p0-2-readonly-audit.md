@@ -28,6 +28,19 @@
 本地 Release workflow 已增加同 SHA quality/VM evidence、`origin/main` 祖先校验和 Source commit 记录，
 但这些代码尚未推送；不能把本地实现当成 GitHub 控制面已生效。
 
+## 后续只读复核：认证边界
+
+同日后续在 `codex/devopstoolkit-hardening@60851a6` 重新检查。`gh auth status` 报告默认账户
+`sunpcm` 的 token 无效；本轮没有重置或替换凭据。未携带凭据直接 `GET
+/repos/sunpcm/DevOpsToolkit/rulesets` 返回 `[]`，再次确认当时无公开可见的仓库规则集。
+同样的无凭据请求访问 `.../immutable-releases` 和 `.../actions/permissions` 均返回
+HTTP 401 `Requires authentication`，因此**不能**据此断言这两项当前仍关闭或已经开启。
+Environment、Dependabot 和维护者状态也未在本轮重新验证；上表仅保留为首次审计时点的结果。
+
+恢复只读核验前需要先由账户持有人修复 `gh` 登录（例如自行运行
+`gh auth login -h github.com`）；之后应重新查询全部控制项，并把实际返回值与新 SHA 的
+Validate / Release 结果分开记录。本次未修改 GitHub 设置、tag、Release 或本地认证材料。
+
 参考：[GitHub immutable releases](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases)、
 [GitHub CLI release create](https://cli.github.com/manual/gh_release_create)、
 [GitHub rulesets API](https://docs.github.com/en/rest/repos/rules)。

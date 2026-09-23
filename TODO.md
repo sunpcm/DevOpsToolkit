@@ -12,8 +12,9 @@
 - `./tests/verify-ansible.sh`、ShellCheck、Actionlint、gitleaks 在 2026-09-22 review 中通过。
 - 唯一受支持的环境配置实现仍是 `ansible/`，受支持入口是 `bin/` 与 `install.sh`。
 - `AcmeConfig/` 不属于主线 Release，但根 README 仍向用户公开它；在完成下列 P0 安全整改前，不应宣称其为生产级。
-- 当前 GitHub 控制面尚未落实仓库文档要求：`main`/`v*` 无 ruleset，`release` Environment 无保护规则，
-  Release 未启用 immutable，Actions 未强制 SHA pin，Dependabot alerts/security updates 未启用。
+- 2026-09-23 首次审计时 GitHub 控制面尚未落实仓库文档要求：`main`/`v*` 无 ruleset，
+  `release` Environment 无保护规则，Release 未启用 immutable，Actions 未强制 SHA pin，
+  Dependabot alerts/security updates 未启用；后续须重新认证并复核，不能将旧快照当成现状。
 - 静态验证通过不等于真实 VM、升级回滚、SSH 登录切换或 ACME 证书续期已经完成验收。
 
 ## P0：安全与发布阻塞项
@@ -40,8 +41,10 @@
 
 2026-09-23 的只读远端复核及单维护者激活顺序见
 [`archive/progress/2026-09-23-github-p0-2-readonly-audit.md`](archive/progress/2026-09-23-github-p0-2-readonly-audit.md)。
-规则集、release 环境、immutable releases、Actions 限制及 Dependabot 目前仍未启用；
+首次审计时，规则集、release 环境、immutable releases、Actions 限制及 Dependabot 均未启用；
 本地 workflow 代码不等于远端设置生效。
+同日后续无凭据复核再次看到 rulesets 为空；其余设置因本机 `gh` 凭据失效、API 返回
+401 未能重新验证，不能把首次审计结果当成持续有效的现状。
 同一 tag SHA 的完整质量门禁、`origin/main` 祖先校验、Release 来源 SHA 记录已在
 `.github/workflows/release.yml` 实现；固定安装器 commit 与 SHA256 的示例见
 [`docs/SUPPLY_CHAIN_SECURITY.md`](docs/SUPPLY_CHAIN_SECURITY.md)。这些实现仍须随新版本在远端实际验收。
