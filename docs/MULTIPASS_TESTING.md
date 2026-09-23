@@ -90,6 +90,20 @@ MULTIPASS_TEST_PROXY="http://192.168.252.1:7898" \
 脚本会把 Ansible SSH ControlPath 放在短路径的测试专用临时目录，避免 macOS Unix socket 路径超限。代理
 只能使用不含凭据的 `http://host:port`；测试结束后实例会被删除。
 
+若 VM 将官方源解析为 `198.18.0.0/15` Fake-IP，且 guest 无法路由到该地址，可先在宿主机从独立
+公共 DNS 查询当天的真实 IPv4，并仅为一次性 VM 提供白名单映射：
+
+```bash
+dig +short @1.1.1.1 ports.ubuntu.com A
+dig +short @1.1.1.1 download.docker.com A
+MULTIPASS_TEST_HOSTS="ports.ubuntu.com=<查询到的 IPv4>,download.docker.com=<查询到的 IPv4>" \
+  ./tests/multipass-smoke.sh run --with-faults --report /tmp/devops-toolkit-vm-smoke.txt
+```
+
+脚本只接受这两个官方域名和合法 IPv4，修改范围仅为本次临时 VM 的 `/etc/hosts`，并把映射写入报告。
+地址可能变化，运行前必须重新查询；不能把这些地址写入生产配置或长期 VM。专用 runner 若需要此覆盖，
+应在其受控变量中设置 `MULTIPASS_TEST_HOSTS`。
+
 在一次性实例中额外执行系统故障注入：
 
 ```bash

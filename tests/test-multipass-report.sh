@@ -10,6 +10,20 @@ source "${ROOT_DIR}/tests/multipass-smoke.sh"
 
 ansible-playbook() { printf '%s\n' 'ansible-playbook [core 2.21.4]'; }
 [[ "$(read_ansible_core_version)" == "2.21.4" ]]
+TEST_HOSTS='ports.ubuntu.com=91.189.92.19,download.docker.com=3.169.231.109'
+validate_test_hosts
+if (validate_test_hosts 'example.com=127.0.0.1') >/dev/null 2>&1; then
+  echo "错误：测试 DNS 覆盖接受了不在白名单的域名。" >&2
+  exit 1
+fi
+if (validate_test_hosts 'ports.ubuntu.com=999.999.999.999') >/dev/null 2>&1; then
+  echo "错误：测试 DNS 覆盖接受了非法 IPv4。" >&2
+  exit 1
+fi
+if (validate_test_hosts 'ports.ubuntu.com=127.0.0.1') >/dev/null 2>&1; then
+  echo "错误：测试 DNS 覆盖接受了非公网 IPv4。" >&2
+  exit 1
+fi
 
 SOURCE_SHA="0123456789abcdef0123456789abcdef01234567"
 SOURCE_DIRTY=false
@@ -35,6 +49,7 @@ fi
 grep -Fxq 'result=passed' "${REPORT_FILE}"
 grep -Fxq 'source_dirty=false' "${REPORT_FILE}"
 grep -Fxq 'test_faults=1' "${REPORT_FILE}"
+grep -Fxq "test_hosts=${TEST_HOSTS}" "${REPORT_FILE}"
 grep -Fxq 'cleanup_status=passed' "${REPORT_FILE}"
 [[ ! -e "${WORK_DIR}" && ! -e "${SSH_CONTROL_DIR}" ]]
 grep -Fq 'delete --purge devops-toolkit-2204-test-20260922010101-123' \

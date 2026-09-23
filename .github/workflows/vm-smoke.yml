@@ -19,6 +19,8 @@ jobs:
     # hardware virtualization. GitHub-hosted containers are not an E2E substitute.
     runs-on: [self-hosted, multipass]
     timeout-minutes: 180
+    env:
+      MULTIPASS_TEST_HOSTS: ${{ vars.MULTIPASS_TEST_HOSTS }}
     steps:
       - name: Checkout tested commit
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0

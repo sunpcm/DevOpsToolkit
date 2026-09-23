@@ -38,5 +38,15 @@ ANSIBLE_COLLECTIONS_PATH=<经 lock 校验的独立临时目录>/collections \
 宿主机直连 Ubuntu 软件源返回 HTTP 200，但 VM apt 更新失败。后续需在隔离 VM 中进一步确认
 软件源、DNS、网络路由或受控代理入口，再重跑完整 22.04/24.04 测试。
 
+随后用独立的一次性 22.04 诊断 VM 确认：其 DNS 把 `ports.ubuntu.com` 返回为
+`198.18.0.7` Fake-IP，`apt-get update` 明确报 `Could not connect ... (198.18.0.7)`。
+宿主机通过公共 DNS 查询到真实地址后，仅在诊断 VM 的 `/etc/hosts` 临时覆盖
+`ports.ubuntu.com`，APT 成功下载约 47.8 MB 索引；同样覆盖 `download.docker.com` 后，
+Docker 官方 GPG URL 返回 HTTP 200。诊断 VM 已删除，`multipass list --format json` 再次为空。
+这证明首轮阻断是 VM DNS/Fake-IP 路由，而非 Playbook 的 apt 任务逻辑。
+
+测试脚本现支持 `MULTIPASS_TEST_HOSTS`，只接受上述两个官方域名及公网 IPv4，且只写入严格
+命名的一次性 VM；映射会写进报告。地址需要在每次运行前重新查询，不用于生产主机。
+
 GitHub 专用 `self-hosted,multipass` runner 尚未接入，计划任务与 Release 同 SHA 门禁还没有远端运行证据。
 Release workflow 会在缺少近期同 SHA 成功报告时 fail closed。

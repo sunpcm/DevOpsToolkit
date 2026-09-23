@@ -9,6 +9,7 @@ KEEP_INSTANCES=0
 TEST_UV=0
 TEST_FAULTS=0
 TEST_PROXY="${MULTIPASS_TEST_PROXY:-}"
+TEST_HOSTS="${MULTIPASS_TEST_HOSTS:-}"
 MODE="run"
 WORK_DIR=""
 SSH_CONTROL_DIR=""
@@ -37,6 +38,7 @@ usage() {
            --with-faults 在一次性实例中注入 SSH、UFW 和中断恢复故障。
            --report 写入不含凭据的机器可读验收报告；默认不写文件。
            宿主网络使用本地代理时，可用 MULTIPASS_TEST_PROXY 为 VM 设置临时 HTTP 代理。
+           VM DNS 返回 Fake-IP 时，可用 MULTIPASS_TEST_HOSTS 临时覆盖受限的官方域名。
   check    只检查实例状态、版本、架构、联网和 SSH 服务。
   cleanup  只删除由本脚本命名的 *-test-* 临时实例，先显示实例列表。
 
@@ -53,6 +55,26 @@ die() {
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || die "找不到命令：$1"
+}
+
+validate_test_hosts() {
+  local entry host ip seen="," configured="${1:-${TEST_HOSTS}}"
+  [[ -n "${configured}" ]] || return 0
+  [[ "${configured}" != ,* && "${configured}" != *, && "${configured}" != *,,* ]] || \
+    die "MULTIPASS_TEST_HOSTS 包含空映射"
+  local -a entries
+  IFS=',' read -r -a entries <<<"${configured}"
+  ((${#entries[@]} > 0)) || die "MULTIPASS_TEST_HOSTS 不能为空列表"
+  for entry in "${entries[@]}"; do
+    [[ "${entry}" =~ ^(ports\.ubuntu\.com|download\.docker\.com)=([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || \
+      die "MULTIPASS_TEST_HOSTS 只接受官方域名=IPv4，逗号分隔"
+    host="${entry%%=*}"
+    ip="${entry#*=}"
+    [[ "${seen}" != *",${host},"* ]] || die "MULTIPASS_TEST_HOSTS 重复域名：${host}"
+    seen="${seen}${host},"
+    python3 -c 'import ipaddress, sys; assert ipaddress.IPv4Address(sys.argv[1]).is_global' \
+      "${ip}" || die "MULTIPASS_TEST_HOSTS 只接受公网 IPv4：${ip}"
+  done
 }
 
 read_ansible_core_version() {
@@ -146,6 +168,7 @@ instances=${instance_csv}
 managed_ssh_port=${MANAGED_SSH_PORT}
 test_uv=${TEST_UV}
 test_faults=${TEST_FAULTS}
+test_hosts=${TEST_HOSTS}
 cleanup_status=${cleanup_status}
 EOF
   chmod 0644 "${report_tmp}"
@@ -216,6 +239,20 @@ NO_PROXY=\"localhost,127.0.0.1,::1\"
 EOF
   "
   echo "${instance}: 已配置一次性 VM 测试代理 ${TEST_PROXY}"
+}
+
+configure_test_hosts() {
+  local instance="$1" entry host ip
+  [[ -n "${TEST_HOSTS}" ]] || return 0
+  local -a entries
+  IFS=',' read -r -a entries <<<"${TEST_HOSTS}"
+  for entry in "${entries[@]}"; do
+    host="${entry%%=*}"
+    ip="${entry#*=}"
+    printf '%s %s\n' "${ip}" "${host}" | \
+      multipass exec "${instance}" -- sudo tee -a /etc/hosts >/dev/null
+  done
+  echo "${instance}: 已加入一次性 VM 测试 DNS 覆盖：${TEST_HOSTS}"
 }
 
 prepare_root_key() {
@@ -432,6 +469,7 @@ run_instance() {
   check_instance "${instance}"
   validate_transfer "${instance}"
   configure_test_proxy "${instance}"
+  configure_test_hosts "${instance}"
   prepare_root_key "${instance}" "${public_key_file}"
   ip="$(instance_ip "${instance}")"
   public_key="$(cat "${public_key_file}")"
@@ -548,6 +586,7 @@ main() {
   require_command ssh-keygen
   require_command ssh-keyscan
   require_command python3
+  validate_test_hosts
   SOURCE_SHA="$(git -C "${ROOT_DIR}" rev-parse HEAD)"
   if [[ -n "$(git -C "${ROOT_DIR}" status --porcelain)" ]]; then
     SOURCE_DIRTY=true
@@ -577,9 +616,8 @@ main() {
 
   if ((${#REQUESTED_INSTANCES[@]} > 0)); then
     for instance in "${REQUESTED_INSTANCES[@]}"; do
-      if ! is_disposable_name "${instance}" && [[ "${MANAGED_SSH_PORT}" != 22 ]]; then
-        die "拒绝在长期实例 ${instance} 上切换 SSH 端口；请使用 *-test-* 临时实例"
-      fi
+      is_disposable_name "${instance}" || \
+        die "拒绝在长期实例 ${instance} 上执行配置测试；请使用 *-test-* 临时实例"
     done
     ACTIVE_INSTANCES=("${REQUESTED_INSTANCES[@]}")
   else
