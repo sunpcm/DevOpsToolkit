@@ -74,22 +74,6 @@
 
 ## P1：运行安全与可靠性
 
-### P1-1：完成 SSH finalize 的失败回退事务
-
-两版一次性 VM 的主路径、错误私钥、root 禁用和已有故障注入均已通过，证据见
-[`archive/progress/2026-09-23-ssh-p1-1-final-vm.md`](archive/progress/2026-09-23-ssh-p1-1-final-vm.md)。
-但 `ubuntu-ssh-finalize` 先将 SSH 收敛到新端口，再更新 UFW；若后者失败，
-旧端口未必仍可用。当前测试没有在这两个动作之间注入失败，因此不能把双版本通过
-解释为完整事务回滚。
-
-- [ ] 明确并实现 finalize 的失败回退契约：在关闭旧端口或认证方式前，保存可信旧连接参数；
-      若 SSH 切换后 UFW 收敛失败，自动恢复旧端口和原有认证方式，或保持一个已经独立验证的
-      新连接并给出可执行恢复命令。不得留下旧端口已关闭且新端口不可管理的状态。
-- [ ] 在 Ubuntu 22.04 `ssh.service` 与 24.04 `ssh.socket` 上，于 SSH handler 成功后、
-      UFW 更新前注入失败；确认旧/新连接、UFW profile、有效认证策略和重跑收敛状态。
-
-验收证据：真实双版本一次性 VM 的失败注入和清理报告；不能只用成功路径或静态语法检查。
-
 ### P1-2：修正用户组件开关和依赖闭环
 
 本地实现提交 `c22645e`，静态门禁与 16 组开关矩阵见
@@ -126,6 +110,8 @@ SSH/UFW/Docker/Nginx 和故障恢复见
 [`archive/progress/2026-09-23-vm-p1-4-proxy-e2e.md`](archive/progress/2026-09-23-vm-p1-4-proxy-e2e.md)。
 最新双版本主路径与既有故障注入证据见
 [`archive/progress/2026-09-23-ssh-p1-1-final-vm.md`](archive/progress/2026-09-23-ssh-p1-1-final-vm.md)。
+SSH finalize 在 UFW 更新失败时的新端口保活与恢复证据见
+[`archive/progress/2026-09-23-ssh-p1-1-guard-final.md`](archive/progress/2026-09-23-ssh-p1-1-guard-final.md)。
 以下验收项在远端 runner、PR 与 Release gate 实际运行前保持开放。
 
 - [ ] PR 阶段增加可快速运行的 role/向导组合测试；不得只测试少量辅助函数。
