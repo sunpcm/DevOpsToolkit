@@ -42,6 +42,9 @@
 [`archive/progress/2026-09-23-github-p0-2-readonly-audit.md`](archive/progress/2026-09-23-github-p0-2-readonly-audit.md)。
 规则集、release 环境、immutable releases、Actions 限制及 Dependabot 目前仍未启用；
 本地 workflow 代码不等于远端设置生效。
+同一 tag SHA 的完整质量门禁、`origin/main` 祖先校验、Release 来源 SHA 记录已在
+`.github/workflows/release.yml` 实现；固定安装器 commit 与 SHA256 的示例见
+[`docs/SUPPLY_CHAIN_SECURITY.md`](docs/SUPPLY_CHAIN_SECURITY.md)。这些实现仍须随新版本在远端实际验收。
 
 - [ ] 为 `main` 建立 branch ruleset：禁止 force push/deletion，要求 Validate 必需检查；有第二维护者时再要求 approval 和防自审。
 - [ ] 为 `v*` 建立 tag ruleset：限制创建者，禁止更新和删除已发布 tag。
@@ -49,9 +52,7 @@
 - [ ] 启用 immutable releases。已有非 immutable Release 保留历史状态；后续使用新版本号发布，不复用旧 tag。
 - [ ] 将 Actions 限制为 GitHub 官方和显式审核的 Action，并在仓库设置中强制完整 commit SHA pin。
 - [ ] 启用 Dependabot alerts/security updates；另行使用 Renovate regex manager 或自有脚本维护非标准 YAML/Shell 版本与 SHA256。
-- [ ] Release workflow 必须对待发布的同一 SHA 执行完整质量门禁，不能只依赖与 Release 并行运行的另一个 Validate workflow。
-- [ ] 检查 tag commit 是 `origin/main` 的祖先，并在 Release 说明或 attestation 中记录精确 commit SHA。
-- [ ] 为高安全安装提供固定 commit 或 immutable tag 的 bootstrap 方式；把可变 `main/install.sh` 明确标为便利入口，而非完整信任链。
+- [ ] 在新版本的真实 Release 中确认同 SHA 质量门禁、main 祖先检查、Source commit 记录及固定 commit 安装入口按预期生效；本地 workflow 和示例不能代替远端执行。
 
 验收证据：GitHub API 显示 rulesets、Environment protection、immutable 和 Actions 限制均已生效；创建测试 tag 时只有受保护路径可发布；
 新 Release 无法替换 tag 或资产，三个资产及 attestation/签名验证通过。

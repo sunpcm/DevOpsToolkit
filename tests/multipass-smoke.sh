@@ -367,7 +367,12 @@ run_fault_injections() {
   local partial_playbook="${work_dir}/${instance}-partial-account.yml"
   local partial_log="${work_dir}/${instance}-partial-account.log"
   local resume_log="${work_dir}/${instance}-resume-second.log"
+  local occupied_playbook="${work_dir}/${instance}-occupied-port.yml"
+  local occupied_log="${work_dir}/${instance}-occupied-port.log"
+  local occupied_port=2223
   local resume_user="${TARGET_USER}_resume"
+
+  [[ "${MANAGED_SSH_PORT}" != 2223 ]] || occupied_port=2224
 
   echo "==> ${instance}: 故障注入（无效 SSH 配置不得重启）"
   cp "${vars_file}" "${invalid_vars}"
@@ -421,6 +426,39 @@ EOF
   ssh_as_target "${ip}" "${key_file}" "${known_hosts}" true
   echo "${instance}: UFW profile 与旧 Docker APT 源冲突恢复，SSH 仍可达"
 
+  echo "==> ${instance}: 故障注入（新 SSH 端口被其他服务占用）"
+  cat >"${occupied_playbook}" <<EOF
+---
+- name: Refuse an occupied desired SSH port
+  hosts: ubuntu_servers
+  gather_facts: true
+  vars_files:
+    - ${ROOT_DIR}/ansible/group_vars/all.yml
+  roles:
+    - role: ssh_security
+EOF
+  ssh_as_target "${ip}" "${key_file}" "${known_hosts}" \
+    sudo systemd-run --unit=devops-toolkit-test-port --collect \
+      /usr/bin/python3 -m http.server "${occupied_port}" >/dev/null
+  local listen_attempt=0
+  until ssh_as_target "${ip}" "${key_file}" "${known_hosts}" \
+      sudo ss --tcp --listening --numeric "sport = :${occupied_port}" | \
+      grep -Fq ":${occupied_port}"; do
+    ((listen_attempt += 1))
+    ((listen_attempt < 10)) || die "${instance}: 故障服务未监听 ${occupied_port}"
+    sleep 1
+  done
+  if ansible-playbook -i "${inventory}" "${occupied_playbook}" \
+      -e "@${vars_file}" -e "ssh_port=${occupied_port}" >"${occupied_log}" 2>&1; then
+    die "${instance}: 被占用的新 SSH 端口没有阻止切换"
+  fi
+  grep -Fq "Refusing to move SSH to occupied port ${occupied_port}" "${occupied_log}" || \
+    die "${instance}: 端口占用没有触发预期的安全拒绝"
+  ssh_as_target "${ip}" "${key_file}" "${known_hosts}" true
+  ssh_as_target "${ip}" "${key_file}" "${known_hosts}" \
+    sudo systemctl stop devops-toolkit-test-port
+  echo "${instance}: 被占用端口安全拒绝，原 SSH 连接仍可达"
+
   echo "==> ${instance}: 故障注入（部分账户状态后完整重跑）"
   cat >"${partial_playbook}" <<EOF
 ---
@@ -464,6 +502,7 @@ run_instance() {
   local target_inventory="${work_dir}/${instance}-target.ini"
   local vars_file="${work_dir}/${instance}-vars.yml"
   local second_log="${work_dir}/${instance}-second.log"
+  local unverified_log="${work_dir}/${instance}-unverified-key.log"
   local ip public_key initial_port
 
   check_instance "${instance}"
@@ -508,6 +547,19 @@ EOF
   ssh-keyscan -p "${MANAGED_SSH_PORT}" -H "${ip}" >"${known_hosts}" 2>/dev/null
   write_inventory "${target_inventory}" "${instance}" "${ip}" \
     "${MANAGED_SSH_PORT}" "${key_file}" "${known_hosts}" "${TARGET_USER}"
+  if ((TEST_FAULTS == 1)); then
+    echo "==> ${instance}: 故障注入（未确认密钥不得关闭旧 SSH 端口）"
+    if "${ROOT_DIR}/bin/ubuntu-ssh-finalize" "${target_inventory}" "${TARGET_USER}" \
+        -e "@${vars_file}" -e ssh_finalize_key_verified=false \
+        >"${unverified_log}" 2>&1; then
+      die "${instance}: 未确认密钥仍允许 SSH finalize"
+    fi
+    grep -Fq 'ssh_finalize_key_verified=true' "${unverified_log}" || \
+      die "${instance}: 未确认密钥没有触发预期的安全拒绝"
+    ssh -F /dev/null -i "${key_file}" -o IdentitiesOnly=yes \
+      -o "UserKnownHostsFile=${known_hosts}" -p "${initial_port}" \
+      "root@${ip}" true || die "${instance}: 密钥确认失败后旧 SSH 连接不可达"
+  fi
   echo "==> ${instance}: 从普通用户新端口执行 SSH finalize"
   "${ROOT_DIR}/bin/ubuntu-ssh-finalize" "${target_inventory}" "${TARGET_USER}" \
     -e "@${vars_file}" -e ssh_finalize_key_verified=true
