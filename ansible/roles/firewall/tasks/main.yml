@@ -43,6 +43,11 @@
     mode: "0644"
   register: firewall_managed_profile
 
+- name: Inject a managed profile failure after SSH switching in disposable VM tests
+  ansible.builtin.fail:
+    msg: Injected failure before UFW application profile update
+  when: devops_toolkit_vm_inject_firewall_update_failure | default(false) | bool
+
 - name: Reconcile an existing managed profile before enabling deny-by-default
   become: true
   ansible.builtin.command:

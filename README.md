@@ -157,8 +157,9 @@ vim ansible/inventories/ubuntu.ini
   -e ssh_finalize_key_verified=true
 ```
 
-只有 finalize 成功后才会应用 `disable_root_login` / `disable_password_auth` 并从受管 UFW profile
-移除旧端口。交互式向导仅在“连接私钥对应的公钥已写入目标用户且目标用户有免密 sudo”时自动执行第二阶段；
+finalize 临时保护已验证的新 SSH 端口，切换后重建普通用户连接，再收敛受管 UFW profile；
+全部成功后才移除临时保护。若 UFW 阶段失败，不要假定旧 root 端口可用，应按输出从新端口
+检查并使用相同配置重跑。交互式向导仅在“连接私钥对应的公钥已写入目标用户且目标用户有免密 sudo”时自动执行第二阶段；
 否则停在可恢复的双端口准备态。
 
 已有普通用户：

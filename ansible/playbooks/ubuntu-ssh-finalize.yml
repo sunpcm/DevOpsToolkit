@@ -23,12 +23,65 @@
         fail_msg: "ubuntu-ssh-finalize requires -e target_user=<user>."
 
   tasks:
-    - name: Apply SSH hardening from the verified target-user connection
-      ansible.builtin.include_role:
-        name: ssh_security
-        tasks_from: finalize
-
-    - name: Remove the fallback port from the managed firewall profile
+    - name: Protect the verified new SSH port independently during finalize
       ansible.builtin.include_role:
         name: firewall
+        tasks_from: ssh-finalize-guard-present
       when: enable_firewall | bool
+
+    - name: Finalize SSH and its managed firewall profile
+      block:
+        - name: Apply SSH hardening from the verified target-user connection
+          ansible.builtin.include_role:
+            name: ssh_security
+            tasks_from: finalize
+
+        - name: Drop the existing SSH control connection after listener changes
+          ansible.builtin.meta: reset_connection
+
+        - name: Verify a fresh ordinary-user connection on the new SSH port
+          ansible.builtin.wait_for_connection:
+            timeout: 45
+
+        - name: Remove the fallback port from the managed firewall profile
+          ansible.builtin.include_role:
+            name: firewall
+          when: enable_firewall | bool
+
+        - name: Verify the new SSH connection after firewall convergence
+          ansible.builtin.meta: reset_connection
+
+        - name: Confirm the new SSH port remains reachable after firewall convergence
+          ansible.builtin.wait_for_connection:
+            timeout: 45
+
+        - name: Remove the temporary SSH firewall guard after full success
+          ansible.builtin.include_role:
+            name: firewall
+            tasks_from: ssh-finalize-guard-absent
+          when: enable_firewall | bool
+      rescue:
+        - name: Drop the SSH control connection before recovery verification
+          ansible.builtin.meta: reset_connection
+
+        - name: Check whether the verified new SSH port remains reachable
+          ansible.builtin.wait_for_connection:
+            timeout: 30
+          register: ssh_finalize_recovery_connection
+          ignore_errors: true
+          ignore_unreachable: true
+
+        - name: Stop with explicit SSH finalize recovery guidance
+          ansible.builtin.fail:
+            msg: >-
+              SSH finalize failed.
+              {{ 'The temporary new-port UFW guard remains.' if enable_firewall | bool
+              else 'UFW management is disabled; no temporary guard was created.' }}
+              Fresh target-user SSH on port {{ ssh_port }}
+              is {{ 'reachable' if ssh_finalize_recovery_connection is succeeded
+              else 'NOT VERIFIED; use the provider console before further changes' }}.
+              Inspect with: ssh -p {{ ssh_port }} {{ target_user }}@{{ ansible_host | default(inventory_hostname) }}
+              '{{ 'sudo ufw app info ' ~ firewall_managed_profile_name ~ ' && sudo ufw status'
+              if enable_firewall | bool else 'sudo sshd -T' }}'.
+              Then rerun ubuntu-ssh-finalize with the same inventory and extra vars;
+              do not assume the old root port is still available.

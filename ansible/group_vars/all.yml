@@ -101,6 +101,7 @@ install_docker: false
 install_nginx: false
 enable_firewall: true
 firewall_managed_profile_name: DevOpsToolkit
+firewall_ssh_finalize_guard_name: DevOpsToolkitSSHFinalizeGuard
 firewall_allowed_ports:
   - { port: "{{ ssh_port }}", proto: tcp }
 firewall_effective_allowed_ports: "{{ firewall_allowed_ports }}"

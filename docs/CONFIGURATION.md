@@ -218,15 +218,19 @@ ssh -F /dev/null -o IdentitiesOnly=yes -i ~/.ssh/id_ed25519 \
   -e ssh_finalize_key_verified=true
 ```
 
-finalize 会拒绝 root 连接、错误端口，以及在禁用密码认证时未经显式确认的密钥验证。它先收敛单一
-新端口并应用认证策略，成功后才从 UFW profile 移除旧端口。prepare 失败时旧端口与原认证方式
-仍保留；finalize 若在 SSH 收敛后、UFW 收敛前失败，旧端口可能已关闭。两种失败都不要关闭当前
-会话，先用以下只读命令检查实际状态，再从仍可用的普通用户新端口重跑 finalize：
+finalize 会拒绝 root 连接、错误端口，以及在禁用密码认证时未经显式确认的密钥验证。启用 UFW 时，
+它先以独立的 `DevOpsToolkitSSHFinalizeGuard` profile 临时放行已验证的新端口，再收敛单一
+SSH 端口并应用认证策略；强制建立一次全新普通用户连接后，才从主 UFW profile 移除旧端口。
+主 profile 和新连接均通过后才清理临时 guard。prepare 失败时旧端口与原认证方式仍保留；
+finalize 若在 SSH 收敛后、UFW 收敛前失败，旧端口可能已关闭，但临时 guard 会保留新端口，
+并再次检查普通用户连接。不要假定旧 root 端口可用，也不要提前删除 guard。先用以下只读命令
+检查实际状态，再使用原 inventory、变量文件和密钥重跑上面的 finalize 命令：
 
 ```bash
 sudo /usr/sbin/sshd -t
 sudo ss -lntp
 sudo ufw app info DevOpsToolkit
+sudo ufw app info DevOpsToolkitSSHFinalizeGuard
 sudo systemctl status ssh.service ssh.socket --no-pager
 ```
 

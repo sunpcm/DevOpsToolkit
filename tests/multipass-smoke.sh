@@ -522,6 +522,7 @@ run_instance() {
   local vars_file="${work_dir}/${instance}-vars.yml"
   local second_log="${work_dir}/${instance}-second.log"
   local unverified_log="${work_dir}/${instance}-unverified-key.log"
+  local firewall_injection_log="${work_dir}/${instance}-finalize-firewall-injection.log"
   local wrong_key_file="${work_dir}/${instance}-wrong-key"
   local wrong_key_log="${work_dir}/${instance}-wrong-key.log"
   local root_disabled_log="${work_dir}/${instance}-root-disabled.log"
@@ -603,11 +604,41 @@ EOF
     ssh -F /dev/null -i "${key_file}" -o IdentitiesOnly=yes \
       -o "UserKnownHostsFile=${known_hosts}" -p "${initial_port}" \
       "root@${ip}" true || die "${instance}: 密钥确认失败后旧 SSH 连接不可达"
+    echo "==> ${instance}: 故障注入（SSH 已切换、UFW profile 尚未更新）"
+    CURRENT_STAGE="${instance}:finalize-firewall-failure"
+    if "${ROOT_DIR}/bin/ubuntu-ssh-finalize" "${target_inventory}" "${TARGET_USER}" \
+        -e "@${vars_file}" -e ssh_finalize_key_verified=true \
+        -e devops_toolkit_vm_inject_firewall_update_failure=true \
+        >"${firewall_injection_log}" 2>&1; then
+      die "${instance}: UFW 故障注入没有使 finalize 失败"
+    fi
+    grep -Fq 'Injected failure before UFW application profile update' \
+      "${firewall_injection_log}" || {
+        tail -n 60 "${firewall_injection_log}" >&2
+        die "${instance}: 未观察到预期的 UFW 故障注入"
+      }
+    grep -Fq 'Fresh target-user SSH on port' "${firewall_injection_log}" || \
+      die "${instance}: finalize 失败时没有输出新端口恢复指引"
+    ssh_as_target "${ip}" "${key_file}" "${known_hosts}" sudo true || \
+      die "${instance}: UFW 更新失败后新端口普通用户不可管理"
+    ssh_as_target "${ip}" "${key_file}" "${known_hosts}" \
+      sudo ufw app info DevOpsToolkitSSHFinalizeGuard | \
+      grep -Fq "${MANAGED_SSH_PORT}/tcp" || \
+      die "${instance}: UFW 更新失败后临时新端口保护规则不存在"
   fi
   echo "==> ${instance}: 从普通用户新端口执行 SSH finalize"
   CURRENT_STAGE="${instance}:ssh-finalize"
   "${ROOT_DIR}/bin/ubuntu-ssh-finalize" "${target_inventory}" "${TARGET_USER}" \
     -e "@${vars_file}" -e ssh_finalize_key_verified=true
+  if ((TEST_FAULTS == 1)); then
+    ssh_as_target "${ip}" "${key_file}" "${known_hosts}" \
+      sudo test ! -e /etc/ufw/applications.d/devopstoolkitsshfinalizeguard || \
+      die "${instance}: finalize 成功后临时 UFW profile 未清理"
+    if ssh_as_target "${ip}" "${key_file}" "${known_hosts}" \
+        sudo ufw show added | grep -Fq 'DevOpsToolkitSSHFinalizeGuard'; then
+      die "${instance}: finalize 成功后临时 UFW 规则未清理"
+    fi
+  fi
 
   write_inventory "${managed_inventory}" "${instance}" "${ip}" \
     "${MANAGED_SSH_PORT}" "${key_file}" "${known_hosts}"

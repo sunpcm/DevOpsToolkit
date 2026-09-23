@@ -1,0 +1,91 @@
+---
+- name: Inspect an existing temporary SSH finalize guard profile
+  become: true
+  ansible.builtin.stat:
+    path: "/etc/ufw/applications.d/{{ firewall_ssh_finalize_guard_name | lower }}"
+  register: firewall_ssh_guard_existing
+
+- name: Read an existing temporary SSH finalize guard profile
+  become: true
+  ansible.builtin.slurp:
+    path: "/etc/ufw/applications.d/{{ firewall_ssh_finalize_guard_name | lower }}"
+  register: firewall_ssh_guard_content
+  when: firewall_ssh_guard_existing.stat.exists
+
+- name: Refuse to overwrite an unowned UFW application profile
+  ansible.builtin.assert:
+    that:
+      - >-
+        not firewall_ssh_guard_existing.stat.exists or
+        (
+          firewall_ssh_guard_existing.stat.isreg | default(false) and
+          not (firewall_ssh_guard_existing.stat.islnk | default(false)) and
+          '# Managed by DevOpsToolkit SSH finalize guard' in
+          (firewall_ssh_guard_content.content | default('') | b64decode)
+        )
+    fail_msg: >-
+      The SSH finalize guard profile name is already used by an unmanaged file.
+
+- name: Publish the temporary verified new-port firewall guard
+  become: true
+  ansible.builtin.template:
+    src: ssh-finalize-guard.j2
+    dest: "/etc/ufw/applications.d/{{ firewall_ssh_finalize_guard_name | lower }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Inspect existing UFW rules for the temporary SSH guard
+  become: true
+  ansible.builtin.command:
+    argv:
+      - ufw
+      - show
+      - added
+  register: firewall_ssh_guard_rules
+  changed_when: false
+
+- name: Record whether the temporary SSH guard is already allowed
+  ansible.builtin.set_fact:
+    firewall_ssh_guard_rule_exists: >-
+      {{
+        ('ufw allow ' ~ firewall_ssh_finalize_guard_name) in firewall_ssh_guard_rules.stdout
+        or ("ufw allow '" ~ firewall_ssh_finalize_guard_name ~ "'") in firewall_ssh_guard_rules.stdout
+      }}
+
+- name: Reconcile an existing temporary SSH guard rule
+  become: true
+  ansible.builtin.command:
+    argv:
+      - ufw
+      - app
+      - update
+      - "{{ firewall_ssh_finalize_guard_name }}"
+  when: firewall_ssh_guard_rule_exists | bool
+  changed_when: true
+
+- name: Allow the temporary SSH guard before changing listeners
+  become: true
+  community.general.ufw:
+    rule: allow
+    name: "{{ firewall_ssh_finalize_guard_name }}"
+    comment: Temporary DevOpsToolkit SSH finalize guard
+  when: not (firewall_ssh_guard_rule_exists | bool)
+
+- name: Read the temporary SSH guard application profile
+  become: true
+  ansible.builtin.command:
+    argv:
+      - ufw
+      - app
+      - info
+      - "{{ firewall_ssh_finalize_guard_name }}"
+  register: firewall_ssh_guard_info
+  changed_when: false
+
+- name: Confirm the guard protects the verified new SSH port
+  ansible.builtin.assert:
+    that:
+      - ((ssh_port | string) ~ '/tcp') in firewall_ssh_guard_info.stdout
+    fail_msg: >-
+      Temporary SSH finalize guard does not cover the verified new port.

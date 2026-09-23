@@ -1,0 +1,32 @@
+---
+- name: Inspect UFW rules before removing the temporary SSH guard
+  become: true
+  ansible.builtin.command:
+    argv:
+      - ufw
+      - show
+      - added
+  register: firewall_ssh_guard_cleanup_rules
+  changed_when: false
+
+- name: Record whether the temporary SSH guard rule requires removal
+  ansible.builtin.set_fact:
+    firewall_ssh_guard_cleanup_rule_exists: >-
+      {{
+        ('ufw allow ' ~ firewall_ssh_finalize_guard_name) in firewall_ssh_guard_cleanup_rules.stdout
+        or ("ufw allow '" ~ firewall_ssh_finalize_guard_name ~ "'") in firewall_ssh_guard_cleanup_rules.stdout
+      }}
+
+- name: Remove the temporary SSH guard rule after managed firewall convergence
+  become: true
+  community.general.ufw:
+    rule: allow
+    name: "{{ firewall_ssh_finalize_guard_name }}"
+    delete: true
+  when: firewall_ssh_guard_cleanup_rule_exists | bool
+
+- name: Remove the temporary SSH guard application profile
+  become: true
+  ansible.builtin.file:
+    path: "/etc/ufw/applications.d/{{ firewall_ssh_finalize_guard_name | lower }}"
+    state: absent
