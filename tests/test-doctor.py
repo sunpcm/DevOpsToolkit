@@ -43,7 +43,13 @@ with tempfile.TemporaryDirectory() as temporary:
         assert doctor["collections_check"]()["status"] == "fail"
 
 command = doctor["ssh_command"](
-    "host.example", "operator", 2222, Path("/tmp/private-key"), Path("/tmp/known_hosts")
+    "host.example",
+    "operator",
+    2222,
+    Path("/tmp/private-key"),
+    Path("/tmp/known_hosts"),
+    "ubuntu",
+    True,
 )
 assert "-F" in command and "/dev/null" in command
 assert "StrictHostKeyChecking=yes" in command
@@ -52,7 +58,7 @@ assert "ControlMaster=no" in command
 assert "UpdateHostKeys=no" in command
 assert "IdentitiesOnly=yes" in command
 assert "StrictHostKeyChecking=no" not in command
-assert command[-2:] == ["host.example", "python3 -"]
+assert command[-2:] == ["host.example", "python3 - ubuntu no"]
 
 with tempfile.TemporaryDirectory() as temporary:
     known_hosts = Path(temporary) / "known_hosts"
@@ -85,7 +91,7 @@ with tempfile.TemporaryDirectory() as temporary:
     assert run.call_count == 1
     assert run.call_args.kwargs["input"] == doctor["REMOTE_SCRIPT"]
     assert run.call_args.args[0] == doctor["ssh_command"](
-        "host.example", "operator", 2222, identity, known_hosts
+        "host.example", "operator", 2222, identity, known_hosts, "ubuntu", True
     )
 
     known_hosts.chmod(0o666)

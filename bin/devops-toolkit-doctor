@@ -314,8 +314,16 @@ def local_checks(no_network: bool) -> list[dict[str, str]]:
 
 
 def ssh_command(
-    host: str, user: str, port: int, identity: Path | None, known_hosts: Path
+    host: str,
+    user: str,
+    port: int,
+    identity: Path | None,
+    known_hosts: Path,
+    mode: str,
+    no_network: bool,
 ) -> list[str]:
+    if mode not in {"ubuntu", "user-only"}:
+        raise ValueError("invalid target mode")
     command = [
         "ssh",
         "-T",
@@ -344,7 +352,8 @@ def ssh_command(
     ]
     if identity is not None:
         command.extend(["-o", "IdentitiesOnly=yes", "-i", str(identity)])
-    return [*command, host, "python3 -"]
+    network_arg = "no" if no_network else "yes"
+    return [*command, host, f"python3 - {mode} {network_arg}"]
 
 
 def remote_checks(args: argparse.Namespace) -> list[dict[str, str]]:
@@ -366,7 +375,15 @@ def remote_checks(args: argparse.Namespace) -> list[dict[str, str]]:
         not identity.is_file() or stat.S_IMODE(identity.stat().st_mode) & 0o077
     ):
         return [check("ssh_target", "fail", "identity missing or not private")]
-    command = ssh_command(args.host, args.user, args.port, identity, known_hosts)
+    command = ssh_command(
+        args.host,
+        args.user,
+        args.port,
+        identity,
+        known_hosts,
+        args.mode,
+        args.no_network,
+    )
     try:
         result = subprocess.run(
             command,
