@@ -44,8 +44,13 @@ check 代替；先在隔离主机手工运行 `tests/multipass-smoke.sh ... --re
 完成上述同 SHA VM gate 后，只做两件事：打 tag、推 tag。
 
 ```bash
-# 版本号遵循 vMAJOR.MINOR.PATCH
-VERSION=v0.1.5  # 示例；必须换成尚未使用的新版本
+# 版本号遵循 vMAJOR.MINOR.PATCH；v0.1.8 仅是当前示例，使用前确认未被占用。
+VERSION=v0.1.8
+git fetch --tags origin || exit 1
+if git show-ref --verify --quiet "refs/tags/${VERSION}"; then
+  echo "版本号已经使用：${VERSION}" >&2
+  exit 1
+fi
 git tag -a "${VERSION}" origin/main -m "DevOpsToolkit ${VERSION}"
 git push origin "${VERSION}"
 ```
@@ -103,17 +108,19 @@ curl -fsSL -o /dev/null -w "%{http_code}\n" \
 
 ## 失败后的恢复
 
-若 Release 工作流失败或产物缺失（例如误建过同名 Release）：
+若 Release 工作流失败或产物缺失（例如误建过同名 Release），先保留失败的 tag、Release、
+Actions 日志和资产现场，确认失败原因。不要删除或重指向已推送的 tag，也不要尝试覆盖已有
+Release；启用 immutable releases 后，这些操作本应被拒绝。修复代码、重新通过同 SHA 的
+质量与 VM 门禁，再使用尚未占用的新 patch 版本。以下 `v0.1.9` 仅为示例：
 
 ```bash
-# 仅适用于尚未成功发布、没有被用户安装过的空 Release
-FAILED_VERSION=v0.1.5
-gh release delete "${FAILED_VERSION}" --yes --cleanup-tag
-git fetch --prune --prune-tags origin
-git tag -d "${FAILED_VERSION}" 2>/dev/null
-
-# 修好原因后优先使用新的 patch 版本，并只推 tag（依旧不要手动建 Release）
-VERSION=v0.1.6
+# 在新版本代码已合并到 main，且完成全部发布门禁后执行。
+VERSION=v0.1.9
+git fetch --tags origin || exit 1
+if git show-ref --verify --quiet "refs/tags/${VERSION}"; then
+  echo "版本号已经使用：${VERSION}" >&2
+  exit 1
+fi
 git tag -a "${VERSION}" origin/main -m "DevOpsToolkit ${VERSION}"
 git push origin "${VERSION}"
 ```

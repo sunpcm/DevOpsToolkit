@@ -1,6 +1,6 @@
 # DevOpsToolkit TODO
 
-> 更新日期：2026-09-22
+> 更新日期：2026-09-23
 >
 > 原则：这里只保留尚未完成、能够独立验收的工作。完成项及历史证据移入
 > [`archive/progress/`](archive/progress/)，不要让历史记录掩盖当前优先级。
@@ -112,7 +112,8 @@
 ### P1-4：自动化真实环境回归
 
 本地代码提交 `b41a1e6` 已增加 PR 阶段编排测试、专用 Multipass runner workflow、机器可读报告、
-失败清理与 Release 同 SHA 报告门禁。首轮真实 VM 在 22.04 apt cache 网络阶段失败，实例均已清理；
+失败清理与 Release 同 SHA 报告门禁。真实 VM 已越过最初的 22.04 apt 网络问题，第三轮在 Docker
+官方 GPG 下载时遭遇直连重置，实例均已清理；
 详见 [`archive/progress/2026-09-23-vm-p1-4-first-run.md`](archive/progress/2026-09-23-vm-p1-4-first-run.md)。
 以下验收项在完整 E2E 和远端 runner 实际运行前保持开放。
 
@@ -134,11 +135,13 @@
 
 ## P2：维护性与文档一致性
 
-- [ ] 更新 README 和全部示例版本：`v0.1.7` 已发布，不再把 `v0.1.4` 写成当前基线，也不再使用“从下一版 v0.1.5 起”。
 - [ ] 严格区分 WSL1/WSL2，并在任何 apt/system 变更前验证受支持的发行版、版本和架构。
 - [ ] 为安装器、向导和 Playbook 定义稳定的机器可读版本/能力输出，便于批量审计已安装节点。
 - [ ] 设计只读 `doctor`/preflight 命令：检查控制端 runtime、collections、SSH 配置、目标 OS、磁盘、网络和权限，不执行配置变更。
 - [ ] 评估将 `AcmeConfig/` 独立成单独仓库或正式 Ansible role；在安全模型、发布节奏和测试矩阵不同的情况下，不继续用根 README 弱耦合维护。
+
+版本示例与历史版本边界的修订证据见
+[`archive/progress/2026-09-23-release-doc-version-cleanup.md`](archive/progress/2026-09-23-release-doc-version-cleanup.md)。
 
 ## 完成规则
 
