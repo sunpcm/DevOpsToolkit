@@ -110,6 +110,7 @@ class DnsEnvironmentTests(unittest.TestCase):
         self.assertEqual(options["env"]["CF_Token"], "secret-value")
         self.assertNotIn("HOST_ONLY_SECRET", options["env"])
         self.assertTrue(options["capture_output"])
+        self.assertEqual(options["umask"], 0o077)
 
     def test_rejects_environment_override_at_execution_boundary(self) -> None:
         layout = manager.Layout(base=self.root / "state", etc=self.root / "etc")

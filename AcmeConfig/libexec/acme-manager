@@ -235,6 +235,7 @@ def run_as_acme(
         text=True,
         capture_output=capture_output,
         env=environment,
+        umask=0o077,
     )
 
 

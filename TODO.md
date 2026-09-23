@@ -27,6 +27,8 @@
 [`archive/progress/2026-09-22-acme-p0-1-bundle.md`](archive/progress/2026-09-22-acme-p0-1-bundle.md)。
 DNS Token 的 argv 与失败输出泄漏修复、本地回归及 Ubuntu 22.04 `runuser` 语义检查见
 [`archive/progress/2026-09-23-acme-p0-1-secret-argv.md`](archive/progress/2026-09-23-acme-p0-1-secret-argv.md)。
+交互式 acme.sh 子进程固定 `umask 0077` 的本地补强与剩余日志门槛见
+[`archive/progress/2026-09-23-acme-p0-1-log-umask.md`](archive/progress/2026-09-23-acme-p0-1-log-umask.md)。
 这不是生产验收：既有部署 VM 仅使用自签证书模拟部署，新检查只验证环境传递，
 均未通过真实 CA 签发。
 

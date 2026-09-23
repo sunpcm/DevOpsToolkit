@@ -104,6 +104,8 @@ CF_Account_ID=replace-with-account-id
 管理器仅通过受控子进程环境传递 DNS 变量，不把变量值加入 `runuser` 命令参数；
 DNS 签发的终端输出会被捕获，失败摘要只显示退出码。acme.sh 自己写入的受限日志与
 持久化状态仍须在真实 provider 测试中审计，不能据此认定它们不含敏感值。
+交互式管理器启动 acme.sh 时固定 `umask 0077`，与定时续期 unit 一致；轮替后的实际
+owner/mode 仍须在真实环境检查。
 
 ## 签发与查询
 
