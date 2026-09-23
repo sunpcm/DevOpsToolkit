@@ -267,7 +267,24 @@ def test_platform_guards_before_system_changes() -> None:
             check(marker_guard, {"stdout": marker}, succeeds)
 
 
+def test_finalize_rejects_unverified_connection_before_guard_write() -> None:
+    playbook = yaml.safe_load(
+        (ROOT_DIR / "ansible/playbooks/ubuntu-ssh-finalize.yml").read_text(encoding="utf-8")
+    )[0]
+    preflight = next(
+        task for task in playbook["pre_tasks"]
+        if task["name"] == "Require the verified ordinary-user connection before firewall writes"
+    )
+    conditions = preflight["ansible.builtin.assert"]["that"]
+    assert "ansible_facts['user_id'] == target_user" in conditions
+    assert "(ansible_port | default(22) | int) == (ssh_port | int)" in conditions
+    assert "not (disable_password_auth | bool) or (ssh_finalize_key_verified | bool)" in conditions
+    guard = playbook["tasks"][0]["ansible.builtin.include_role"]
+    assert guard == {"name": "firewall", "tasks_from": "ssh-finalize-guard-present"}
+
+
 test_wizard_executes_prepare_and_finalize()
 test_playbook_role_matrix()
 test_platform_guards_before_system_changes()
+test_finalize_rejects_unverified_connection_before_guard_write()
 print("向导编排与 Playbook/role 组合测试通过。")

@@ -603,6 +603,11 @@ EOF
       die "${instance}: 未确认密钥没有触发预期的安全拒绝"
     ssh -F /dev/null -i "${key_file}" -o IdentitiesOnly=yes \
       -o "UserKnownHostsFile=${known_hosts}" -p "${initial_port}" \
+      "root@${ip}" test ! -e \
+      /etc/ufw/applications.d/devopstoolkitsshfinalizeguard || \
+      die "${instance}: 未确认密钥时已创建临时 UFW guard"
+    ssh -F /dev/null -i "${key_file}" -o IdentitiesOnly=yes \
+      -o "UserKnownHostsFile=${known_hosts}" -p "${initial_port}" \
       "root@${ip}" true || die "${instance}: 密钥确认失败后旧 SSH 连接不可达"
     echo "==> ${instance}: 故障注入（SSH 已切换、UFW profile 尚未更新）"
     CURRENT_STAGE="${instance}:finalize-firewall-failure"

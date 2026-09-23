@@ -22,6 +22,18 @@
           - target_user is match('^[a-z_][a-z0-9_-]*[$]?$')
         fail_msg: "ubuntu-ssh-finalize requires -e target_user=<user>."
 
+    - name: Require the verified ordinary-user connection before firewall writes
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['user_id'] == target_user
+          - ansible_facts['user_id'] != 'root'
+          - (ansible_port | default(22) | int) == (ssh_port | int)
+          - not (disable_password_auth | bool) or (ssh_finalize_key_verified | bool)
+        fail_msg: >-
+          SSH finalize requires a verified target-user connection on the new
+          port. Disabling password authentication additionally requires
+          ssh_finalize_key_verified=true. No temporary firewall guard was written.
+
   tasks:
     - name: Protect the verified new SSH port independently during finalize
       ansible.builtin.include_role:
