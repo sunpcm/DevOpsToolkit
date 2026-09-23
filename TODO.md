@@ -82,6 +82,8 @@
 [`archive/progress/2026-09-23-ssh-negative-cases-local.md`](archive/progress/2026-09-23-ssh-negative-cases-local.md)。
 最终候选的完整双版本故障注入回归仍需在 apt 网络可用时重跑；不得将定向 SSH role 测试
 当作整套 Ubuntu bootstrap 验收。
+最新完整复跑的通过范围、失败阶段及自动清理证据见
+[`archive/progress/2026-09-23-ssh-p1-1-full-vm-retries.md`](archive/progress/2026-09-23-ssh-p1-1-full-vm-retries.md)。
 
 - [ ] 第一阶段创建目标账户/密钥，同时放行旧端口与新端口，再修改并验证 SSH listener。
 - [ ] 从控制端使用目标普通用户和新端口建立全新连接；不能只复用现有 root ControlMaster 会话。
