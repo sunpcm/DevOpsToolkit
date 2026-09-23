@@ -393,8 +393,11 @@ run_fault_injections() {
   ssh_as_target "${ip}" "${key_file}" "${known_hosts}" true
   ssh_as_target "${ip}" "${key_file}" "${known_hosts}" \
     sudo rm -f /etc/ssh/sshd_config.d/98-devops-toolkit-fault.conf
-  "${ROOT_DIR}/bin/ubuntu-bootstrap" "${inventory}" "${TARGET_USER}" \
-    -e "@${vars_file}" >"${recovery_log}"
+  if ! "${ROOT_DIR}/bin/ubuntu-bootstrap" "${inventory}" "${TARGET_USER}" \
+      -e "@${vars_file}" >"${recovery_log}" 2>&1; then
+    tail -n 60 "${recovery_log}" >&2
+    die "${instance}: SSH 故障恢复重跑失败"
+  fi
   echo "${instance}: SSH 预重启校验与恢复通过"
 
   echo "==> ${instance}: 故障注入（陈旧 UFW profile）"
@@ -419,8 +422,11 @@ ports=65000/tcp
 PROFILE
 ufw allow DevOpsToolkit
 EOF
-  "${ROOT_DIR}/bin/ubuntu-bootstrap" "${inventory}" "${TARGET_USER}" \
-    -e "@${vars_file}" >"${firewall_log}"
+  if ! "${ROOT_DIR}/bin/ubuntu-bootstrap" "${inventory}" "${TARGET_USER}" \
+      -e "@${vars_file}" >"${firewall_log}" 2>&1; then
+    tail -n 60 "${firewall_log}" >&2
+    die "${instance}: UFW 故障恢复重跑失败"
+  fi
   ssh_as_target "${ip}" "${key_file}" "${known_hosts}" \
     sudo ufw app info DevOpsToolkit | grep -Fq "${MANAGED_SSH_PORT}/tcp"
   if ssh_as_target "${ip}" "${key_file}" "${known_hosts}" \
