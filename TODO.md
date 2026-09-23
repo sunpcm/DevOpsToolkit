@@ -78,6 +78,8 @@
 
 本地两阶段实现提交 `1bb5b8c`，阶段证据与未完成的最终 VM 门槛见
 [`archive/progress/2026-09-22-ssh-p1-1-transition.md`](archive/progress/2026-09-22-ssh-p1-1-transition.md)。
+新增密钥确认与端口占用负例的本地检查、尚未复跑的 VM 边界见
+[`archive/progress/2026-09-23-ssh-negative-cases-local.md`](archive/progress/2026-09-23-ssh-negative-cases-local.md)。
 最终候选的完整双版本故障注入回归仍需在 apt 网络可用时重跑；不得将定向 SSH role 测试
 当作整套 Ubuntu bootstrap 验收。
 
