@@ -38,6 +38,11 @@
 
 ### P0-2：落实 GitHub 发布控制面
 
+2026-09-23 的只读远端复核及单维护者激活顺序见
+[`archive/progress/2026-09-23-github-p0-2-readonly-audit.md`](archive/progress/2026-09-23-github-p0-2-readonly-audit.md)。
+规则集、release 环境、immutable releases、Actions 限制及 Dependabot 目前仍未启用；
+本地 workflow 代码不等于远端设置生效。
+
 - [ ] 为 `main` 建立 branch ruleset：禁止 force push/deletion，要求 Validate 必需检查；有第二维护者时再要求 approval 和防自审。
 - [ ] 为 `v*` 建立 tag ruleset：限制创建者，禁止更新和删除已发布 tag。
 - [ ] 为 `release` Environment 配置允许的 tag、审批或等价发布约束；不能继续保持空保护规则。
