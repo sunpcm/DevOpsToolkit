@@ -622,14 +622,26 @@ EOF
         tail -n 60 "${firewall_injection_log}" >&2
         die "${instance}: 未观察到预期的 UFW 故障注入"
       }
-    grep -Fq 'Fresh target-user SSH on port' "${firewall_injection_log}" || \
-      die "${instance}: finalize 失败时没有输出新端口恢复指引"
+    grep -Fq "Fresh target-user SSH on port ${MANAGED_SSH_PORT} is reachable" \
+      "${firewall_injection_log}" || \
+      die "${instance}: finalize 失败时未验证新端口可达并输出恢复指引"
     ssh_as_target "${ip}" "${key_file}" "${known_hosts}" sudo true || \
       die "${instance}: UFW 更新失败后新端口普通用户不可管理"
     ssh_as_target "${ip}" "${key_file}" "${known_hosts}" \
-      sudo ufw app info DevOpsToolkitSSHFinalizeGuard | \
-      grep -Fq "${MANAGED_SSH_PORT}/tcp" || \
-      die "${instance}: UFW 更新失败后临时新端口保护规则不存在"
+      sudo sh -eu -s -- "${MANAGED_SSH_PORT}" "${initial_port}" <<'EOF' || \
+      die "${instance}: UFW 更新失败后的监听、认证或防火墙状态不符合预期"
+new_port="$1"
+old_port="$2"
+ss -H -ltn "sport = :${new_port}" | grep -q .
+if [ "${old_port}" != "${new_port}" ]; then
+  ! ss -H -ltn "sport = :${old_port}" | grep -q .
+fi
+sshd -T | grep -Fxq 'passwordauthentication no'
+ufw status | grep -Fq 'Status: active'
+ufw app info DevOpsToolkit | grep -Fq "${old_port}/tcp"
+ufw app info DevOpsToolkitSSHFinalizeGuard | grep -Fq "${new_port}/tcp"
+ufw show added | grep -Fq 'DevOpsToolkitSSHFinalizeGuard'
+EOF
   fi
   echo "==> ${instance}: 从普通用户新端口执行 SSH finalize"
   CURRENT_STAGE="${instance}:ssh-finalize"
