@@ -79,6 +79,9 @@
 本地实现提交 `c22645e`，静态门禁与 16 组开关矩阵见
 [`archive/progress/2026-09-22-user-profile-p1-2.md`](archive/progress/2026-09-22-user-profile-p1-2.md)。
 干净 Ubuntu HOME 的两次收敛和新登录 Shell 验证尚未完成，以下条目继续保留为开放验收门槛。
+Ubuntu 24.04 对“仅请求缺失的共享 brew”、关闭 loader、缺少 zsh 时的 fail-closed
+进行了部分真实 HOME 验证；结果与网络边界见
+[`archive/progress/2026-09-23-user-profile-p1-2-vm-partial.md`](archive/progress/2026-09-23-user-profile-p1-2-vm-partial.md)。
 
 - [ ] 拆分“管理基础 Shell 环境”与“安装 Oh My Zsh”；Node、Go、uv、Linuxbrew 环境加载不得隐式依赖 `configure_shell=true`。
 - [ ] 向导对不兼容组合给出约束或明确说明，并为全部关键开关组合增加测试。
