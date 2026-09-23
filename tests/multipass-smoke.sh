@@ -449,7 +449,8 @@ EOF
     sleep 1
   done
   if ansible-playbook -i "${inventory}" "${occupied_playbook}" \
-      -e "@${vars_file}" -e "ssh_port=${occupied_port}" >"${occupied_log}" 2>&1; then
+      -e "@${vars_file}" -e "target_user=${TARGET_USER}" \
+      -e "ssh_port=${occupied_port}" >"${occupied_log}" 2>&1; then
     die "${instance}: 被占用的新 SSH 端口没有阻止切换"
   fi
   grep -Fq "Refusing to move SSH to occupied port ${occupied_port}" "${occupied_log}" || \

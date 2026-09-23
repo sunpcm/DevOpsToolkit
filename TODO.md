@@ -152,7 +152,10 @@ latest/固定版本、签名校验、重复安装、普通用户入口及原子�
 - [ ] 严格区分 WSL1/WSL2，并在任何 apt/system 变更前验证受支持的发行版、版本和架构。
 - [ ] 为安装器、向导和 Playbook 定义稳定的机器可读版本/能力输出，便于批量审计已安装节点。
 - [ ] 设计只读 `doctor`/preflight 命令：检查控制端 runtime、collections、SSH 配置、目标 OS、磁盘、网络和权限，不执行配置变更。
-- [ ] 评估将 `AcmeConfig/` 独立成单独仓库或正式 Ansible role；在安全模型、发布节奏和测试矩阵不同的情况下，不继续用根 README 弱耦合维护。
+- [ ] 在 P0-1 真实环境门槛通过后，将 `AcmeConfig/` 迁入受保护的独立仓库与签名 Release，迁移主线 CI/README 引用；不把证书生命周期塞进主线 Ansible role。
+
+`AcmeConfig/` 维护边界已评估，迁移尚未执行，故上项仍开放。决策及验收顺序见
+[`docs/ACME_BOUNDARY.md`](docs/ACME_BOUNDARY.md)。
 
 版本示例与历史版本边界的修订证据见
 [`archive/progress/2026-09-23-release-doc-version-cleanup.md`](archive/progress/2026-09-23-release-doc-version-cleanup.md)。
