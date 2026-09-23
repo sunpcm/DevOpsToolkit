@@ -40,6 +40,10 @@ uv_release_base_url: >-
      | default(uv_release_base_url_default, true) }}
 goenv_version: "3.1.4"
 
+# Docker's Ubuntu APT signing key, fetched from the official URL below.
+# Update this digest deliberately when Docker rotates the key.
+docker_apt_gpg_sha256: "1500c1f56fa9e26b9b8f42452a553675796ade0807cdce11975eb98170b3a570"
+
 # Immutable revisions keep repeated runs reproducible. Update them deliberately.
 ohmyzsh_version: c954bbb168fc645592c50017de0d0e138db8df5f
 zsh_theme: robbyrussell   # agnoster

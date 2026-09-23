@@ -230,6 +230,14 @@ if ! grep -Eq 'checksum:[[:space:]]+"sha256:' \
   exit 1
 fi
 
+if ! grep -Eq '^docker_apt_gpg_sha256: "[0-9a-f]{64}"$' \
+  "${ROOT_DIR}/ansible/group_vars/all.yml" || \
+   ! grep -Fq 'checksum: "sha256:{{ docker_apt_gpg_sha256 }}"' \
+     "${ROOT_DIR}/ansible/roles/docker/tasks/main.yml"; then
+  echo "错误：Docker APT 签名公钥没有固定到受校验的 SHA256。" >&2
+  exit 1
+fi
+
 if ! grep -Fq 'DEVOPS_TOOLKIT_UV_RELEASE_BASE_URL' \
   "${ROOT_DIR}/ansible/group_vars/all.yml"; then
   echo "错误：uv 下载没有统一的受控镜像环境变量入口。" >&2

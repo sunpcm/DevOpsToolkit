@@ -111,6 +111,11 @@ Oh My Zsh、插件和 Linuxbrew 固定到不可变 Git commit。升级时应修�
 | `disable_root_login` | `false` | 禁止 SSH root 登录 |
 | `disable_password_auth` | `false` | 禁止 SSH 密码认证 |
 
+Docker APT 签名公钥使用官方 Ubuntu 仓库地址和 `docker_apt_gpg_sha256` 固定摘要。
+已有文件摘要匹配时，Ansible 不再为每次重跑访问下载站；文件缺失或摘要不匹配时才重新下载并验证，
+失败则停止，不接受未经校验的密钥。Docker 轮换公钥时，应先独立核对官方来源与指纹，
+再更新摘要并完成两版 Ubuntu VM 回归。
+
 防火墙默认只放行 SSH。启用 Nginx 不会自动开放 80/443，需要显式添加：
 
 ```yaml
