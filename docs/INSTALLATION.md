@@ -169,6 +169,7 @@ runtime、collections、SSH 或目标 OS 现状已经通过检查；运行状态
 
 ## 只读 doctor / preflight
 
+以下功能目前只在未发布的本地开发分支验证；已发布的 `v0.1.7` 不包含它。
 安装后运行 `devops-toolkit doctor`；源码 checkout 用 `./bin/devops-toolkit doctor`。
 默认只检查当前控制端的受支持平台、Python、Ansible runtime、锁定 collection 元数据、
 `ansible.cfg` 的 host-key/全局提权设置、可用磁盘和到 GitHub/Docker 官方端点的 TCP/443。
