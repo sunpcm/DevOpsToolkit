@@ -38,6 +38,7 @@ bash -n \
   "${ROOT_DIR}/scripts/build-release.sh" \
   "${ROOT_DIR}/tests/test-installer.sh" \
   "${ROOT_DIR}/tests/test-release.sh" \
+  "${ROOT_DIR}/tests/test-multipass-report.sh" \
   "${ROOT_DIR}/tests/verify-idempotence.sh" \
   "${ROOT_DIR}/tests/multipass-smoke.sh" \
   "${ROOT_DIR}/AcmeConfig/acme-init.sh" \
@@ -62,6 +63,8 @@ python3 -c 'import runpy, stat, sys; from pathlib import Path; m=runpy.run_path(
   "${ROOT_DIR}/bin/devops-toolkit" "${TMP_DIR}/sensitive-vars.json"
 python3 "${ROOT_DIR}/tests/test-wizard.py"
 python3 "${ROOT_DIR}/tests/test-user-profile.py"
+python3 "${ROOT_DIR}/tests/test-orchestration.py"
+python3 "${ROOT_DIR}/tests/test-vm-evidence.py"
 python3 "${ROOT_DIR}/AcmeConfig/tests/test_acme_manager.py"
 "${ROOT_DIR}/bin/devops-toolkit" --help >/dev/null
 [[ "$("${ROOT_DIR}/bin/devops-toolkit" --version)" == "development" ]]
@@ -70,6 +73,7 @@ python3 "${ROOT_DIR}/AcmeConfig/tests/test_acme_manager.py"
 bash -c "$(cat "${ROOT_DIR}/install.sh")" install-sh-entrypoint --help >/dev/null
 "${ROOT_DIR}/tests/test-installer.sh"
 "${ROOT_DIR}/tests/test-release.sh"
+"${ROOT_DIR}/tests/test-multipass-report.sh"
 
 if ! grep -Fq "(umask 022; ln -s \"releases/\${release_version}\"" \
   "${ROOT_DIR}/install.sh" || \
@@ -81,11 +85,27 @@ fi
 
 release_workflow="${ROOT_DIR}/.github/workflows/release.yml"
 if ! grep -Fq 'uses: ./.github/workflows/env-check.yml' "${release_workflow}" || \
-   ! grep -Fq 'needs: quality' "${release_workflow}" || \
+   ! grep -Fq 'needs: [quality, vm-evidence]' "${release_workflow}" || \
    ! grep -Fq "git merge-base --is-ancestor \"\${GITHUB_SHA}\" refs/remotes/origin/main" \
      "${release_workflow}" || \
    ! grep -Fq -- "--notes \"Source commit: \${GITHUB_SHA}\"" "${release_workflow}"; then
   echo "错误：Release 未对同一 SHA 执行完整质量门禁、main 祖先检查或记录来源 SHA。" >&2
+  exit 1
+fi
+vm_smoke_workflow="${ROOT_DIR}/.github/workflows/vm-smoke.yml"
+if ! grep -Fq 'runs-on: [self-hosted, multipass]' "${vm_smoke_workflow}" || \
+   ! grep -Fq 'cron: "23 4 * * 6"' "${vm_smoke_workflow}" || \
+   ! grep -Fq -- "--with-faults --report \"\${REPORT_FILE}\"" "${vm_smoke_workflow}" || \
+   ! grep -Fq 'if: always()' "${vm_smoke_workflow}" || \
+   ! grep -Fq "name: vm-smoke-\${{ github.sha }}" "${vm_smoke_workflow}"; then
+  echo "错误：真实 VM workflow 缺少专用 runner、计划任务、故障测试、清理或报告。" >&2
+  exit 1
+fi
+if ! grep -Fq 'actions: read' "${release_workflow}" || \
+   ! grep -Fq 'Checkout release commit for evidence verification' "${release_workflow}" || \
+   ! grep -Fq "head_sha=\${GITHUB_SHA}" "${release_workflow}" || \
+   ! grep -Fq 'scripts/verify-vm-evidence.py verify-report' "${release_workflow}"; then
+  echo "错误：Release 没有强制要求同 SHA、近期且已清理的 VM smoke 证据。" >&2
   exit 1
 fi
 if grep -Fq -- '--break-system-packages' "${ROOT_DIR}/install.sh" || \

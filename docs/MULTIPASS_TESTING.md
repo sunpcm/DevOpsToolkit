@@ -42,13 +42,26 @@ Ubuntu 22.10 及以后（含 24.04 LTS）默认用 systemd socket 激活 OpenSSH
   最后验证 listener/UFW 已移除 22；
 - 安装并检查 Docker 和 Nginx；
 - 第二次执行必须满足 `changed=0`、`unreachable=0`、`failed=0`；
-- 全部成功后自动清理临时实例；失败时保留实例、测试密钥和日志，并输出清理命令。
+- 成功或失败都自动清理脚本创建的临时实例、SSH ControlPath、一次性私钥和工作目录；清理失败会让测试失败。
 
-保留成功现场：
+生成不含凭据的机器可读报告：
+
+```bash
+./tests/multipass-smoke.sh run --with-faults \
+  --report /tmp/devops-toolkit-vm-smoke.txt
+```
+
+报告记录 source SHA、工作树状态、ansible-core 版本、Ubuntu 镜像、故障测试开关、结果和清理状态。
+默认即使测试失败也会写报告；报告可保存，一次性私钥和详细临时日志不会被保留。
+
+只有明确需要人工排障时才保留现场：
 
 ```bash
 ./tests/multipass-smoke.sh run --keep
 ```
+
+`--keep` 会保留一次性私钥和工作目录，且报告中的 `cleanup_status` 为 `skipped-by-request`，不能作为
+Release 证据。排障结束后应立即运行文末的严格命名清理命令并删除输出的工作目录。
 
 额外验证 uv 固定产物下载、SHA256 校验和安装：
 
@@ -107,16 +120,18 @@ multipass list
 
 `cleanup` 会拒绝任何不符合临时命名规则的实例。
 
-## CI 评估
+## CI 与 Release 门禁
 
-当前不把完整 Multipass 测试接入 GitHub-hosted runner：它依赖 macOS 虚拟化、长时间系统包下载和 SSH
-端口切换，执行时间与网络稳定性均不适合作为每次提交的阻塞门禁。现有 CI 继续承担语法、lint、secret
-scan 和轻量单元验证。
+GitHub-hosted 容器不能可靠提供 Multipass 所需的硬件虚拟化，不能用容器、syntax check 或 mocked systemd
+代替 SSH/UFW/Docker E2E。`.github/workflows/vm-smoke.yml` 因此只在带 `self-hosted` 和 `multipass`
+标签的专用可信 runner 上运行：每周六及手工触发，串行执行 Ubuntu 22.04/24.04、二次 `changed=0`
+和故障恢复，并在 `always()` 路径复核清理、上传只含元数据的报告。
 
-如后续配置专用 Apple Silicon self-hosted runner，可新增手动或定期工作流，仅运行临时实例模式，并设置：
+runner 必须是隔离的测试主机，预装 Multipass、SSH 和 Python 3.12–3.14，允许创建/删除严格命名的
+临时 VM；不得与生产工作负载、长期 Multipass 实例或不可信 PR 共用。workflow 会自行创建隔离的
+ansible-core 2.21.4 runtime，并按 collection lock 校验依赖。
 
-- 独占 runner，避免多个虚拟化任务争抢资源；
-- workflow/job 超时和并发锁；
-- `always()` 清理步骤，只匹配本次 run id 对应的临时实例；
-- GitHub 与 Docker 下载失败的有限重试；
-- 保留失败日志，但不上传一次性私钥。
+Release workflow 只接受同一 commit SHA、8 天内成功、`test_faults=1` 且
+`cleanup_status=passed` 的 VM smoke artifact。没有安全可用 runner 或没有这份证据时 Release 会
+fail closed；维护者必须先在隔离主机手工执行上述报告命令、审阅结果，并完成/接入专用 runner，不能
+用静态检查替代后直接发布。

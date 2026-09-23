@@ -12,6 +12,11 @@ TEST_PROXY="${MULTIPASS_TEST_PROXY:-}"
 MODE="run"
 WORK_DIR=""
 SSH_CONTROL_DIR=""
+REPORT_FILE="${MULTIPASS_REPORT_FILE:-}"
+STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+SOURCE_SHA="unknown"
+SOURCE_DIRTY="unknown"
+ANSIBLE_CORE_VERSION="unknown"
 declare -a REQUESTED_INSTANCES=()
 declare -a ACTIVE_INSTANCES=()
 declare -a CREATED_INSTANCES=()
@@ -19,16 +24,18 @@ declare -a CREATED_INSTANCES=()
 usage() {
   cat <<'EOF'
 用法：
-  ./tests/multipass-smoke.sh run [--instance NAME ...] [--keep] [--with-uv] [--with-faults]
+  ./tests/multipass-smoke.sh run [--instance NAME ...] [--keep] [--with-uv] [--with-faults] [--report PATH]
   ./tests/multipass-smoke.sh check [NAME ...]
   ./tests/multipass-smoke.sh cleanup NAME ...
 
 说明：
   run      不传 --instance 时，为 Ubuntu 22.04/24.04 创建临时实例并在成功后清理；
-           失败时保留现场。--instance 仅用于续跑已有的 *-test-* 临时实例。
+           成功或失败均清理脚本创建的实例；只有明确传入 --keep 才保留现场。
+           --instance 仅用于续跑已有的 *-test-* 临时实例，脚本不会删除外部实例。
            --with-uv 额外验证固定 uv 产物下载与 SHA256 校验，默认不启用。
            可通过 DEVOPS_TOOLKIT_UV_RELEASE_BASE_URL 指向 HTTPS 镜像的版本目录。
            --with-faults 在一次性实例中注入 SSH、UFW 和中断恢复故障。
+           --report 写入不含凭据的机器可读验收报告；默认不写文件。
            宿主网络使用本地代理时，可用 MULTIPASS_TEST_PROXY 为 VM 设置临时 HTTP 代理。
   check    只检查实例状态、版本、架构、联网和 SSH 服务。
   cleanup  只删除由本脚本命名的 *-test-* 临时实例，先显示实例列表。
@@ -95,17 +102,85 @@ cleanup_instances() {
   done
 }
 
+cleanup_created_instances() {
+  local instance cleanup_status=0
+  ((${#CREATED_INSTANCES[@]} > 0)) || return 0
+  multipass list --format json >/dev/null || return 1
+  for instance in "${CREATED_INSTANCES[@]}"; do
+    if ! is_disposable_name "${instance}"; then
+      echo "错误：拒绝自动清理非临时实例：${instance}" >&2
+      cleanup_status=1
+      continue
+    fi
+    if instance_exists "${instance}"; then
+      multipass stop --force "${instance}" || true
+      if ! multipass delete --purge "${instance}"; then
+        cleanup_status=1
+      fi
+    fi
+  done
+  return "${cleanup_status}"
+}
+
+write_report() {
+  local result="$1" cleanup_status="$2" report_tmp instance_csv
+  [[ -n "${REPORT_FILE}" ]] || return 0
+  instance_csv="$(IFS=,; echo "${ACTIVE_INSTANCES[*]}")"
+  mkdir -p "$(dirname "${REPORT_FILE}")"
+  report_tmp="${REPORT_FILE}.tmp.$$"
+  umask 022
+  cat >"${report_tmp}" <<EOF
+schema=1
+result=${result}
+source_sha=${SOURCE_SHA}
+source_dirty=${SOURCE_DIRTY}
+started_at=${STARTED_AT}
+finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+ansible_core=${ANSIBLE_CORE_VERSION}
+ubuntu_images=22.04,24.04
+instances=${instance_csv}
+managed_ssh_port=${MANAGED_SSH_PORT}
+test_uv=${TEST_UV}
+test_faults=${TEST_FAULTS}
+cleanup_status=${cleanup_status}
+EOF
+  chmod 0644 "${report_tmp}"
+  mv "${report_tmp}" "${REPORT_FILE}"
+}
+
 report_exit() {
-  local status="$1"
+  local status="$1" final_status cleanup_status result
+  final_status="${status}"
+  cleanup_status="not-owned"
+  if ((${#CREATED_INSTANCES[@]} > 0)); then
+    if ((KEEP_INSTANCES == 1)); then
+      cleanup_status="skipped-by-request"
+    elif cleanup_created_instances; then
+      cleanup_status="passed"
+    else
+      cleanup_status="failed"
+      final_status=1
+    fi
+  fi
   if [[ -n "${SSH_CONTROL_DIR}" && -d "${SSH_CONTROL_DIR}" ]]; then
     rm -rf -- "${SSH_CONTROL_DIR}"
   fi
-  echo "测试工件保留在：${WORK_DIR}"
-  if ((status != 0)) && ((${#CREATED_INSTANCES[@]} > 0)); then
-    printf '临时实例已保留。确认后清理：%q cleanup' "$0"
+  result="passed"
+  ((final_status == 0)) || result="failed"
+  if ! write_report "${result}" "${cleanup_status}"; then
+    echo "错误：无法写入 Multipass 验收报告：${REPORT_FILE}" >&2
+    final_status=1
+  fi
+  if ((KEEP_INSTANCES == 1)); then
+    echo "测试工件保留在：${WORK_DIR}"
+    printf '临时实例已按明确请求保留。确认后清理：%q cleanup' "$0"
     printf ' %q' "${CREATED_INSTANCES[@]}"
     printf '\n'
+  elif [[ -n "${WORK_DIR}" && -d "${WORK_DIR}" ]]; then
+    rm -rf -- "${WORK_DIR}"
   fi
+  trap - EXIT
+  exit "${final_status}"
 }
 
 validate_transfer() {
@@ -436,6 +511,11 @@ parse_args() {
             TEST_FAULTS=1
             shift
             ;;
+          --report)
+            (($# >= 2)) || die "--report 缺少路径"
+            REPORT_FILE="$2"
+            shift 2
+            ;;
           -h|--help)
             usage
             exit 0
@@ -464,6 +544,14 @@ main() {
   require_command ssh-keygen
   require_command ssh-keyscan
   require_command python3
+  SOURCE_SHA="$(git -C "${ROOT_DIR}" rev-parse HEAD)"
+  if [[ -n "$(git -C "${ROOT_DIR}" status --porcelain)" ]]; then
+    SOURCE_DIRTY=true
+  else
+    SOURCE_DIRTY=false
+  fi
+  ANSIBLE_CORE_VERSION="$(ansible-playbook --version | sed -n '1s/.*core \([^ ]*\).*/\1/p')"
+  [[ -n "${ANSIBLE_CORE_VERSION}" ]] || die "无法识别 ansible-core 版本"
 
   if [[ "${MODE}" == check ]]; then
     ((${#REQUESTED_INSTANCES[@]} > 0)) || die "check 至少需要一个实例名"
@@ -477,6 +565,8 @@ main() {
 
   WORK_DIR="$(mktemp -d)"
   trap 'report_exit "$?"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   SSH_CONTROL_DIR="$(mktemp -d /tmp/devops-ssh.XXXXXX)"
   ssh-keygen -q -t ed25519 -N '' -C "devops-toolkit-multipass-${RUN_ID}" \
     -f "${WORK_DIR}/id_ed25519"
@@ -493,9 +583,14 @@ main() {
       "devops-toolkit-2204-test-${RUN_ID}"
       "devops-toolkit-2404-test-${RUN_ID}"
     )
-    CREATED_INSTANCES+=("${ACTIVE_INSTANCES[0]}")
+    for instance in "${ACTIVE_INSTANCES[@]}"; do
+      if instance_exists "${instance}"; then
+        die "拒绝覆盖已存在的临时实例：${instance}"
+      fi
+    done
+    CREATED_INSTANCES=("${ACTIVE_INSTANCES[@]}")
+    write_report running pending
     multipass launch 22.04 --name "${ACTIVE_INSTANCES[0]}" --cpus 2 --memory 3G --disk 15G
-    CREATED_INSTANCES+=("${ACTIVE_INSTANCES[1]}")
     multipass launch 24.04 --name "${ACTIVE_INSTANCES[1]}" --cpus 2 --memory 3G --disk 15G
   fi
 
@@ -509,10 +604,9 @@ main() {
     run_instance "${instance}" "${WORK_DIR}" "${WORK_DIR}/id_ed25519"
   done
 
-  if ((${#CREATED_INSTANCES[@]} > 0)) && ((KEEP_INSTANCES == 0)); then
-    cleanup_instances "${CREATED_INSTANCES[@]}"
-  fi
   echo "请求的 Multipass Ubuntu 实例测试全部通过。"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

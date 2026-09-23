@@ -1,0 +1,168 @@
+---
+name: VM smoke
+
+on:
+  schedule:
+    - cron: "23 4 * * 6"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vm-smoke-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    # This label must identify a dedicated, trusted runner with Multipass and
+    # hardware virtualization. GitHub-hosted containers are not an E2E substitute.
+    runs-on: [self-hosted, multipass]
+    timeout-minutes: 180
+    steps:
+      - name: Checkout tested commit
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          clean: true
+
+      - name: Initialize failure-safe report
+        run: |
+          report_file="${RUNNER_TEMP}/vm-smoke-report.txt"
+          runtime_dir="${RUNNER_TEMP}/devops-toolkit-vm-runtime-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          collection_artifacts="${RUNNER_TEMP}/devops-toolkit-vm-artifacts-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          collections_dir="${RUNNER_TEMP}/devops-toolkit-vm-collections-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          {
+            echo "REPORT_FILE=${report_file}"
+            echo "RUNTIME_DIR=${runtime_dir}"
+            echo "COLLECTION_ARTIFACTS=${collection_artifacts}"
+            echo "COLLECTIONS_DIR=${collections_dir}"
+          } >>"${GITHUB_ENV}"
+          cat >"${report_file}" <<EOF
+          schema=1
+          result=not-run
+          source_sha=${GITHUB_SHA}
+          source_dirty=false
+          ubuntu_images=22.04,24.04
+          test_faults=1
+          cleanup_status=not-started
+          EOF
+
+      - name: Validate dedicated runner
+        run: |
+          test -z "$(git status --porcelain)"
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git merge-base --is-ancestor "${GITHUB_SHA}" refs/remotes/origin/main
+          command -v multipass
+          command -v python3
+          command -v ssh
+          python3 - <<'PY'
+          import json
+          import subprocess
+          import sys
+
+          if not ((3, 12) <= sys.version_info[:2] <= (3, 14)):
+              raise SystemExit(f"unsupported Python: {sys.version.split()[0]}")
+          data = json.loads(
+              subprocess.check_output(["multipass", "list", "--format", "json"])
+          )
+          stale = [
+              item["name"]
+              for item in data["list"]
+              if item["name"].startswith("devops-toolkit-") and "-test-" in item["name"]
+          ]
+          if stale:
+              raise SystemExit(f"stale DevOpsToolkit test instances require review: {stale}")
+          PY
+
+      - name: Build isolated Ansible runtime
+        run: |
+          python3 -m venv "${RUNTIME_DIR}"
+          "${RUNTIME_DIR}/bin/python" -m pip install ansible-core==2.21.4
+          mkdir -p "${COLLECTION_ARTIFACTS}" "${COLLECTIONS_DIR}"
+          "${RUNTIME_DIR}/bin/ansible-galaxy" collection download \
+            --requirements-file ansible/requirements.yml \
+            --download-path "${COLLECTION_ARTIFACTS}" \
+            --no-deps
+          python3 scripts/verify-collection-lock.py \
+            --lock ansible/collections.lock.json \
+            --requirements ansible/requirements.yml \
+            --artifacts "${COLLECTION_ARTIFACTS}"
+          "${RUNTIME_DIR}/bin/ansible-galaxy" collection install \
+            "${COLLECTION_ARTIFACTS}"/*.tar.gz \
+            --collections-path "${COLLECTIONS_DIR}"
+          python3 scripts/verify-collection-lock.py \
+            --lock ansible/collections.lock.json \
+            --installed "${COLLECTIONS_DIR}"
+          echo "${RUNTIME_DIR}/bin" >>"${GITHUB_PATH}"
+          echo "ANSIBLE_COLLECTIONS_PATH=${COLLECTIONS_DIR}" >>"${GITHUB_ENV}"
+
+      - name: Run Ubuntu 22.04 and 24.04 E2E with fault recovery
+        run: ./tests/multipass-smoke.sh run --with-faults --report "${REPORT_FILE}"
+
+      - name: Emergency cleanup audit
+        if: always()
+        run: |
+          python3 - "${REPORT_FILE}" <<'PY'
+          import json
+          import re
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          report = Path(sys.argv[1])
+          values = {}
+          if report.is_file():
+              for line in report.read_text(encoding="utf-8").splitlines():
+                  key, separator, value = line.partition("=")
+                  if separator:
+                      values[key] = value
+          names = [name for name in values.get("instances", "").split(",") if name]
+          pattern = re.compile(r"^devops-toolkit-(2204|2404)-test-[0-9]{14}-[0-9]+$")
+          if any(not pattern.fullmatch(name) for name in names):
+              raise SystemExit(f"refusing unsafe cleanup target: {names}")
+          existing = {
+              item["name"]
+              for item in json.loads(
+                  subprocess.check_output(["multipass", "list", "--format", "json"])
+              )["list"]
+          }
+          for name in names:
+              if name not in existing:
+                  continue
+              subprocess.run(["multipass", "stop", "--force", name], check=False)
+              subprocess.run(["multipass", "delete", "--purge", name], check=True)
+          with report.open("a", encoding="utf-8") as handle:
+              handle.write("emergency_cleanup=passed\n")
+          PY
+
+      - name: Publish report in job summary
+        if: always()
+        run: |
+          if [[ -f "${REPORT_FILE}" ]]; then
+            {
+              echo '```text'
+              cat "${REPORT_FILE}"
+              echo '```'
+            } >>"${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Upload traceable VM report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: vm-smoke-${{ github.sha }}
+          path: ${{ runner.temp }}/vm-smoke-report.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Remove runner-local test artifacts
+        if: always()
+        run: |
+          for path in "${RUNTIME_DIR}" "${COLLECTION_ARTIFACTS}" "${COLLECTIONS_DIR}"; do
+            case "${path}" in
+              "${RUNNER_TEMP}"/devops-toolkit-vm-*) ;;
+              *) echo "拒绝清理非测试路径：${path}" >&2; exit 1 ;;
+            esac
+            rm -rf -- "${path}"
+          done
+          rm -f -- "${REPORT_FILE}"

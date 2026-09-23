@@ -52,7 +52,8 @@ jobs:
       - name: Ruff
         run: >-
           ruff check bin/devops-toolkit tests/test-wizard.py tests/test-user-profile.py
-          scripts/verify-collection-lock.py scripts/dependency-audit.py
+          tests/test-orchestration.py tests/test-vm-evidence.py
+          scripts/verify-collection-lock.py scripts/dependency-audit.py scripts/verify-vm-evidence.py
           AcmeConfig/libexec/acme-manager
           AcmeConfig/tests/test_acme_manager.py
 
