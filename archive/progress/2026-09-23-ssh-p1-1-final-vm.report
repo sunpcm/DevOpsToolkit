@@ -1,0 +1,15 @@
+schema=1
+result=passed
+source_sha=0704fbb8fd297bce4b98c8685bca37b669539bc9
+source_dirty=false
+started_at=2026-09-23T09:36:56Z
+finished_at=2026-09-23T09:45:54Z
+ansible_core=2.21.4
+ubuntu_images=22.04,24.04
+instances=devops-toolkit-2204-test-20260923173656-33927,devops-toolkit-2404-test-20260923173656-33927
+managed_ssh_port=2222
+test_uv=0
+test_faults=1
+test_hosts=ports.ubuntu.com=91.189.92.19,download.docker.com=3.169.231.109
+last_stage=complete
+cleanup_status=passed

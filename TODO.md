@@ -74,25 +74,6 @@
 
 ## P1：运行安全与可靠性
 
-### P1-1：把 SSH 改端口和加固改成两阶段事务
-
-本地两阶段实现提交 `1bb5b8c`，阶段证据与未完成的最终 VM 门槛见
-[`archive/progress/2026-09-22-ssh-p1-1-transition.md`](archive/progress/2026-09-22-ssh-p1-1-transition.md)。
-新增密钥确认与端口占用负例的本地检查、尚未复跑的 VM 边界见
-[`archive/progress/2026-09-23-ssh-negative-cases-local.md`](archive/progress/2026-09-23-ssh-negative-cases-local.md)。
-最终候选的完整双版本故障注入回归仍需在 apt 网络可用时重跑；不得将定向 SSH role 测试
-当作整套 Ubuntu bootstrap 验收。
-最新完整复跑的通过范围、失败阶段及自动清理证据见
-[`archive/progress/2026-09-23-ssh-p1-1-full-vm-retries.md`](archive/progress/2026-09-23-ssh-p1-1-full-vm-retries.md)。
-
-- [ ] 第一阶段创建目标账户/密钥，同时放行旧端口与新端口，再修改并验证 SSH listener。
-- [ ] 从控制端使用目标普通用户和新端口建立全新连接；不能只复用现有 root ControlMaster 会话。
-- [ ] 第二阶段仅在新连接成功后关闭旧端口，并按显式选择禁用 root/password 登录。
-- [ ] 将 `disable_root_login=true` 从当前 root 会话无法自证的单阶段流程中移出，或实现可靠的连接用户切换。
-- [ ] 失败时保留旧端口和当前可用登录方式，输出恢复命令，不留下“UFW 已关旧端口但 SSH 未切换”的中间态。
-
-验收证据：Ubuntu 22.04/24.04 各验证传统 `ssh.service` 与 `ssh.socket`；注入无效 sshd 配置、新端口占用和目标用户密钥失败，均不得锁死主机。
-
 ### P1-2：修正用户组件开关和依赖闭环
 
 本地实现提交 `c22645e`，静态门禁与 16 组开关矩阵见
@@ -127,6 +108,8 @@
 从干净提交 `f40192f` 经一次性 VM 代理完成的 22.04/24.04 首次配置、二次 `changed=0`、
 SSH/UFW/Docker/Nginx 和故障恢复见
 [`archive/progress/2026-09-23-vm-p1-4-proxy-e2e.md`](archive/progress/2026-09-23-vm-p1-4-proxy-e2e.md)。
+最新双版本故障注入及 P1-1 关闭证据见
+[`archive/progress/2026-09-23-ssh-p1-1-final-vm.md`](archive/progress/2026-09-23-ssh-p1-1-final-vm.md)。
 以下验收项在远端 runner、PR 与 Release gate 实际运行前保持开放。
 
 - [ ] PR 阶段增加可快速运行的 role/向导组合测试；不得只测试少量辅助函数。
