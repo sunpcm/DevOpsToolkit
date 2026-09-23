@@ -84,6 +84,8 @@ Ubuntu 24.04 对“仅请求缺失的共享 brew”、关闭 loader、缺少 zsh
 [`archive/progress/2026-09-23-user-profile-p1-2-vm-partial.md`](archive/progress/2026-09-23-user-profile-p1-2-vm-partial.md)。
 环境 loader 的 16 组实际 `/bin/sh` 加载测试见
 [`archive/progress/2026-09-23-user-profile-p1-2-shell-matrix.md`](archive/progress/2026-09-23-user-profile-p1-2-shell-matrix.md)。
+Shell 关闭但语言工具开启、Oh My Zsh 约束及 user-only 依赖例外的向导链路测试见
+[`archive/progress/2026-09-23-user-profile-p1-2-wizard-paths.md`](archive/progress/2026-09-23-user-profile-p1-2-wizard-paths.md)。
 
 - [ ] 拆分“管理基础 Shell 环境”与“安装 Oh My Zsh”；Node、Go、uv、Linuxbrew 环境加载不得隐式依赖 `configure_shell=true`。
 - [ ] 向导对不兼容组合给出约束或明确说明，并为全部关键开关组合增加测试。
