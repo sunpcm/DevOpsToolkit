@@ -114,6 +114,22 @@ check_instance() {
   '
 }
 
+assert_instance_image() {
+  local instance="$1" expected_version
+  case "${instance}" in
+    devops-toolkit-2204-test-*) expected_version=22.04 ;;
+    devops-toolkit-2404-test-*) expected_version=24.04 ;;
+    *) die "无法识别临时实例的 Ubuntu 版本：${instance}" ;;
+  esac
+  # Expand OS variables in the guest, not on the host.
+  # shellcheck disable=SC2016
+  multipass exec "${instance}" -- sh -eu -c '
+    . /etc/os-release
+    test "$ID" = ubuntu && test "$VERSION_ID" = "$1"
+  ' sh "${expected_version}" ||
+    die "${instance}: 实际系统不是 Ubuntu ${expected_version}"
+}
+
 cleanup_instances() {
   local instance
   (($# > 0)) || die "cleanup 至少需要一个实例名"
@@ -529,6 +545,7 @@ run_instance() {
   local ip public_key initial_port
 
   check_instance "${instance}"
+  assert_instance_image "${instance}"
   validate_transfer "${instance}"
   configure_test_proxy "${instance}"
   configure_test_hosts "${instance}"

@@ -139,6 +139,9 @@ SSH finalize 在 UFW 更新失败时的新端口保活与恢复证据见
 [`archive/progress/2026-09-23-ssh-p1-1-guard-final.md`](archive/progress/2026-09-23-ssh-p1-1-guard-final.md)。
 PR 编排测试、双版本本地 VM smoke、报告及失败清理代码已有本地证据；草稿 PR #2
 的 quality 与双 Python 矩阵也已通过。以下只保留最终合并、当次 VM 与新 Release 门槛。
+2026-09-24 补强了运行时实际 Ubuntu 版本断言及报告中同一次测试的双实例校验；
+本地证据见 [`archive/progress/2026-09-24-vm-report-image-proof.md`](archive/progress/2026-09-24-vm-report-image-proof.md)。
+它防止单实例/错版本报告被当作双版本证据，但不能替代候选 SHA 的当次真实 VM 验收。
 
 - [ ] 每次发布前在隔离主机针对候选 SHA 运行一次性 Ubuntu 22.04/24.04 VM，覆盖首次收敛、
       二次 `changed=0`、SSH/UFW/Docker/Nginx 与故障恢复；保留 8 天内的报告原件和 SHA256。

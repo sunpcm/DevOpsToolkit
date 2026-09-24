@@ -30,6 +30,7 @@ with tempfile.TemporaryDirectory(prefix="devops-toolkit-vm-evidence-") as direct
                 f"finished_at={finished_at.isoformat()}",
                 "ansible_core=2.21.4",
                 "ubuntu_images=22.04,24.04",
+                "instances=devops-toolkit-2204-test-20260924010101-123,devops-toolkit-2404-test-20260924010101-123",
                 "test_faults=1",
                 "cleanup_status=passed",
                 "emergency_cleanup=passed",
@@ -46,6 +47,9 @@ with tempfile.TemporaryDirectory(prefix="devops-toolkit-vm-evidence-") as direct
         ("source_dirty", "true"),
         ("test_faults", "0"),
         ("cleanup_status", "failed"),
+        ("instances", "devops-toolkit-2204-test-20260924010101-123"),
+        ("instances", "devops-toolkit-2404-test-20260924010101-123,devops-toolkit-2204-test-20260924010101-123"),
+        ("instances", "devops-toolkit-2204-test-20260924010101-123,devops-toolkit-2404-test-20260924010102-123"),
         ("finished_at", (finished_at - timedelta(days=9)).isoformat()),
         ("started_at", (finished_at + timedelta(days=1)).isoformat()),
     ):

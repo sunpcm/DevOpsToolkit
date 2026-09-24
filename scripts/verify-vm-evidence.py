@@ -19,6 +19,10 @@ EXPECTED_REPORT = {
     "test_faults": "1",
     "cleanup_status": "passed",
 }
+EXPECTED_INSTANCE_PATTERNS = (
+    re.compile(r"^devops-toolkit-2204-test-[0-9]{14}-[0-9]+$"),
+    re.compile(r"^devops-toolkit-2404-test-[0-9]{14}-[0-9]+$"),
+)
 
 
 def utc_timestamp(value: str) -> datetime:
@@ -47,6 +51,12 @@ def validate_report(values: dict[str, str], source_sha: str, max_age_days: int =
     }
     if mismatches:
         raise ValueError(f"VM smoke report mismatch: {mismatches}")
+    instances = values.get("instances", "").split(",")
+    if len(instances) != 2 or any(
+        not pattern.fullmatch(instance)
+        for pattern, instance in zip(EXPECTED_INSTANCE_PATTERNS, instances)
+    ) or instances[0].replace("2204", "2404", 1) != instances[1]:
+        raise ValueError("VM smoke report must contain one 22.04 and one 24.04 instance")
     started = utc_timestamp(values["started_at"])
     finished = utc_timestamp(values["finished_at"])
     now = datetime.now(timezone.utc)

@@ -39,8 +39,23 @@ mkdir -p "${WORK_DIR}" "${SSH_CONTROL_DIR}"
 instance_exists() { return 0; }
 multipass() {
   printf '%s\n' "$*" >>"${TMP_DIR}/multipass.log"
+  if [[ "${MULTIPASS_IMAGE_MISMATCH:-0}" == 1 && "$1" == exec ]]; then
+    return 1
+  fi
   return 0
 }
+assert_instance_image devops-toolkit-2204-test-20260922010101-123
+assert_instance_image devops-toolkit-2404-test-20260922010101-123
+grep -Fq 'sh 22.04' "${TMP_DIR}/multipass.log"
+grep -Fq 'sh 24.04' "${TMP_DIR}/multipass.log"
+if (MULTIPASS_IMAGE_MISMATCH=1; assert_instance_image devops-toolkit-2404-test-20260922010101-123) >/dev/null 2>&1; then
+  echo "错误：实际镜像版本不符时未拒绝验收。" >&2
+  exit 1
+fi
+if (assert_instance_image production-server) >/dev/null 2>&1; then
+  echo "错误：镜像版本检查接受了非临时实例名。" >&2
+  exit 1
+fi
 configure_test_hosts "${ACTIVE_INSTANCES[0]}"
 grep -Fq "sudo sh -c grep -Fqx '91.189.92.19 ports.ubuntu.com'" \
   "${TMP_DIR}/multipass.log"
