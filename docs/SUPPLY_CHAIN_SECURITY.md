@@ -15,15 +15,20 @@ Release 包含三个固定名称资产：
 
 `.github/workflows/release.yml` 只在 `v*` tag 上运行，并获得最小的 `contents: write` 与 `id-token: write` 权限。流程会：
 
-1. 在无发布权限的 job 中安装固定版本 Ansible 依赖、验证源码，并把精确版本的 collections 保存为
-   仅保留一天的 workflow artifact。
-2. 验证通过后，在全新 runner 上重新 checkout 同一 tag，只恢复上一步验证过的 collections；有发布权限的
-   构建 job 不运行 PyPI 或 Ansible Galaxy 安装。
-3. 构建脚本核对 collection manifest、精确版本和完整集合，再把它们写入最终 tarball；签名覆盖整个产物。
-4. 下载固定版本 Cosign，使用仓库内固定的 SHA256 校验二进制。
-5. 通过 GitHub Actions OIDC 获取短期身份，不使用长期签名私钥或 GitHub Secret。
-6. 将证书、签名和透明日志证明写入 Sigstore bundle。
-7. 在上传 Release 前立即验证签名身份。
+1. Release workflow 在同一 tag SHA 上调用完整 Validate workflow，包含质量检查与 Ansible/Python 矩阵；
+   并确认 tag commit 是当前 `origin/main` 的祖先。不能把另一个并行的 push 检查当作发布门禁。
+2. 在无发布权限的 job 中下载固定版本 Ansible collection 原始归档，按
+   `ansible/collections.lock.json` 校验文件名、SHA256 和内部 manifest，再从这些已校验归档安装依赖；
+   原始归档和安装目录一起保存为仅保留一天的 workflow artifact。
+3. 验证通过后，等待受保护 `release` Environment 人工审批；审批人核对当次一次性 VM 报告
+   原件、SHA256、来源 SHA 与同 SHA CI。通过后在全新 runner 上重新 checkout 同一 tag，
+   只恢复上一步验证过的 collections；有发布权限的构建 job 不运行 PyPI 或 Ansible Galaxy 安装。
+4. 构建脚本再次核对原始归档 SHA256、`requirements.yml`、安装后 manifest、精确版本和完整集合，
+   再把 lock、collections 与绑定 lock 摘要的 marker 写入最终 tarball；签名覆盖整个产物。
+5. 下载固定版本 Cosign，使用仓库内固定的 SHA256 校验二进制。
+6. 通过 GitHub Actions OIDC 获取短期身份，不使用长期签名私钥或 GitHub Secret。
+7. 将证书、签名和透明日志证明写入 Sigstore bundle。
+8. 在上传 Release 前立即验证签名身份，并在 Release notes 前缀记录精确 source commit SHA。
 
 安装器也会下载固定版本 Cosign，并用内置的平台 SHA256 校验。验证条件不是“存在一个合法签名”即可，而是同时要求：
 
@@ -35,9 +40,21 @@ Release 包含三个固定名称资产：
 
 任何条件不匹配都会在发布版本目录和切换 `current` 之前失败。
 
-## 必须手工完成的 GitHub 设置
+安装器仅对已发布的旧版本 `v0.1.2`、`v0.1.3`、`v0.1.4`、`v0.1.5`、`v0.1.7`
+允许缺少内置 collection 标记时使用 Galaxy 兼容路径。其他版本缺标记一律拒绝，
+已有版本的标记与 manifest 在复用前也会重验；新 Release 不会静默回退到网络安装。
 
-代码无法替你修改以下账号和仓库控制面。首次发布前应逐项完成。
+## GitHub 控制面：当前状态与复核清单
+
+截至 2026-09-24，仓库控制面已启用并由 API 回查：`main` 禁止删除/force push，
+要求来源为 GitHub Actions 的 `quality`、Python 3.12/3.14 三项检查；`v*` tag 禁止
+更新/删除；`release` Environment 只允许 `v*` tag，要求 `sunpcm` 审批且不允许管理员
+强制绕过；immutable releases、仅 GitHub 官方 Action、完整 SHA pin、Dependabot alerts
+和 security updates 均已启用。草稿 PR #2 的检查成功**不能**替代新 tag、Environment
+审批和不可变资产的真实发布验收。详细 API 证据见
+[2026-09-24 发布门禁记录](../archive/progress/2026-09-24-release-gate-manual-vm.md)。
+
+以下是维护或重新配置时的清单；账号 2FA/恢复代码不在仓库 API 验证范围内，必须由账户持有人确认。
 
 ### 1. 保护 GitHub 账号
 
@@ -46,56 +63,94 @@ Release 包含三个固定名称资产：
 - 删除不再使用的 Personal Access Token、SSH key、OAuth App 和 GitHub App 授权。
 - 日常操作优先使用细粒度、短有效期 Token，避免 classic PAT。
 
-### 2. 创建 `release` Environment
+### 2. 复核 `release` Environment
 
 进入仓库：
 
-`Settings` → `Environments` → `New environment` → 输入 `release`
+`Settings` → `Environments` → `release`（新仓库才需创建同名环境）
 
-建议设置：
+必须设置：
 
-- Required reviewers：至少一名可信维护者。
+- Required reviewers：至少一名可信维护者；审批前执行[发布流程](RELEASING.md)中的一次性 VM 验收。
 - Prevent self-review：有第二名维护者时开启；单人仓库开启后会无法自行发布。
-- Deployment branches and tags：只允许受保护的 `v*` tags。
+- 禁止管理员强制绕过保护规则（`can_admins_bypass=false`）。
+- Deployment branches and tags：只允许 `v*` tag；tag 的更新/删除另由 tag ruleset 禁止。
 
 Release workflow 已引用该 Environment。Environment 不需要配置 Cosign 私钥或 Secret。
 
-必须在推送首个 `v*` tag 前完成这一步，否则发布 job 可能等待审批或因 Environment 策略不完整而无法发布。
+必须在推送新 `v*` tag 前完成这一步；仅创建同名空 Environment 不构成保护。单维护者
+自审是可执行的人工暂停点，不提供独立第二人复核；有第二名维护者时开启防自审。
 
-### 3. 保护 `main`
+### 3. 复核 `main`
 
-在 `Settings` → `Rules` → `Rulesets` 新建分支规则，目标为默认分支：
+当前规则集 `23913370` 已覆盖 `main`：禁止删除和 force push，并要求上述三项
+GitHub Actions 检查，采用 strict latest-code policy，且无 bypass。待草稿 PR 经独立复核、
+完成真实合并后，继续核对最终合并提交的检查。当前**未**要求 PR approval；单维护者
+无法满足第二人复核，不能把现有规则写成已经强制了审批。
+
+有第二名可信维护者后，可在 `Settings` → `Rules` → `Rulesets` 评估增加：
 
 - Require a pull request before merging。
 - 至少 1 个 approval，并开启 Dismiss stale approvals。
-- Require status checks，选择 Validate workflow 的两个 Ansible 矩阵任务。
+- 保持 required status checks 覆盖 quality 与两个 Ansible/Python 矩阵任务。
 - Require conversation resolution。
-- Block force pushes 和 deletions。
 - 建议 Require signed commits 与 linear history。
-- 不允许常规维护者绕过规则；保留受控的紧急恢复账号。
+- 不允许常规维护者绕过规则；如确需紧急恢复路径，单独审查其权限。
 
-如果仓库只有一名维护者，强制他人 approval 会阻塞日常开发。可以先保留 required checks、禁止 force push，并尽快增加第二名可信 reviewer。
+单维护者阶段保留当前必需检查和禁止重写规则，不把尚未实施的第二人审批写成已完成。
 
 ### 4. 保护 Release tags
 
-新建 tag ruleset，目标模式为 `v*`：
+当前 tag ruleset `23913374` 以 `v*` 为目标，禁止更新/删除，且无 bypass。
+新 tag 的创建尚未另设 ruleset 限制；当前仓库只有一名管理员具备写权限。若增加维护者，
+须重新设计 tag 创建权限，不能误以为目前已经按发布角色隔离。维护时检查：
 
-- 限制创建权限到仓库管理员或发布角色。
+- 新 tag 只能由被授权的发布者创建；新增写入者前复核权限。
 - 禁止更新和删除已经推送的 tag。
-- 如果仓库设置中提供 immutable releases，建议开启。
+- 保持仓库级 immutable releases 启用；它只保护启用后新发布的 Release，历史版本不能追溯变更。
 
 发布后不要复用版本号。需要修复时创建新版本，例如 `v0.1.1`。
 
 ### 5. 收紧 Actions
 
-进入 `Settings` → `Actions` → `General`：
+当前设置只允许 GitHub 官方 Action（非官方 verified 与自定义 pattern 均关闭），并强制完整
+commit SHA pin；Dependabot alerts/security updates 已启用。进入 `Settings` → `Actions` →
+`General` 定期复核：
 
 - Workflow permissions 默认设为 Read repository contents。
 - 不需要时关闭 Allow GitHub Actions to create and approve pull requests。
-- 只允许 GitHub 官方和经过审核的 Actions。
+- 只允许 GitHub 官方 Action；确需第三方 Action 时先独立审核，再增加显式允许项。
+- 开启“Require actions to be pinned to a full-length commit SHA”。
+- 保持 Dependabot alerts 与 security updates 开启；固定版本与 checksum 的更新仍须经 PR 复核。
 
 本项目引用的 GitHub Actions（包括 collections 在 job 间传递使用的 artifact actions）已固定到完整
 commit SHA，避免上游移动 tag 后改变执行代码。
+
+## 依赖锁与可复现边界
+
+`ansible/collections.lock.json` 是 collection 名称、版本、原始 tarball 文件名与 SHA256 的单一来源。
+`scripts/verify-collection-lock.py` 强制校验 `requirements.yml`、下载归档、安装目录和 Release marker；
+任一归档、checksum、manifest、marker 或 lock 被修改，Release 构建或安装都会 fail closed。
+
+这不代表整台机器可以 bit-for-bit 重建：
+
+- Ansible Core、collections、Cosign、uv 和若干 Git source 固定到版本、checksum 或 commit。
+- Ubuntu apt 包及其传递依赖跟随所配置仓库在执行时的候选版本，是滚动输入。
+- Docker CE 来自 Docker 官方 apt 仓库，当前角色没有固定完整 `.deb` 集合及仓库快照。
+- Linuxbrew bootstrap 固定 Git commit，但 `brew install` 的 formula、bottle 和依赖解析仍跟随 Homebrew 仓库。
+
+因此“Git source 固定”只保证对应源码 checkout 不漂移，不能外推为整个系统完全可复现。需要长期保存的环境
+应额外使用 apt 仓库快照、固定 `.deb`/bottle 归档及其校验值，或制作经过签名的基础镜像。
+
+## 月度只读依赖审计
+
+`.github/workflows/dependency-audit.yml` 每月一日及手工触发时运行
+`scripts/dependency-audit.py`，输出 Ansible、collections、Cosign、uv、NVM、goenv、Go、Node LTS 与
+GitHub Actions 的当前固定值、checksum 和官方复核入口。工作流只有 `contents: read`，只上传报告 artifact，
+不会创建 PR、修改依赖或自动合并。
+
+维护者查看报告后必须在官方来源核对支持周期与变更日志；更新通过独立 PR，重新复核归档 checksum，
+并通过静态门禁、篡改负向测试和一次性 VM smoke 后才能合并。高风险依赖禁止自动合并。
 
 ## 手工验证 Release
 
@@ -109,7 +164,7 @@ cosign version
 下载同一版本的三个资产：
 
 ```bash
-VERSION=v0.1.4
+VERSION=v0.1.7
 gh release download "${VERSION}" \
   --repo sunpcm/DevOpsToolkit \
   --pattern 'devops-toolkit.tar.gz*' \
@@ -158,7 +213,7 @@ git log -1 --show-signature
 确认工作区为空、测试通过，并核对 tag 指向：
 
 ```bash
-VERSION=v0.1.5  # 示例；必须换成尚未使用的新版本
+VERSION=v0.1.8  # 示例；必须换成尚未使用的新版本
 git tag -s "${VERSION}" -m "DevOpsToolkit ${VERSION}"
 git show --show-signature "${VERSION}"
 git push origin "${VERSION}"
@@ -173,11 +228,15 @@ git push origin "${VERSION}"
 - 安装器本身来自可变的 `main`。高安全环境应先固定并审查安装器提交：
 
 ```bash
-INSTALLER_COMMIT="替换为已审查的完整提交 SHA"
+INSTALLER_COMMIT="74ef67b11b760a63d53f4f8f975d5e19fcf07405"  # v0.1.7 示例
 curl -fsSLo /tmp/devops-toolkit-install.sh \
   "https://raw.githubusercontent.com/sunpcm/DevOpsToolkit/${INSTALLER_COMMIT}/install.sh"
+printf '%s  %s\n' \
+  '9e2d23881cbee4afbbbcf765000e4d30cbb04451ae1f3394b367a986aa8e9c1d' \
+  /tmp/devops-toolkit-install.sh | sha256sum --check --strict
 less /tmp/devops-toolkit-install.sh
-/bin/bash /tmp/devops-toolkit-install.sh --version v0.1.4
+/bin/bash /tmp/devops-toolkit-install.sh --version v0.1.7
 ```
 
+- 上例 SHA256 来自仓库 `v0.1.7` 的 `install.sh`，仅适用于该示例提交；切换版本或提交必须独立复核。
 - Cosign 信任根和透明日志验证需要网络。网络受限时安装器会安全失败，不会降级为只检查 SHA256。

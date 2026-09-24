@@ -4,11 +4,13 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_DIR="$(mktemp -d)"
 cleanup() {
+  local status=$?
   if [[ -n "${DEVOPS_TOOLKIT_TEST_KEEP_TMP:-}" ]]; then
     echo "保留测试目录：${TMP_DIR}" >&2
   else
     rm -rf "${TMP_DIR}"
   fi
+  return "${status}"
 }
 trap cleanup EXIT
 
@@ -60,22 +62,53 @@ EOF
 collections: []
 EOF
   if [[ "${collection_mode}" != "legacy" ]]; then
-    mkdir -p \
-      "${stage}/devops-toolkit/collections/ansible_collections/ansible/posix" \
-      "${stage}/devops-toolkit/collections/ansible_collections/community/general"
-    printf '%s\n' \
-      '{"collection_info":{"namespace":"ansible","name":"posix","version":"1.5.4"}}' \
-      >"${stage}/devops-toolkit/collections/ansible_collections/ansible/posix/MANIFEST.json"
-    printf '%s\n' \
-      '{"collection_info":{"namespace":"community","name":"general","version":"7.5.2"}}' \
-      >"${stage}/devops-toolkit/collections/ansible_collections/community/general/MANIFEST.json"
-    printf '%s\n' 'ansible.posix=1.5.4' 'community.general=7.5.2' \
-      >"${stage}/devops-toolkit/collections/.bundled-collections"
+    cp "${ROOT_DIR}/ansible/collections.lock.json" \
+      "${stage}/devops-toolkit/ansible/collections.lock.json"
+    python3 - \
+      "${stage}/devops-toolkit/ansible/collections.lock.json" \
+      "${stage}/devops-toolkit/collections" <<'PY'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+lock_path, collection_root = map(Path, sys.argv[1:])
+lock_bytes = lock_path.read_bytes()
+entries = json.loads(lock_bytes)["collections"]
+marker = [f"lock-sha256={hashlib.sha256(lock_bytes).hexdigest()}"]
+for entry in sorted(entries, key=lambda item: item["name"]):
+    namespace, name = entry["name"].split(".", 1)
+    directory = collection_root / "ansible_collections" / namespace / name
+    directory.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "collection_info": {
+            "namespace": namespace,
+            "name": name,
+            "version": entry["version"],
+        }
+    }
+    (directory / "MANIFEST.json").write_text(
+        json.dumps(manifest) + "\n", encoding="utf-8"
+    )
+    marker.append(f"{entry['name']}={entry['version']}")
+(collection_root / ".bundled-collections").write_text(
+    "\n".join(marker) + "\n", encoding="utf-8"
+)
+PY
     if [[ "${collection_mode}" == "invalid-bundle" ]]; then
       printf '%s\n' \
         '{"collection_info":{"namespace":"community","name":"general","version":"9.9.9"}}' \
         >"${stage}/devops-toolkit/collections/ansible_collections/community/general/MANIFEST.json"
+    elif [[ "${collection_mode}" == "invalid-marker" ]]; then
+      sed -i.bak '1s/[0-9a-f][0-9a-f]*$/0000000000000000000000000000000000000000000000000000000000000000/' \
+        "${stage}/devops-toolkit/collections/.bundled-collections"
+      rm -f "${stage}/devops-toolkit/collections/.bundled-collections.bak"
+    elif [[ "${collection_mode}" == "invalid-lock" ]]; then
+      printf '\n' >>"${stage}/devops-toolkit/ansible/collections.lock.json"
     fi
+  fi
+  if [[ "${collection_mode}" == "world-writable" ]]; then
+    chmod 0777 "${stage}/devops-toolkit/VERSION"
   fi
   mkdir -p "${output_dir}"
   COPYFILE_DISABLE=1 tar -C "${stage}" -czf "${output_dir}/devops-toolkit.tar.gz" devops-toolkit
@@ -95,6 +128,10 @@ import tarfile
 import sys
 
 with tarfile.open(sys.argv[1], "w:gz") as archive:
+    version = b"v0.4.0\n"
+    version_member = tarfile.TarInfo("devops-toolkit/VERSION")
+    version_member.size = len(version)
+    archive.addfile(version_member, io.BytesIO(version))
     data = b"escape"
     member = tarfile.TarInfo("../escape")
     member.size = len(data)
@@ -103,13 +140,15 @@ PY
   printf '%s  devops-toolkit.tar.gz\n' \
     "$(sha256_file "${output_dir}/devops-toolkit.tar.gz")" \
     >"${output_dir}/devops-toolkit.tar.gz.sha256"
+  printf '{"fixture":"unsafe"}\n' \
+    >"${output_dir}/devops-toolkit.tar.gz.sigstore.json"
 }
 
 MOCK_BIN="${TMP_DIR}/mock-bin"
 mkdir -p "${MOCK_BIN}"
 cat >"${MOCK_BIN}/ansible-playbook" <<'EOF'
 #!/usr/bin/env bash
-echo 'ansible-playbook [core 2.18.6]'
+echo 'ansible-playbook [core 2.21.4]'
 EOF
 cat >"${MOCK_BIN}/ansible-galaxy" <<'EOF'
 #!/usr/bin/env bash
@@ -124,6 +163,15 @@ cat >"${TMP_DIR}/fake-cosign" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"${DEVOPS_TOOLKIT_TEST_COSIGN_LOG}"
+if [[ -n "${DEVOPS_TOOLKIT_TEST_ASSERT_PREEXTRACT:-}" ]]; then
+  for argument in "$@"; do
+    if [[ "${argument}" == */devops-toolkit.tar.gz ]]; then
+      [[ ! -e "${argument%/*}/extracted" ]] || exit 1
+      : >"${DEVOPS_TOOLKIT_TEST_PREEXTRACT_MARKER}"
+      break
+    fi
+  done
+fi
 [[ -z "${DEVOPS_TOOLKIT_TEST_COSIGN_FAIL:-}" ]]
 EOF
 chmod +x "${TMP_DIR}/fake-cosign"
@@ -145,6 +193,16 @@ cosign_download_base() { printf '%s\\n' 'file://${MOCK_COSIGN_DIR}'; }
 cosign_expected_sha256() {
   printf '%s\\n' "\${DEVOPS_TOOLKIT_TEST_EXPECTED_COSIGN_SHA256:-${FAKE_COSIGN_SHA256}}"
 }
+ensure_managed_runtime() {
+  local runtime_dir
+  runtime_dir="\$(managed_runtime_dir)"
+  if [[ ! -f "\${runtime_dir}/.ready" ]]; then
+    mkdir -p "\${runtime_dir}/bin"
+    cp "${MOCK_BIN}/ansible-playbook" "${MOCK_BIN}/ansible-galaxy" "\${runtime_dir}/bin/"
+    printf '%s\\n' '2.21.4' >"\${runtime_dir}/.ready"
+    printf '%s\\n' "\${runtime_dir}" >>"${TMP_DIR}/runtime-created.log"
+  fi
+}
 main "\$@"
 EOF
 chmod +x "${INSTALLER}"
@@ -153,11 +211,19 @@ mkdir -p "${HOME}"
 RELEASE_V1="${TMP_DIR}/release-v1"
 RELEASE_V2="${TMP_DIR}/release-v2"
 RELEASE_LEGACY="${TMP_DIR}/release-legacy"
+RELEASE_MISSING_BUNDLE="${TMP_DIR}/release-missing-bundle"
 RELEASE_INVALID_BUNDLE="${TMP_DIR}/release-invalid-bundle"
+RELEASE_INVALID_MARKER="${TMP_DIR}/release-invalid-marker"
+RELEASE_INVALID_LOCK="${TMP_DIR}/release-invalid-lock"
+RELEASE_WORLD_WRITABLE="${TMP_DIR}/release-world-writable"
 make_release v0.1.0 "${RELEASE_V1}"
 make_release v0.2.0 "${RELEASE_V2}"
-make_release v0.0.9 "${RELEASE_LEGACY}" legacy
+make_release v0.1.7 "${RELEASE_LEGACY}" legacy
+make_release v0.1.8 "${RELEASE_MISSING_BUNDLE}" legacy
 make_release v0.3.0 "${RELEASE_INVALID_BUNDLE}" invalid-bundle
+make_release v0.3.1 "${RELEASE_INVALID_MARKER}" invalid-marker
+make_release v0.3.2 "${RELEASE_INVALID_LOCK}" invalid-lock
+make_release v0.3.3 "${RELEASE_WORLD_WRITABLE}" world-writable
 
 DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${RELEASE_V1}" \
   "${INSTALLER}" --user --no-run --version v0.1.0
@@ -190,8 +256,23 @@ DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${RELEASE_V1}" \
   "${INSTALLER}" --user --no-run --version v0.1.0
 [[ "$(find "${HOME}/.local/share/devops-toolkit/releases" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')" == "1" ]] || \
   fail "重复安装产生了重复版本目录"
+[[ "$(wc -l <"${TMP_DIR}/runtime-created.log" | tr -d ' ')" == "1" ]] || \
+  fail "重复安装重建了隔离 runtime"
 [[ "$(wc -l <"${DEVOPS_TOOLKIT_TEST_GALAXY_LOG}" | tr -d ' ')" == "0" ]] || \
   fail "内置 collections 的安装或重复安装仍调用了 Galaxy"
+
+MODE_HOME="${TMP_DIR}/world-writable-home"
+mkdir -p "${MODE_HOME}"
+HOME="${MODE_HOME}" DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${RELEASE_WORLD_WRITABLE}" \
+  "${INSTALLER}" --user --no-run --version v0.3.3 >/dev/null
+python3 - "${MODE_HOME}" <<'PY'
+import stat
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1]) / ".local/share/devops-toolkit/releases/v0.3.3/VERSION"
+assert stat.S_IMODE(path.stat().st_mode) & 0o022 == 0
+PY
 
 # A tampered Cosign cache must be replaced from the pinned, verified source.
 COSIGN_CACHE="$(find "${HOME}/.local/share/devops-toolkit/tools" -type f -name 'cosign-v3.1.1-*' -print -quit)"
@@ -238,6 +319,8 @@ if DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${UNSAFE_RELEASE}" \
   "${INSTALLER}" --user --no-run >/dev/null 2>&1; then
   fail "危险 tar 路径未被拒绝"
 fi
+grep -F -- 'refs/tags/v0.4.0' "${DEVOPS_TOOLKIT_TEST_COSIGN_LOG}" >/dev/null || \
+  fail "危险 tar 测试未进入验签后的解包路径"
 [[ ! -e "${TMP_DIR}/escape" ]] || fail "危险 tar 写出了目标目录"
 
 # A missing bundle, bad Cosign bootstrap hash, or failed identity must stop before publication.
@@ -258,13 +341,57 @@ fi
 [[ ! -e "${TMP_DIR}/bad-cosign-home/.local/share/devops-toolkit/current" ]] || \
   fail "Cosign 引导校验失败后切换了 current"
 
+PREEXTRACT_MARKER="${TMP_DIR}/signature-before-extraction.marker"
 if HOME="${TMP_DIR}/bad-signature-home" DEVOPS_TOOLKIT_TEST_COSIGN_FAIL=1 \
+  DEVOPS_TOOLKIT_TEST_ASSERT_PREEXTRACT=1 \
+  DEVOPS_TOOLKIT_TEST_PREEXTRACT_MARKER="${PREEXTRACT_MARKER}" \
   DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${RELEASE_V1}" \
   "${INSTALLER}" --user --no-run >/dev/null 2>&1; then
   fail "错误 Sigstore 身份未被拒绝"
 fi
+[[ -e "${PREEXTRACT_MARKER}" ]] || fail "Sigstore 身份验证未在解包前执行"
 [[ ! -e "${TMP_DIR}/bad-signature-home/.local/share/devops-toolkit/current" ]] || \
   fail "Sigstore 验证失败后切换了 current"
+
+# Never execute a pre-existing system runtime from a non-root-owned path.
+UNTRUSTED_PYTHON_DIR="${TMP_DIR}/untrusted-python"
+UNTRUSTED_PYTHON_MARKER="${TMP_DIR}/untrusted-python-executed"
+mkdir -p "${UNTRUSTED_PYTHON_DIR}"
+cat >"${UNTRUSTED_PYTHON_DIR}/python3" <<'EOF'
+#!/usr/bin/env bash
+: >"${DEVOPS_TOOLKIT_TEST_UNTRUSTED_PYTHON_MARKER}"
+exit 0
+EOF
+chmod +x "${UNTRUSTED_PYTHON_DIR}/python3"
+PATH="${UNTRUSTED_PYTHON_DIR}:${PATH}" \
+  DEVOPS_TOOLKIT_TEST_UNTRUSTED_PYTHON_MARKER="${UNTRUSTED_PYTHON_MARKER}" \
+  bash -c 'source "$1"; effective_uid() { printf 0; }; parse_args --system; [[ "$PATH" == /usr/bin:/bin:/usr/sbin:/sbin ]]' \
+    _ "${ROOT_DIR}/install.sh" || fail "系统安装没有清理继承的 PATH"
+[[ ! -e "${UNTRUSTED_PYTHON_MARKER}" ]] || fail "系统安装执行了 PATH 中的不可信 Python"
+if DEVOPS_TOOLKIT_SYSTEM_PYTHON="${UNTRUSTED_PYTHON_DIR}/python3" \
+  DEVOPS_TOOLKIT_TEST_UNTRUSTED_PYTHON_MARKER="${UNTRUSTED_PYTHON_MARKER}" \
+  bash -c 'source "$1"; INSTALL_MODE=system; check_controller_python' _ "${ROOT_DIR}/install.sh" >/dev/null 2>&1; then
+  fail "系统安装接受了不可信 Python"
+fi
+[[ ! -e "${UNTRUSTED_PYTHON_MARKER}" ]] || fail "验证路径前执行了不可信 Python"
+
+UNTRUSTED_RUNTIME_BASE="${TMP_DIR}/untrusted-system-runtime"
+UNTRUSTED_RUNTIME_MARKER="${TMP_DIR}/untrusted-runtime-executed"
+mkdir -p "${UNTRUSTED_RUNTIME_BASE}/runtime/ansible-core-2.21.4/bin"
+printf '%s\n' '2.21.4' >"${UNTRUSTED_RUNTIME_BASE}/runtime/ansible-core-2.21.4/.ready"
+cat >"${UNTRUSTED_RUNTIME_BASE}/runtime/ansible-core-2.21.4/bin/ansible-playbook" <<'EOF'
+#!/usr/bin/env bash
+: >"${DEVOPS_TOOLKIT_TEST_UNTRUSTED_RUNTIME_MARKER}"
+echo 'ansible-playbook [core 2.21.4]'
+EOF
+chmod +x "${UNTRUSTED_RUNTIME_BASE}/runtime/ansible-core-2.21.4/bin/ansible-playbook"
+cp "${MOCK_BIN}/ansible-galaxy" "${UNTRUSTED_RUNTIME_BASE}/runtime/ansible-core-2.21.4/bin/ansible-galaxy"
+if DEVOPS_TOOLKIT_INSTALL_BASE="${UNTRUSTED_RUNTIME_BASE}" \
+  DEVOPS_TOOLKIT_TEST_UNTRUSTED_RUNTIME_MARKER="${UNTRUSTED_RUNTIME_MARKER}" \
+  bash -c 'source "$1"; INSTALL_MODE=system; CONTROLLER_PYTHON=/usr/bin/python3; check_controller_python() { :; }; ensure_managed_runtime' _ "${ROOT_DIR}/install.sh" >/dev/null 2>&1; then
+  fail "不可信系统 runtime 未被拒绝"
+fi
+[[ ! -e "${UNTRUSTED_RUNTIME_MARKER}" ]] || fail "验证权限前执行了不可信系统 runtime"
 
 # A bundled release must install even when Galaxy is unavailable.
 OFFLINE_HOME="${TMP_DIR}/offline-home"
@@ -286,26 +413,57 @@ fi
 [[ ! -e "${INVALID_BUNDLE_HOME}/.local/share/devops-toolkit/current" ]] || \
   fail "内置 collection 校验失败后切换了 current"
 
+for invalid_case in marker lock; do
+  invalid_home="${TMP_DIR}/invalid-${invalid_case}-home"
+  invalid_version=v0.3.1
+  invalid_release="${RELEASE_INVALID_MARKER}"
+  if [[ "${invalid_case}" == lock ]]; then
+    invalid_version=v0.3.2
+    invalid_release="${RELEASE_INVALID_LOCK}"
+  fi
+  mkdir -p "${invalid_home}"
+  if HOME="${invalid_home}" \
+    DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${invalid_release}" \
+    "${INSTALLER}" --user --no-run --version "${invalid_version}" >/dev/null 2>&1; then
+    fail "安装器接受了被篡改的 collection ${invalid_case}"
+  fi
+  [[ ! -e "${invalid_home}/.local/share/devops-toolkit/current" ]] || \
+    fail "collection ${invalid_case} 校验失败后切换了 current"
+done
+
 # Legacy releases keep the runtime Galaxy compatibility path.
 LEGACY_HOME="${TMP_DIR}/legacy-home"
 mkdir -p "${LEGACY_HOME}"
 galaxy_before="$(wc -l <"${DEVOPS_TOOLKIT_TEST_GALAXY_LOG}" | tr -d ' ')"
 HOME="${LEGACY_HOME}" DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${RELEASE_LEGACY}" \
-  "${INSTALLER}" --user --no-run --version v0.0.9 >/dev/null
+  "${INSTALLER}" --user --no-run --version v0.1.7 >/dev/null
 galaxy_after="$(wc -l <"${DEVOPS_TOOLKIT_TEST_GALAXY_LOG}" | tr -d ' ')"
 [[ "$((galaxy_after - galaxy_before))" == "1" ]] || \
   fail "旧版 Release 没有调用 Galaxy 兼容安装"
+
+# A new signed release cannot silently lose its bundle and fetch from Galaxy.
+MISSING_BUNDLE_HOME="${TMP_DIR}/missing-bundle-home"
+mkdir -p "${MISSING_BUNDLE_HOME}"
+galaxy_before="$(wc -l <"${DEVOPS_TOOLKIT_TEST_GALAXY_LOG}" | tr -d ' ')"
+if HOME="${MISSING_BUNDLE_HOME}" DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${RELEASE_MISSING_BUNDLE}" \
+  "${INSTALLER}" --user --no-run --version v0.1.8 >/dev/null 2>&1; then
+  fail "新版 Release 缺少 bundle 标记时未被拒绝"
+fi
+galaxy_after="$(wc -l <"${DEVOPS_TOOLKIT_TEST_GALAXY_LOG}" | tr -d ' ')"
+[[ "${galaxy_after}" == "${galaxy_before}" ]] || fail "新版 Release 缺标记时调用了 Galaxy"
+[[ ! -e "${MISSING_BUNDLE_HOME}/.local/share/devops-toolkit/current" ]] || \
+  fail "新版 Release 缺标记时切换了 current"
 
 # A legacy collection failure must not publish or activate a partial version.
 FAILED_HOME="${TMP_DIR}/failed-home"
 mkdir -p "${FAILED_HOME}"
 if HOME="${FAILED_HOME}" DEVOPS_TOOLKIT_TEST_GALAXY_FAIL=1 \
   DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${RELEASE_LEGACY}" \
-  "${INSTALLER}" --user --no-run --version v0.0.9 >/dev/null 2>&1; then
+  "${INSTALLER}" --user --no-run --version v0.1.7 >/dev/null 2>&1; then
   fail "collection 安装失败未传递错误"
 fi
 [[ ! -e "${FAILED_HOME}/.local/share/devops-toolkit/current" ]] || fail "失败安装切换了 current"
-[[ ! -e "${FAILED_HOME}/.local/share/devops-toolkit/releases/v0.0.9" ]] || fail "失败安装发布了不完整版本"
+[[ ! -e "${FAILED_HOME}/.local/share/devops-toolkit/releases/v0.1.7" ]] || fail "失败安装发布了不完整版本"
 
 # Non-TTY execution installs but never starts the wizard.
 NON_TTY_HOME="${TMP_DIR}/non-tty-home"
@@ -334,10 +492,15 @@ PY
 
 # Dependency policy: user mode never calls apt; system mode uses only the whitelist.
 APT_LOG="${TMP_DIR}/apt.log"
+(
+  source "${ROOT_DIR}/install.sh"
+  CONTROLLER_PYTHON=/bin/false
+  missing_core_commands | grep -Fx python3-venv >/dev/null
+) || fail "缺少 ensurepip 时未识别 python3-venv 依赖"
 if (
   source "${ROOT_DIR}/install.sh"
   INSTALL_MODE=user
-  missing_core_commands() { echo ansible-playbook; }
+  missing_core_commands() { echo git; }
   run_apt_get() { echo "$*" >>"${APT_LOG}"; }
   ensure_dependencies
 ) >/dev/null 2>&1; then
@@ -350,7 +513,7 @@ fi
   INSTALL_MODE=system
   marker="${TMP_DIR}/deps-installed"
   missing_core_commands() {
-    [[ -e "${marker}" ]] || echo ansible-playbook
+    [[ -e "${marker}" ]] || echo git
     return 0
   }
   apt_get_available() { return 0; }
@@ -362,18 +525,50 @@ fi
   ensure_dependencies
 )
 grep -Fx 'update' "${APT_LOG}" >/dev/null
-grep -Fx 'install -y ansible python3 python3-pip git curl ca-certificates openssl sshpass' "${APT_LOG}" >/dev/null
+grep -Fx 'install -y python3 python3-venv git curl ca-certificates openssl sshpass' "${APT_LOG}" >/dev/null
 
-# apt 的 ansible 版本过低时，系统模式改用 pip 安装 ansible-core。
-PIP_LOG="${TMP_DIR}/pip.log"
-(
+# Platform checks run before any apt/runtime/system installation. WSL1 and
+# unsupported Linux distributions cannot be mistaken for supported WSL2.
+assert_platform() (
+  local test_os="$1" test_arch="$2" test_id="$3" test_version="$4" test_kernel="$5"
   source "${ROOT_DIR}/install.sh"
-  # 起始不达标；模拟 pip 安装后达标。
-  ansible_core_meets_requirement() { [[ -e "${TMP_DIR}/pip-done" ]]; }
-  pip_install_ansible_core() { echo called >>"${PIP_LOG}"; : >"${TMP_DIR}/pip-done"; }
-  ensure_ansible_core
+  uname() {
+    case "$1" in
+      -s) printf '%s\n' "${test_os}" ;;
+      -m) printf '%s\n' "${test_arch}" ;;
+      *) return 1 ;;
+    esac
+  }
+  read_controller_os_release() { printf '%s %s\n' "${test_id}" "${test_version}"; }
+  controller_kernel_release() { printf '%s\n' "${test_kernel}"; }
+  check_controller_platform
 )
-[[ -s "${PIP_LOG}" ]] || fail "ansible-core 版本过低时未触发 pip 安装"
+assert_platform Linux x86_64 ubuntu 24.04 6.8.0-generic || fail "Ubuntu 24.04 被错误拒绝"
+assert_platform Linux aarch64 ubuntu 24.04 5.15-microsoft-standard-WSL2 || \
+  fail "WSL2 Ubuntu 24.04 被错误拒绝"
+assert_platform Darwin arm64 ignored ignored ignored || fail "macOS arm64 被错误拒绝"
+for platform in \
+  'Linux x86_64 ubuntu 22.04 6.8.0-generic' \
+  'Linux x86_64 debian 24.04 6.8.0-generic' \
+  'Linux ppc64le ubuntu 24.04 6.8.0-generic' \
+  'Linux x86_64 ubuntu 24.04 4.4-microsoft'; do
+  # Deliberately split the fixed five-field test tuple.
+  # shellcheck disable=SC2086
+  if assert_platform ${platform} >/dev/null 2>&1; then
+    fail "不支持的平台未被拒绝：${platform}"
+  fi
+done
+GUARD_MARKER="${TMP_DIR}/platform-guard-was-bypassed"
+if (
+  source "${ROOT_DIR}/install.sh"
+  check_controller_platform() { return 1; }
+  check_controller_python() { : >"${GUARD_MARKER}"; }
+  ensure_dependencies() { : >"${GUARD_MARKER}"; }
+  main --user --no-run
+) >/dev/null 2>&1; then
+  fail "平台检查失败后安装器仍继续执行"
+fi
+[[ ! -e "${GUARD_MARKER}" ]] || fail "平台检查未在依赖安装前运行"
 
 "${ROOT_DIR}/install.sh" --help >/dev/null
 echo "安装器测试通过。"

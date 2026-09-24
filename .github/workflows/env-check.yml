@@ -2,9 +2,12 @@
 name: Validate
 
 on:
+  workflow_call:
   # quality 作业会扫描整个仓库（全部 *.sh、yamllint .），因此不做 push 路径过滤，
   # 否则 AcmeConfig/wsl-dev/ubuntu-server 等目录的 shell/yaml 问题会漏过 CI。
   push:
+    branches:
+      - "**"
   pull_request:
 
 jobs:
@@ -24,9 +27,9 @@ jobs:
       - name: Install pinned quality tools
         run: |
           python -m pip install \
-            ansible-core==2.18.6 \
-            ansible-lint==25.1.3 \
-            yamllint==1.35.1 \
+            ansible-core==2.21.4 \
+            ansible-lint==26.8.0 \
+            yamllint==1.38.0 \
             ruff==0.9.10
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
           go install github.com/zricethezav/gitleaks/v8@v8.24.3
@@ -47,7 +50,13 @@ jobs:
         run: yamllint .
 
       - name: Ruff
-        run: ruff check bin/devops-toolkit tests/test-wizard.py
+        run: >-
+          ruff check bin/devops-toolkit bin/devops-toolkit-doctor
+          tests/test-wizard.py tests/test-capabilities.py tests/test-doctor.py tests/test-user-profile.py
+          tests/test-orchestration.py tests/test-vm-evidence.py
+          scripts/verify-collection-lock.py scripts/dependency-audit.py scripts/verify-vm-evidence.py
+          AcmeConfig/libexec/acme-manager
+          AcmeConfig/tests/test_acme_manager.py
 
       - name: Actionlint
         run: actionlint
@@ -61,10 +70,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - python: "3.10"
-            ansible_core: "2.12.10"
           - python: "3.12"
-            ansible_core: "2.18.6"
+            ansible_core: "2.21.4"
+          - python: "3.14"
+            ansible_core: "2.21.4"
     steps:
       - name: Checkout
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0

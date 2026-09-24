@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ "${1:-}" == "--capabilities-json" ]]; then
+  [[ $# -eq 1 ]] || { echo "错误：--capabilities-json 不接受其他参数。" >&2; exit 2; }
+  exec "${ROOT_DIR}/bin/devops-toolkit" --capabilities-json --entrypoint ubuntu-ssh-finalize
+fi
+INVENTORY="${1:-}"
+TARGET_USER="${TARGET_USER:-${2:-}}"
+
+if [[ -z "${INVENTORY}" || -z "${TARGET_USER}" ]]; then
+  echo "用法：$0 <新端口普通用户 inventory> <target_user> [ansible-playbook 参数]"
+  exit 1
+fi
+if [[ ! "${TARGET_USER}" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]]; then
+  echo "错误：目标用户名格式不合法：${TARGET_USER}" >&2
+  exit 1
+fi
+
+COLLECTIONS_DIR="${ROOT_DIR}/collections"
+if [[ -d "${COLLECTIONS_DIR}/ansible_collections" ]]; then
+  export ANSIBLE_COLLECTIONS_PATH="${COLLECTIONS_DIR}"
+  export ANSIBLE_COLLECTIONS_PATHS="${COLLECTIONS_DIR}"
+fi
+export ANSIBLE_CONFIG="${ROOT_DIR}/ansible/ansible.cfg"
+exec "${ROOT_DIR}/bin/ansible-playbook" -i "${INVENTORY}" \
+  "${ROOT_DIR}/ansible/playbooks/ubuntu-ssh-finalize.yml" \
+  -e "target_user=${TARGET_USER}" "${@:3}"

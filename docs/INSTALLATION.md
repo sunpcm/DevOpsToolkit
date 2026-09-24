@@ -13,6 +13,7 @@
 root 模式会在 Ubuntu/WSL 上通过 apt 补齐白名单依赖，然后安装到：
 
 - 版本：`/opt/devops-toolkit/releases/<version>`
+- 隔离 Ansible：`/opt/devops-toolkit/runtime/ansible-core-2.21.4`
 - 当前版本：`/opt/devops-toolkit/current`
 - 命令：`/usr/local/bin/devops-toolkit`
 
@@ -21,6 +22,7 @@ root 模式会在 Ubuntu/WSL 上通过 apt 补齐白名单依赖，然后安装�
 普通用户执行同一命令时不会使用 sudo，安装位置为：
 
 - 版本：`~/.local/share/devops-toolkit/releases/<version>`
+- 隔离 Ansible：`~/.local/share/devops-toolkit/runtime/ansible-core-2.21.4`
 - 当前版本：`~/.local/share/devops-toolkit/current`
 - 命令：`~/.local/bin/devops-toolkit`
 
@@ -31,22 +33,27 @@ printf '\nexport PATH="$HOME/.local/bin:$PATH"\n' >>"$HOME/.profile"
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-普通用户安装绝不提权。缺少 Python、Ansible、Git、curl 或 OpenSSL 时，安装器会停止，并给出需要管理员安装的依赖。
-系统模式要求 `ansible-core >= 2.12`；Ubuntu 22.04 的 apt 版本只有 2.10，安装器会安装
-`python3-pip`，再固定到兼容范围 `ansible-core>=2.12,<2.19` 并复核版本。Ubuntu 24.04
-若触发系统 pip 保护，则只在该受控 bootstrap 步骤使用 `--break-system-packages`。
+普通用户安装绝不提权。控制端需要 Python 3.12–3.14（含 `venv`）、Git、curl 和 OpenSSL。
+安装器在自有目录创建 `ansible-core==2.21.4` 隔离 runtime，不修改系统 Python；重复安装复用已经自检的 runtime。
+`--system` 模式忽略继承的 `PATH`，默认仅使用 `/usr/bin/python3`，并在执行前检查它、其链接目标和所有父目录均由 root 持有且不可由组/其他用户写入；已有 runtime 也遵守同样的路径信任边界。
+如系统 Python 版本不符合要求，可设置 `DEVOPS_TOOLKIT_SYSTEM_PYTHON` 为管理员提供的可信绝对路径。
+普通用户可修改的 Homebrew Python 不能供 root 模式使用；这种 macOS 安装请改用 `--user`，不要为通过检查而放宽目录权限。
+Ubuntu 22.04 / Python 3.10 可作为远程受管目标，但不支持本机或 WSL 控制端模式。Linux 控制端
+只支持 x86_64/aarch64 的 Ubuntu 24.04；macOS 控制端支持 x86_64/arm64。WSL 初始化只支持
+Ubuntu 24.04 + WSL2，WSL1 会在任何 apt 或系统配置前被拒绝。user-only 的可选系统依赖安装
+只允许 x86_64/aarch64 的 Ubuntu 22.04/24.04；纯 HOME 模式不需要该 apt 边界。
+这项迁移尚未发布；已发布的 `v0.1.7` 仍按其签名包内代码运行，不能把本段当作该版本的运行时保证。
 
 ## 安装器验证顺序
 
 安装器不会下载完成后立即解压到正式目录，而是按以下顺序处理：
 
-1. 下载压缩包、SHA256 文件和 Sigstore bundle。
-2. 验证压缩包 SHA256。
-3. 在权限为 `0700` 的临时目录中检查 tar 路径并解包。
-4. 核对包内 `VERSION` 与请求的版本。
-5. 下载或复用固定版本 Cosign，并用安装器内置 SHA256 校验 Cosign 本身。
-6. 验证 Release 的 OIDC issuer、仓库、workflow、tag ref 和触发事件。
-7. 校验并启用签名包内的固定版本 Ansible collections；全部成功后才原子切换 `current`。历史 Release
+1. 下载压缩包、SHA256 文件和 Sigstore bundle；单个下载文件上限为 512 MiB。
+2. 验证压缩包 SHA256，仅流式读取归档内的 `VERSION`，核对请求版本，不解包。
+3. 下载或复用固定版本 Cosign，并用安装器内置 SHA256 校验 Cosign 本身。
+4. 验证 Release 的 OIDC issuer、仓库、workflow、tag ref 和触发事件。
+5. 验签成功后，才在权限为 `0700` 的临时目录中检查 tar 路径并解包；归档最多 20,000 个条目、解压后常规文件总大小最多 1 GiB，并再次核对 `VERSION`。
+6. 创建或复用隔离 Ansible runtime，校验并启用签名包内的固定版本 Ansible collections；全部成功后才原子切换 `current`。历史 Release
    不含内置 collections 时才显式回退到 Ansible Galaxy 兼容安装。
 
 任何一步失败，当前已安装版本都不会切换。Cosign 验证需要访问 Sigstore 信任根和透明日志服务；受限网络应显式放行，不要通过删除验证逻辑绕过。
@@ -56,13 +63,13 @@ export PATH="$HOME/.local/bin:$PATH"
 生产环境推荐固定版本：
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/sunpcm/DevOpsToolkit/main/install.sh)" -- --version v0.1.4
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/sunpcm/DevOpsToolkit/main/install.sh)" -- --version v0.1.7
 ```
 
 也可以通过环境变量指定：
 
 ```bash
-DEVOPS_TOOLKIT_VERSION=v0.1.4 \
+DEVOPS_TOOLKIT_VERSION=v0.1.7 \
   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/sunpcm/DevOpsToolkit/main/install.sh)"
 ```
 
@@ -108,7 +115,7 @@ devops-toolkit --version
 先确认旧版本可执行，再原子替换 `current`。root 安装示例：
 
 ```bash
-test -x /opt/devops-toolkit/releases/v0.1.4/bin/devops-toolkit
+test -x /opt/devops-toolkit/releases/v0.1.7/bin/devops-toolkit
 python3 - <<'PY'
 import os
 from pathlib import Path
@@ -116,13 +123,15 @@ from pathlib import Path
 base = Path("/opt/devops-toolkit")
 temporary = base / ".current.rollback"
 temporary.unlink(missing_ok=True)
-temporary.symlink_to("releases/v0.1.4")
+temporary.symlink_to("releases/v0.1.7")
 os.replace(temporary, base / "current")
 PY
 devops-toolkit --version
 ```
 
 普通用户把 `base` 改为 `Path.home() / ".local/share/devops-toolkit"`。回滚只切换链接，不删除任何版本。
+隔离 runtime 按 core 补丁版本共存，切回旧 Release 不会删除新 runtime；旧 Release 的运行时要求以该版本签名包内代码为准。
+若新 runtime 安装中断且目录缺少 `.ready`，安装器会拒绝覆盖并保持 `current` 不变；先检查目录与日志，确认无需保留后再移走该特定目录重试。
 
 ## 从源码运行
 
@@ -131,15 +140,75 @@ CI、批量配置或需要审查 inventory 时仍推荐 clone：
 ```bash
 git clone https://github.com/sunpcm/DevOpsToolkit.git
 cd DevOpsToolkit
-ansible-galaxy collection install -r ansible/requirements.yml
+python3 -m venv .venv
+.venv/bin/python -m pip install 'ansible-core==2.21.4'
+.venv/bin/ansible-galaxy collection install -r ansible/requirements.yml
+export PATH="${PWD}/.venv/bin:${PATH}"
 ./bin/devops-toolkit
 ```
 
 源码入口的 `devops-toolkit --version` 显示 `development`；Release 安装显示对应 tag。
 
+## 批量审计的机器可读输出
+
+以下命令只读取脚本及包内元数据，不下载、不连接目标机、不执行 Playbook：
+
+```bash
+bash install.sh --capabilities-json
+./bin/devops-toolkit --capabilities-json
+./bin/ubuntu-bootstrap --capabilities-json
+./bin/wsl-bootstrap --capabilities-json
+./bin/user-only --capabilities-json
+```
+
+输出为单行 JSON，`schema=1`。安装器是可单独下载的脚本，不知道当前已安装的 Release，
+所以 `component=installer` 时 `version=null`；安装后的向导和 Playbook 包装入口从签名包内
+`VERSION` 读取具体 tag，源码 checkout 显示 `development`。包装入口的 `entrypoint` 指出
+具体 Playbook；`collections` 从包内 lock 文件读取。该输出描述**支持能力**，不表示本机
+runtime、collections、SSH 或目标 OS 现状已经通过检查；运行状态须由未来的只读 doctor
+和真实环境验收证明。`--version` 在安装器中仍表示选择要安装的 Release，不是查询命令。
+`schema=1` 的字段名与类型保持兼容；如需不兼容变更，必须升级 schema 并同步批量审计脚本。
+
+## 只读 doctor / preflight
+
+以下功能目前只在未发布的本地开发分支验证；已发布的 `v0.1.7` 不包含它。
+安装后运行 `devops-toolkit doctor`；源码 checkout 用 `./bin/devops-toolkit doctor`。
+默认只检查当前控制端的受支持平台、Python、Ansible runtime、锁定 collection 元数据、
+`ansible.cfg` 的 host-key/全局提权设置、可用磁盘和到 GitHub/Docker 官方端点的 TCP/443。
+它不调用 Ansible Playbook，也不安装软件；`--json` 输出 `schema=1` 报告。
+
+```bash
+devops-toolkit doctor --json
+# 离线场景仍检查其余项目，网络项显示 warn，不会伪装成通过
+devops-toolkit doctor --no-network --json
+```
+
+仅在显式指定目标时执行远程只读检查：
+
+```bash
+devops-toolkit doctor --host server.example.com --user operator \
+  --port 2222 --identity "$HOME/.ssh/id_ed25519" \
+  --known-hosts "$HOME/.ssh/known_hosts" --mode ubuntu --json
+```
+
+先通过可信渠道独立核对并写入目标 SSH 主机指纹；doctor 不用 `ssh-keyscan` 自动信任，
+拒绝缺失或组/其他用户可写的 `known_hosts`。它强制严格 host-key 检查、禁用 SSH 连接复用、
+密码交互及主机密钥自动更新，只在目标运行 Python 标准库的读取探针，并用 `sshd -t`
+验证配置；普通用户仅在非交互 sudo 可用时做该项验证。目标探针检查 Ubuntu 版本/架构、
+连接权限、磁盘和官方端点 TCP/443。`--mode user-only` 检查普通用户身份；其他 Linux 的纯
+HOME 模式只给 warning，可选 apt 安装仍限 Ubuntu 22.04/24.04。
+普通用户的 `sudo -n true` 只能证明无需交互密码，不证明拥有完成整套 bootstrap 的 sudo
+范围，因此 Ubuntu 模式在此情形报告 warning；root 登录才直接通过权限项。
+
+`pass` 表示本项检查通过，`warn` 表示跳过或无法完整验证，`fail` 会令命令退出 1；参数错误
+退出 2。网络 TCP 可达不证明代理、TLS、GitHub Release 或 Docker GPG 下载成功；collection
+检查只核对 lock 与已安装 manifest 元数据，不重新证明 Release 签名或逐文件内容。doctor
+不替代一次性 VM E2E、真实 SSH 切换或发布验收。
+
 ## 安全边界
 
 - 临时下载目录权限为 `0700`，资产文件为 `0600`。
+- 系统安装会先检查安装目录及已有 `runtime`、`tools` 的所有权和可写权限；遇到非 root 持有或组/其他用户可写的路径会拒绝执行其中的程序。普通用户模式不受此限制。
 - 系统安装的 `current` 与 launcher 符号链接会保持普通用户可遍历；即使安装器由 `sudo` 在 macOS 执行，
   非 root 用户也能解析 Release 根目录并读取正确版本。
 - 安装器拒绝绝对路径、`..`、额外顶层目录、符号链接和设备文件，避免 tar 路径穿越。
@@ -185,8 +254,10 @@ curl -I https://tuf-repo-cdn.sigstore.dev
 
 ### 内置 collections 与旧版本兼容
 
-从 `v0.1.5` 起，Release tarball 内置并签名覆盖固定版本的 `ansible.posix` 与
-`community.general`。安装器会核对包内 manifest 和版本标记，安装阶段不再访问 Ansible Galaxy；
+从 `v0.1.5` 起，Release tarball 内置并签名覆盖固定版本的 Ansible collections。
+本次未发布的 2.21 迁移将内置 `ansible.posix`、`community.general` 和其传递依赖
+`community.library_inventory_filtering_v1`。Release 构建先按 `ansible/collections.lock.json` 校验原始
+tarball SHA256，再校验安装后的 manifest；安装器会核对 lock 摘要、manifest 和版本标记。安装阶段不再访问 Ansible Galaxy；
 这消除了 GitHub 可达但 Galaxy 不可达时的安装单点。
 
 `v0.1.4` 及更早的历史 Release 没有内置标记。新版安装器会明确提示兼容模式，并继续通过
@@ -194,7 +265,7 @@ curl -I https://tuf-repo-cdn.sigstore.dev
 Release 产物内的 collections，仍应先显式完成：
 
 ```bash
-ansible-galaxy collection install -r ansible/requirements.yml
+.venv/bin/ansible-galaxy collection install -r ansible/requirements.yml
 ```
 
 ### GitHub Release 或 Cosign 下载过慢

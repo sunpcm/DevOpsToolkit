@@ -9,8 +9,16 @@ KEEP_INSTANCES=0
 TEST_UV=0
 TEST_FAULTS=0
 TEST_PROXY="${MULTIPASS_TEST_PROXY:-}"
+TEST_HOSTS="${MULTIPASS_TEST_HOSTS:-}"
 MODE="run"
 WORK_DIR=""
+SSH_CONTROL_DIR=""
+REPORT_FILE="${MULTIPASS_REPORT_FILE:-}"
+STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+SOURCE_SHA="unknown"
+SOURCE_DIRTY="unknown"
+ANSIBLE_CORE_VERSION="unknown"
+CURRENT_STAGE="preflight"
 declare -a REQUESTED_INSTANCES=()
 declare -a ACTIVE_INSTANCES=()
 declare -a CREATED_INSTANCES=()
@@ -18,17 +26,20 @@ declare -a CREATED_INSTANCES=()
 usage() {
   cat <<'EOF'
 用法：
-  ./tests/multipass-smoke.sh run [--instance NAME ...] [--keep] [--with-uv] [--with-faults]
+  ./tests/multipass-smoke.sh run [--instance NAME ...] [--keep] [--with-uv] [--with-faults] [--report PATH]
   ./tests/multipass-smoke.sh check [NAME ...]
   ./tests/multipass-smoke.sh cleanup NAME ...
 
 说明：
   run      不传 --instance 时，为 Ubuntu 22.04/24.04 创建临时实例并在成功后清理；
-           失败时保留现场。--instance 仅用于续跑已有的 *-test-* 临时实例。
+           成功或失败均清理脚本创建的实例；只有明确传入 --keep 才保留现场。
+           --instance 仅用于续跑已有的 *-test-* 临时实例，脚本不会删除外部实例。
            --with-uv 额外验证固定 uv 产物下载与 SHA256 校验，默认不启用。
            可通过 DEVOPS_TOOLKIT_UV_RELEASE_BASE_URL 指向 HTTPS 镜像的版本目录。
            --with-faults 在一次性实例中注入 SSH、UFW 和中断恢复故障。
+           --report 写入不含凭据的机器可读验收报告；默认不写文件。
            宿主网络使用本地代理时，可用 MULTIPASS_TEST_PROXY 为 VM 设置临时 HTTP 代理。
+           VM DNS 返回 Fake-IP 时，可用 MULTIPASS_TEST_HOSTS 临时覆盖受限的官方域名。
   check    只检查实例状态、版本、架构、联网和 SSH 服务。
   cleanup  只删除由本脚本命名的 *-test-* 临时实例，先显示实例列表。
 
@@ -45,6 +56,30 @@ die() {
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || die "找不到命令：$1"
+}
+
+validate_test_hosts() {
+  local entry host ip seen="," configured="${1:-${TEST_HOSTS}}"
+  [[ -n "${configured}" ]] || return 0
+  [[ "${configured}" != ,* && "${configured}" != *, && "${configured}" != *,,* ]] || \
+    die "MULTIPASS_TEST_HOSTS 包含空映射"
+  local -a entries
+  IFS=',' read -r -a entries <<<"${configured}"
+  ((${#entries[@]} > 0)) || die "MULTIPASS_TEST_HOSTS 不能为空列表"
+  for entry in "${entries[@]}"; do
+    [[ "${entry}" =~ ^(ports\.ubuntu\.com|download\.docker\.com)=([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || \
+      die "MULTIPASS_TEST_HOSTS 只接受官方域名=IPv4，逗号分隔"
+    host="${entry%%=*}"
+    ip="${entry#*=}"
+    [[ "${seen}" != *",${host},"* ]] || die "MULTIPASS_TEST_HOSTS 重复域名：${host}"
+    seen="${seen}${host},"
+    python3 -c 'import ipaddress, sys; assert ipaddress.IPv4Address(sys.argv[1]).is_global' \
+      "${ip}" || die "MULTIPASS_TEST_HOSTS 只接受公网 IPv4：${ip}"
+  done
+}
+
+read_ansible_core_version() {
+  ansible-playbook --version | sed -n '1s/.*core \([0-9][0-9.]*\).*/\1/p'
 }
 
 instance_exists() {
@@ -79,6 +114,22 @@ check_instance() {
   '
 }
 
+assert_instance_image() {
+  local instance="$1" expected_version
+  case "${instance}" in
+    devops-toolkit-2204-test-*) expected_version=22.04 ;;
+    devops-toolkit-2404-test-*) expected_version=24.04 ;;
+    *) die "无法识别临时实例的 Ubuntu 版本：${instance}" ;;
+  esac
+  # Expand OS variables in the guest, not on the host.
+  # shellcheck disable=SC2016
+  multipass exec "${instance}" -- sh -eu -c '
+    . /etc/os-release
+    test "$ID" = ubuntu && test "$VERSION_ID" = "$1"
+  ' sh "${expected_version}" ||
+    die "${instance}: 实际系统不是 Ubuntu ${expected_version}"
+}
+
 cleanup_instances() {
   local instance
   (($# > 0)) || die "cleanup 至少需要一个实例名"
@@ -90,19 +141,91 @@ cleanup_instances() {
   done
   for instance in "$@"; do
     multipass stop --force "${instance}" || true
-    multipass delete "${instance}"
+    multipass delete --purge "${instance}"
   done
-  multipass purge
+}
+
+cleanup_created_instances() {
+  local instance cleanup_status=0
+  ((${#CREATED_INSTANCES[@]} > 0)) || return 0
+  multipass list --format json >/dev/null || return 1
+  for instance in "${CREATED_INSTANCES[@]}"; do
+    if ! is_disposable_name "${instance}"; then
+      echo "错误：拒绝自动清理非临时实例：${instance}" >&2
+      cleanup_status=1
+      continue
+    fi
+    if instance_exists "${instance}"; then
+      multipass stop --force "${instance}" || true
+      if ! multipass delete --purge "${instance}"; then
+        cleanup_status=1
+      fi
+    fi
+  done
+  return "${cleanup_status}"
+}
+
+write_report() {
+  local result="$1" cleanup_status="$2" report_tmp instance_csv
+  [[ -n "${REPORT_FILE}" ]] || return 0
+  instance_csv="$(IFS=,; echo "${ACTIVE_INSTANCES[*]}")"
+  mkdir -p "$(dirname "${REPORT_FILE}")"
+  report_tmp="${REPORT_FILE}.tmp.$$"
+  umask 022
+  cat >"${report_tmp}" <<EOF
+schema=1
+result=${result}
+source_sha=${SOURCE_SHA}
+source_dirty=${SOURCE_DIRTY}
+started_at=${STARTED_AT}
+finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+ansible_core=${ANSIBLE_CORE_VERSION}
+ubuntu_images=22.04,24.04
+instances=${instance_csv}
+managed_ssh_port=${MANAGED_SSH_PORT}
+test_uv=${TEST_UV}
+test_faults=${TEST_FAULTS}
+test_hosts=${TEST_HOSTS}
+last_stage=${CURRENT_STAGE}
+cleanup_status=${cleanup_status}
+EOF
+  chmod 0644 "${report_tmp}"
+  mv "${report_tmp}" "${REPORT_FILE}"
 }
 
 report_exit() {
-  local status="$1"
-  echo "测试工件保留在：${WORK_DIR}"
-  if ((status != 0)) && ((${#CREATED_INSTANCES[@]} > 0)); then
-    printf '临时实例已保留。确认后清理：%q cleanup' "$0"
+  local status="$1" final_status cleanup_status result
+  final_status="${status}"
+  cleanup_status="not-owned"
+  if ((${#CREATED_INSTANCES[@]} > 0)); then
+    if ((KEEP_INSTANCES == 1)); then
+      cleanup_status="skipped-by-request"
+    elif cleanup_created_instances; then
+      cleanup_status="passed"
+    else
+      cleanup_status="failed"
+      final_status=1
+    fi
+  fi
+  if [[ -n "${SSH_CONTROL_DIR}" && -d "${SSH_CONTROL_DIR}" ]]; then
+    rm -rf -- "${SSH_CONTROL_DIR}"
+  fi
+  result="passed"
+  ((final_status == 0)) || result="failed"
+  if ! write_report "${result}" "${cleanup_status}"; then
+    echo "错误：无法写入 Multipass 验收报告：${REPORT_FILE}" >&2
+    final_status=1
+  fi
+  if ((KEEP_INSTANCES == 1)); then
+    echo "测试工件保留在：${WORK_DIR}"
+    printf '临时实例已按明确请求保留。确认后清理：%q cleanup' "$0"
     printf ' %q' "${CREATED_INSTANCES[@]}"
     printf '\n'
+  elif [[ -n "${WORK_DIR}" && -d "${WORK_DIR}" ]]; then
+    rm -rf -- "${WORK_DIR}"
   fi
+  trap - EXIT
+  exit "${final_status}"
 }
 
 validate_transfer() {
@@ -136,6 +259,20 @@ EOF
   echo "${instance}: 已配置一次性 VM 测试代理 ${TEST_PROXY}"
 }
 
+configure_test_hosts() {
+  local instance="$1" entry host ip
+  [[ -n "${TEST_HOSTS}" ]] || return 0
+  local -a entries
+  IFS=',' read -r -a entries <<<"${TEST_HOSTS}"
+  for entry in "${entries[@]}"; do
+    host="${entry%%=*}"
+    ip="${entry#*=}"
+    multipass exec "${instance}" -- sudo sh -c \
+      "grep -Fqx '${ip} ${host}' /etc/hosts || printf '%s\\n' '${ip} ${host}' >>/etc/hosts"
+  done
+  echo "${instance}: 已加入一次性 VM 测试 DNS 覆盖：${TEST_HOSTS}"
+}
+
 prepare_root_key() {
   local instance="$1"
   local public_key_file="$2"
@@ -163,9 +300,10 @@ write_inventory() {
   local port="$4"
   local key_file="$5"
   local known_hosts="$6"
+  local user="${7:-root}"
   cat >"${path}" <<EOF
 [ubuntu_servers]
-${name} ansible_host=${ip} ansible_user=root ansible_port=${port} ansible_ssh_private_key_file=${key_file} ansible_ssh_common_args='-o UserKnownHostsFile=${known_hosts} -o IdentitiesOnly=yes'
+${name} ansible_host=${ip} ansible_user=${user} ansible_port=${port} ansible_ssh_private_key_file=${key_file} ansible_ssh_common_args='-o UserKnownHostsFile=${known_hosts} -o IdentitiesOnly=yes'
 EOF
 }
 
@@ -197,10 +335,19 @@ verify_result() {
 id "$TARGET_USER" >/dev/null
 test -s "/home/$TARGET_USER/.ssh/authorized_keys"
 sshd -T | grep -Eq "^port ${MANAGED_SSH_PORT}$"
+sshd -T | grep -Eq '^passwordauthentication no$'
+grep -Fxq 'PasswordAuthentication no' /etc/ssh/sshd_config.d/99-devops-toolkit.conf
+grep -Fxq 'KbdInteractiveAuthentication no' /etc/ssh/sshd_config.d/99-devops-toolkit.conf
+if [ "${MANAGED_SSH_PORT}" != 22 ]; then
+  ! ss -H -ltn "sport = :22" | grep -q .
+fi
 ufw status | grep -Fq "Status: active"
 # UFW converges through the managed application profile, so "ufw status" lists the
 # profile name rather than the raw port. Assert the port via the profile itself.
 ufw app info DevOpsToolkit | grep -Fq "${MANAGED_SSH_PORT}/tcp"
+if [ "${MANAGED_SSH_PORT}" != 22 ]; then
+  ! ufw app info DevOpsToolkit | grep -Eq '(^|[|,[:space:]])22/tcp([|,[:space:]]|$)'
+fi
 systemctl is-active --quiet docker
 systemctl is-enabled --quiet docker
 systemctl is-active --quiet nginx
@@ -237,10 +384,17 @@ run_fault_injections() {
   local firewall_log="${work_dir}/${instance}-firewall-recovery.log"
   local partial_playbook="${work_dir}/${instance}-partial-account.yml"
   local partial_log="${work_dir}/${instance}-partial-account.log"
+  local resume_first_log="${work_dir}/${instance}-resume-first.log"
   local resume_log="${work_dir}/${instance}-resume-second.log"
+  local occupied_playbook="${work_dir}/${instance}-occupied-port.yml"
+  local occupied_log="${work_dir}/${instance}-occupied-port.log"
+  local occupied_port=2223
   local resume_user="${TARGET_USER}_resume"
 
+  [[ "${MANAGED_SSH_PORT}" != 2223 ]] || occupied_port=2224
+
   echo "==> ${instance}: 故障注入（无效 SSH 配置不得重启）"
+  CURRENT_STAGE="${instance}:invalid-sshd"
   cp "${vars_file}" "${invalid_vars}"
   printf '\ndisable_root_login: true\n' >>"${invalid_vars}"
   printf 'DefinitelyInvalidDirective yes\n' | \
@@ -255,11 +409,15 @@ run_fault_injections() {
   ssh_as_target "${ip}" "${key_file}" "${known_hosts}" true
   ssh_as_target "${ip}" "${key_file}" "${known_hosts}" \
     sudo rm -f /etc/ssh/sshd_config.d/98-devops-toolkit-fault.conf
-  "${ROOT_DIR}/bin/ubuntu-bootstrap" "${inventory}" "${TARGET_USER}" \
-    -e "@${vars_file}" >"${recovery_log}"
+  if ! "${ROOT_DIR}/bin/ubuntu-bootstrap" "${inventory}" "${TARGET_USER}" \
+      -e "@${vars_file}" >"${recovery_log}" 2>&1; then
+    tail -n 60 "${recovery_log}" >&2
+    die "${instance}: SSH 故障恢复重跑失败"
+  fi
   echo "${instance}: SSH 预重启校验与恢复通过"
 
   echo "==> ${instance}: 故障注入（陈旧 UFW profile）"
+  CURRENT_STAGE="${instance}:firewall-recovery"
   ssh_as_target "${ip}" "${key_file}" "${known_hosts}" \
     sudo sh -eu -s -- "${MANAGED_SSH_PORT}" <<'EOF'
 managed_ssh_port="$1"
@@ -280,8 +438,11 @@ ports=65000/tcp
 PROFILE
 ufw allow DevOpsToolkit
 EOF
-  "${ROOT_DIR}/bin/ubuntu-bootstrap" "${inventory}" "${TARGET_USER}" \
-    -e "@${vars_file}" >"${firewall_log}"
+  if ! "${ROOT_DIR}/bin/ubuntu-bootstrap" "${inventory}" "${TARGET_USER}" \
+      -e "@${vars_file}" >"${firewall_log}" 2>&1; then
+    tail -n 60 "${firewall_log}" >&2
+    die "${instance}: UFW 故障恢复重跑失败"
+  fi
   ssh_as_target "${ip}" "${key_file}" "${known_hosts}" \
     sudo ufw app info DevOpsToolkit | grep -Fq "${MANAGED_SSH_PORT}/tcp"
   if ssh_as_target "${ip}" "${key_file}" "${known_hosts}" \
@@ -292,7 +453,43 @@ EOF
   ssh_as_target "${ip}" "${key_file}" "${known_hosts}" true
   echo "${instance}: UFW profile 与旧 Docker APT 源冲突恢复，SSH 仍可达"
 
+  echo "==> ${instance}: 故障注入（新 SSH 端口被其他服务占用）"
+  CURRENT_STAGE="${instance}:occupied-ssh-port"
+  cat >"${occupied_playbook}" <<EOF
+---
+- name: Refuse an occupied desired SSH port
+  hosts: ubuntu_servers
+  gather_facts: true
+  vars_files:
+    - ${ROOT_DIR}/ansible/group_vars/all.yml
+  roles:
+    - role: ssh_security
+EOF
+  ssh_as_target "${ip}" "${key_file}" "${known_hosts}" \
+    sudo systemd-run --unit=devops-toolkit-test-port --collect \
+      /usr/bin/python3 -m http.server "${occupied_port}" >/dev/null
+  local listen_attempt=0
+  until ssh_as_target "${ip}" "${key_file}" "${known_hosts}" \
+      sudo ss --tcp --listening --numeric "sport = :${occupied_port}" | \
+      grep -Fq ":${occupied_port}"; do
+    ((listen_attempt += 1))
+    ((listen_attempt < 10)) || die "${instance}: 故障服务未监听 ${occupied_port}"
+    sleep 1
+  done
+  if ansible-playbook -i "${inventory}" "${occupied_playbook}" \
+      -e "@${vars_file}" -e "target_user=${TARGET_USER}" \
+      -e "ssh_port=${occupied_port}" >"${occupied_log}" 2>&1; then
+    die "${instance}: 被占用的新 SSH 端口没有阻止切换"
+  fi
+  grep -Fq "Refusing to move SSH to occupied port ${occupied_port}" "${occupied_log}" || \
+    die "${instance}: 端口占用没有触发预期的安全拒绝"
+  ssh_as_target "${ip}" "${key_file}" "${known_hosts}" true
+  ssh_as_target "${ip}" "${key_file}" "${known_hosts}" \
+    sudo systemctl stop devops-toolkit-test-port
+  echo "${instance}: 被占用端口安全拒绝，原 SSH 连接仍可达"
+
   echo "==> ${instance}: 故障注入（部分账户状态后完整重跑）"
+  CURRENT_STAGE="${instance}:interrupted-bootstrap"
   cat >"${partial_playbook}" <<EOF
 ---
 - name: Create a controlled partial bootstrap state
@@ -313,8 +510,13 @@ EOF
   fi
   grep -Fq 'Controlled interruption for idempotence testing' "${partial_log}" || \
     die "${instance}: 未观察到受控中断标记"
-  "${ROOT_DIR}/bin/ubuntu-bootstrap" "${inventory}" "${resume_user}" \
-    -e "@${vars_file}" >/dev/null
+  CURRENT_STAGE="${instance}:resume-bootstrap"
+  if ! "${ROOT_DIR}/bin/ubuntu-bootstrap" "${inventory}" "${resume_user}" \
+      -e "@${vars_file}" >"${resume_first_log}" 2>&1; then
+    tail -n 60 "${resume_first_log}" >&2
+    die "${instance}: 中断后的首次完整重跑失败"
+  fi
+  CURRENT_STAGE="${instance}:resume-idempotence"
   "${ROOT_DIR}/bin/ubuntu-bootstrap" "${inventory}" "${resume_user}" \
     -e "@${vars_file}" | tee "${resume_log}"
   assert_recap_clean "${resume_log}"
@@ -332,13 +534,21 @@ run_instance() {
   local known_hosts="${work_dir}/${instance}.known_hosts"
   local initial_inventory="${work_dir}/${instance}-initial.ini"
   local managed_inventory="${work_dir}/${instance}-managed.ini"
+  local target_inventory="${work_dir}/${instance}-target.ini"
   local vars_file="${work_dir}/${instance}-vars.yml"
   local second_log="${work_dir}/${instance}-second.log"
+  local unverified_log="${work_dir}/${instance}-unverified-key.log"
+  local firewall_injection_log="${work_dir}/${instance}-finalize-firewall-injection.log"
+  local wrong_key_file="${work_dir}/${instance}-wrong-key"
+  local wrong_key_log="${work_dir}/${instance}-wrong-key.log"
+  local root_disabled_log="${work_dir}/${instance}-root-disabled.log"
   local ip public_key initial_port
 
   check_instance "${instance}"
+  assert_instance_image "${instance}"
   validate_transfer "${instance}"
   configure_test_proxy "${instance}"
+  configure_test_hosts "${instance}"
   prepare_root_key "${instance}" "${public_key_file}"
   ip="$(instance_ip "${instance}")"
   public_key="$(cat "${public_key_file}")"
@@ -371,22 +581,136 @@ EOF
     "${initial_port}" "${key_file}" "${known_hosts}"
 
   echo "==> ${instance}: 首次配置（SSH ${initial_port} -> ${MANAGED_SSH_PORT}）"
+  CURRENT_STAGE="${instance}:initial-bootstrap"
   "${ROOT_DIR}/bin/ubuntu-bootstrap" "${initial_inventory}" "${TARGET_USER}" \
     -e "@${vars_file}"
 
-  ssh-keyscan -p "${MANAGED_SSH_PORT}" -H "${ip}" >"${known_hosts}" 2>/dev/null
+  # Keep the trusted old-port entry until the negative finalize check has
+  # proved that fallback SSH remains reachable.
+  ssh-keyscan -p "${MANAGED_SSH_PORT}" -H "${ip}" >>"${known_hosts}" 2>/dev/null
+  write_inventory "${target_inventory}" "${instance}" "${ip}" \
+    "${MANAGED_SSH_PORT}" "${key_file}" "${known_hosts}" "${TARGET_USER}"
+  if ((TEST_FAULTS == 1)); then
+    echo "==> ${instance}: 故障注入（错误私钥不得登录目标用户）"
+    CURRENT_STAGE="${instance}:wrong-target-key"
+    ssh-keygen -q -t ed25519 -N '' -C "devops-toolkit-negative-${RUN_ID}" \
+      -f "${wrong_key_file}"
+    if ssh -F /dev/null -i "${wrong_key_file}" -o IdentitiesOnly=yes \
+        -o BatchMode=yes -o PreferredAuthentications=publickey \
+        -o PasswordAuthentication=no -o ConnectTimeout=5 \
+        -o "UserKnownHostsFile=${known_hosts}" -p "${MANAGED_SSH_PORT}" \
+        "${TARGET_USER}@${ip}" true >"${wrong_key_log}" 2>&1; then
+      die "${instance}: 错误私钥竟可登录目标用户"
+    fi
+    grep -Fq 'Permission denied' "${wrong_key_log}" || {
+      tail -n 10 "${wrong_key_log}" >&2
+      die "${instance}: 错误私钥负例未证明是认证失败"
+    }
+    ssh -F /dev/null -i "${key_file}" -o IdentitiesOnly=yes \
+      -o "UserKnownHostsFile=${known_hosts}" -p "${initial_port}" \
+      "root@${ip}" true || die "${instance}: 错误私钥后旧 SSH 连接不可达"
+    echo "==> ${instance}: 故障注入（未确认密钥不得关闭旧 SSH 端口）"
+    CURRENT_STAGE="${instance}:unverified-key"
+    if "${ROOT_DIR}/bin/ubuntu-ssh-finalize" "${target_inventory}" "${TARGET_USER}" \
+        -e "@${vars_file}" -e ssh_finalize_key_verified=false \
+        >"${unverified_log}" 2>&1; then
+      die "${instance}: 未确认密钥仍允许 SSH finalize"
+    fi
+    grep -Fq 'ssh_finalize_key_verified=true' "${unverified_log}" || \
+      die "${instance}: 未确认密钥没有触发预期的安全拒绝"
+    ssh -F /dev/null -i "${key_file}" -o IdentitiesOnly=yes \
+      -o "UserKnownHostsFile=${known_hosts}" -p "${initial_port}" \
+      "root@${ip}" test ! -e \
+      /etc/ufw/applications.d/devopstoolkitsshfinalizeguard || \
+      die "${instance}: 未确认密钥时已创建临时 UFW guard"
+    ssh -F /dev/null -i "${key_file}" -o IdentitiesOnly=yes \
+      -o "UserKnownHostsFile=${known_hosts}" -p "${initial_port}" \
+      "root@${ip}" true || die "${instance}: 密钥确认失败后旧 SSH 连接不可达"
+    echo "==> ${instance}: 故障注入（SSH 已切换、UFW profile 尚未更新）"
+    CURRENT_STAGE="${instance}:finalize-firewall-failure"
+    if "${ROOT_DIR}/bin/ubuntu-ssh-finalize" "${target_inventory}" "${TARGET_USER}" \
+        -e "@${vars_file}" -e ssh_finalize_key_verified=true \
+        -e devops_toolkit_vm_inject_firewall_update_failure=true \
+        >"${firewall_injection_log}" 2>&1; then
+      die "${instance}: UFW 故障注入没有使 finalize 失败"
+    fi
+    grep -Fq 'Injected failure before UFW application profile update' \
+      "${firewall_injection_log}" || {
+        tail -n 60 "${firewall_injection_log}" >&2
+        die "${instance}: 未观察到预期的 UFW 故障注入"
+      }
+    grep -Fq "Fresh target-user SSH on port ${MANAGED_SSH_PORT} is reachable" \
+      "${firewall_injection_log}" || \
+      die "${instance}: finalize 失败时未验证新端口可达并输出恢复指引"
+    ssh_as_target "${ip}" "${key_file}" "${known_hosts}" sudo true || \
+      die "${instance}: UFW 更新失败后新端口普通用户不可管理"
+    ssh_as_target "${ip}" "${key_file}" "${known_hosts}" \
+      sudo sh -eu -s -- "${MANAGED_SSH_PORT}" "${initial_port}" <<'EOF' || \
+      die "${instance}: UFW 更新失败后的监听、认证或防火墙状态不符合预期"
+new_port="$1"
+old_port="$2"
+ss -H -ltn "sport = :${new_port}" | grep -q .
+if [ "${old_port}" != "${new_port}" ]; then
+  ! ss -H -ltn "sport = :${old_port}" | grep -q .
+fi
+sshd -T | grep -Fxq 'passwordauthentication no'
+ufw status | grep -Fq 'Status: active'
+ufw app info DevOpsToolkit | grep -Fq "${old_port}/tcp"
+ufw app info DevOpsToolkitSSHFinalizeGuard | grep -Fq "${new_port}/tcp"
+ufw show added | grep -Fq 'DevOpsToolkitSSHFinalizeGuard'
+EOF
+  fi
+  echo "==> ${instance}: 从普通用户新端口执行 SSH finalize"
+  CURRENT_STAGE="${instance}:ssh-finalize"
+  "${ROOT_DIR}/bin/ubuntu-ssh-finalize" "${target_inventory}" "${TARGET_USER}" \
+    -e "@${vars_file}" -e ssh_finalize_key_verified=true
+  if ((TEST_FAULTS == 1)); then
+    ssh_as_target "${ip}" "${key_file}" "${known_hosts}" \
+      sudo test ! -e /etc/ufw/applications.d/devopstoolkitsshfinalizeguard || \
+      die "${instance}: finalize 成功后临时 UFW profile 未清理"
+    if ssh_as_target "${ip}" "${key_file}" "${known_hosts}" \
+        sudo ufw show added | grep -Fq 'DevOpsToolkitSSHFinalizeGuard'; then
+      die "${instance}: finalize 成功后临时 UFW 规则未清理"
+    fi
+  fi
+
   write_inventory "${managed_inventory}" "${instance}" "${ip}" \
     "${MANAGED_SSH_PORT}" "${key_file}" "${known_hosts}"
 
   echo "==> ${instance}: 第二次配置（幂等性）"
+  CURRENT_STAGE="${instance}:second-bootstrap"
   "${ROOT_DIR}/bin/ubuntu-bootstrap" "${managed_inventory}" "${TARGET_USER}" \
     -e "@${vars_file}" | tee "${second_log}"
 
   assert_recap_clean "${second_log}"
+  CURRENT_STAGE="${instance}:service-verification"
   verify_result "${instance}" "${ip}" "${key_file}" "${known_hosts}"
+  CURRENT_STAGE="${instance}:fault-injections"
   if ((TEST_FAULTS == 1)); then
     run_fault_injections "${instance}" "${ip}" "${key_file}" "${known_hosts}" \
       "${managed_inventory}" "${vars_file}" "${work_dir}"
+    echo "==> ${instance}: 显式禁用 root 登录后验证普通用户仍可管理"
+    CURRENT_STAGE="${instance}:root-hardening"
+    "${ROOT_DIR}/bin/ubuntu-ssh-finalize" "${target_inventory}" "${TARGET_USER}" \
+      -e "@${vars_file}" -e ssh_finalize_key_verified=true \
+      -e disable_root_login=true >"${root_disabled_log}" 2>&1 || {
+        tail -n 60 "${root_disabled_log}" >&2
+        die "${instance}: 禁用 root 登录失败"
+      }
+    ssh_as_target "${ip}" "${key_file}" "${known_hosts}" \
+      sudo sshd -T | grep -Fxq 'permitrootlogin no' || \
+      die "${instance}: OpenSSH 有效配置仍允许 root 登录"
+    if ssh -F /dev/null -i "${key_file}" -o IdentitiesOnly=yes \
+        -o BatchMode=yes -o ConnectTimeout=5 \
+        -o "UserKnownHostsFile=${known_hosts}" -p "${MANAGED_SSH_PORT}" \
+        "root@${ip}" true >"${root_disabled_log}" 2>&1; then
+      die "${instance}: 显式禁用后 root 仍可登录"
+    fi
+    grep -Fq 'Permission denied' "${root_disabled_log}" || {
+      tail -n 10 "${root_disabled_log}" >&2
+      die "${instance}: root 登录负例未证明是认证拒绝"
+    }
+    ssh_as_target "${ip}" "${key_file}" "${known_hosts}" sudo true
   fi
 }
 
@@ -416,6 +740,11 @@ parse_args() {
             TEST_FAULTS=1
             shift
             ;;
+          --report)
+            (($# >= 2)) || die "--report 缺少路径"
+            REPORT_FILE="$2"
+            shift 2
+            ;;
           -h|--help)
             usage
             exit 0
@@ -444,6 +773,15 @@ main() {
   require_command ssh-keygen
   require_command ssh-keyscan
   require_command python3
+  validate_test_hosts "${TEST_HOSTS}"
+  SOURCE_SHA="$(git -C "${ROOT_DIR}" rev-parse HEAD)"
+  if [[ -n "$(git -C "${ROOT_DIR}" status --porcelain)" ]]; then
+    SOURCE_DIRTY=true
+  else
+    SOURCE_DIRTY=false
+  fi
+  ANSIBLE_CORE_VERSION="$(read_ansible_core_version)"
+  [[ -n "${ANSIBLE_CORE_VERSION}" ]] || die "无法识别 ansible-core 版本"
 
   if [[ "${MODE}" == check ]]; then
     ((${#REQUESTED_INSTANCES[@]} > 0)) || die "check 至少需要一个实例名"
@@ -457,14 +795,16 @@ main() {
 
   WORK_DIR="$(mktemp -d)"
   trap 'report_exit "$?"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  SSH_CONTROL_DIR="$(mktemp -d /tmp/devops-ssh.XXXXXX)"
   ssh-keygen -q -t ed25519 -N '' -C "devops-toolkit-multipass-${RUN_ID}" \
     -f "${WORK_DIR}/id_ed25519"
 
   if ((${#REQUESTED_INSTANCES[@]} > 0)); then
     for instance in "${REQUESTED_INSTANCES[@]}"; do
-      if ! is_disposable_name "${instance}" && [[ "${MANAGED_SSH_PORT}" != 22 ]]; then
-        die "拒绝在长期实例 ${instance} 上切换 SSH 端口；请使用 *-test-* 临时实例"
-      fi
+      is_disposable_name "${instance}" || \
+        die "拒绝在长期实例 ${instance} 上执行配置测试；请使用 *-test-* 临时实例"
     done
     ACTIVE_INSTANCES=("${REQUESTED_INSTANCES[@]}")
   else
@@ -472,14 +812,20 @@ main() {
       "devops-toolkit-2204-test-${RUN_ID}"
       "devops-toolkit-2404-test-${RUN_ID}"
     )
-    CREATED_INSTANCES+=("${ACTIVE_INSTANCES[0]}")
+    for instance in "${ACTIVE_INSTANCES[@]}"; do
+      if instance_exists "${instance}"; then
+        die "拒绝覆盖已存在的临时实例：${instance}"
+      fi
+    done
+    CREATED_INSTANCES=("${ACTIVE_INSTANCES[@]}")
+    write_report running pending
     multipass launch 22.04 --name "${ACTIVE_INSTANCES[0]}" --cpus 2 --memory 3G --disk 15G
-    CREATED_INSTANCES+=("${ACTIVE_INSTANCES[1]}")
     multipass launch 24.04 --name "${ACTIVE_INSTANCES[1]}" --cpus 2 --memory 3G --disk 15G
   fi
 
   export ANSIBLE_CONFIG="${ROOT_DIR}/ansible/ansible.cfg"
   export ANSIBLE_LOCAL_TEMP="${WORK_DIR}/ansible-local"
+  export ANSIBLE_SSH_CONTROL_PATH_DIR="${SSH_CONTROL_DIR}"
   unset ANSIBLE_REMOTE_TEMP
   mkdir -p "${ANSIBLE_LOCAL_TEMP}"
 
@@ -487,10 +833,10 @@ main() {
     run_instance "${instance}" "${WORK_DIR}" "${WORK_DIR}/id_ed25519"
   done
 
-  if ((${#CREATED_INSTANCES[@]} > 0)) && ((KEEP_INSTANCES == 0)); then
-    cleanup_instances "${CREATED_INSTANCES[@]}"
-  fi
-  echo "Multipass Ubuntu 22.04/24.04 测试全部通过。"
+  CURRENT_STAGE="complete"
+  echo "请求的 Multipass Ubuntu 实例测试全部通过。"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

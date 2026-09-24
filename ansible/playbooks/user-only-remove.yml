@@ -31,12 +31,28 @@
         path: "{{ user_only_home }}/.zshrc"
       register: user_only_zshrc
 
-    - name: Remove the source hook but preserve all other Zsh content
+    - name: Remove managed source hooks but preserve all other Zsh content
       ansible.builtin.blockinfile:
         path: "{{ user_only_home }}/.zshrc"
-        marker: "# {mark} DEVOPSTOOLKIT USER PROFILE"
+        marker: "# {mark} {{ item }}"
         state: absent
+      loop:
+        - DEVOPSTOOLKIT USER PROFILE
+        - DEVOPSTOOLKIT USER SHELL
+        - DEVOPSTOOLKIT USER ENVIRONMENT
       when: user_only_zshrc.stat.exists
+
+    - name: Check whether the user's login profile exists
+      ansible.builtin.stat:
+        path: "{{ user_only_home }}/.profile"
+      register: user_only_login_profile
+
+    - name: Remove the managed environment hook from the login profile
+      ansible.builtin.blockinfile:
+        path: "{{ user_only_home }}/.profile"
+        marker: "# {mark} DEVOPSTOOLKIT USER ENVIRONMENT"
+        state: absent
+      when: user_only_login_profile.stat.exists
 
     - name: Remove only the managed configuration directory
       ansible.builtin.file:

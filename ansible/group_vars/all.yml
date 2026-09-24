@@ -8,6 +8,7 @@ target_passwordless_sudo: false
 
 # User profile
 configure_shell: true
+install_oh_my_zsh: "{{ configure_shell }}"
 configure_git: true
 configure_uv: true
 configure_node: true
@@ -39,6 +40,10 @@ uv_release_base_url: >-
      | default(uv_release_base_url_default, true) }}
 goenv_version: "3.1.4"
 
+# Docker's Ubuntu APT signing key, fetched from the official URL below.
+# Update this digest deliberately when Docker rotates the key.
+docker_apt_gpg_sha256: "1500c1f56fa9e26b9b8f42452a553675796ade0807cdce11975eb98170b3a570"
+
 # Immutable revisions keep repeated runs reproducible. Update them deliberately.
 ohmyzsh_version: c954bbb168fc645592c50017de0d0e138db8df5f
 zsh_theme: robbyrussell   # agnoster
@@ -63,6 +68,7 @@ system_packages:
   - ca-certificates
   - curl
   - git
+  - iproute2
   - locales
   - sudo
   - unzip
@@ -95,14 +101,17 @@ install_docker: false
 install_nginx: false
 enable_firewall: true
 firewall_managed_profile_name: DevOpsToolkit
+firewall_ssh_finalize_guard_name: DevOpsToolkitSSHFinalizeGuard
 firewall_allowed_ports:
   - { port: "{{ ssh_port }}", proto: tcp }
+firewall_effective_allowed_ports: "{{ firewall_allowed_ports }}"
 
 # SSH changes are deliberately conservative by default.
 configure_ssh: true
 ssh_port: 22
 disable_root_login: false
 disable_password_auth: false
+ssh_finalize_key_verified: false
 
 # user-only is strict unless this explicit exception is enabled.
 user_only_allow_system_dependencies: false

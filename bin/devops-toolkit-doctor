@@ -1,0 +1,472 @@
+#!/usr/bin/env python3
+"""Read-only controller and optional SSH target preflight."""
+
+from __future__ import annotations
+
+import argparse
+import configparser
+import hashlib
+import json
+import os
+import platform
+import re
+import shutil
+import socket
+import stat
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+CORE_VERSION = "2.21.4"
+MIN_FREE_BYTES = 1024**3
+HOST_RE = re.compile(r"^[A-Za-z0-9_.:-]+$")
+USER_RE = re.compile(r"^[a-z_][a-z0-9_-]*[$]?$")
+REMOTE_SCRIPT = r"""
+import json
+import os
+import platform
+import shutil
+import socket
+import subprocess
+import sys
+from pathlib import Path
+
+mode, check_network = sys.argv[1:]
+checks = []
+def add(name, status, detail):
+    checks.append({"name": name, "status": status, "detail": detail})
+
+values = {}
+for line in Path("/etc/os-release").read_text().splitlines():
+    if "=" in line:
+        key, value = line.split("=", 1)
+        values[key] = value.strip('"')
+version = values.get("VERSION_ID", "unknown")
+architecture = platform.machine()
+supported = values.get("ID") == "ubuntu" and version in ("22.04", "24.04") and architecture in ("x86_64", "aarch64")
+home_only_linux = mode == "user-only" and platform.system() == "Linux"
+os_status = "pass" if supported else "warn" if home_only_linux else "fail"
+add("target_os", os_status, f"{values.get('ID', 'unknown')} {version} {architecture}" + ("; optional apt unsupported" if home_only_linux and not supported else ""))
+
+uid = os.geteuid()
+sudo_available = False
+if uid != 0 and shutil.which("sudo"):
+    try:
+        sudo_available = subprocess.run(["sudo", "-n", "true"], capture_output=True, timeout=5).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+if mode == "ubuntu":
+    permission_status = "pass" if uid == 0 else "warn" if sudo_available else "fail"
+else:
+    permission_status = "pass" if uid != 0 else "fail"
+permission_detail = "root" if uid == 0 else ("nonroot; sudo -n true accepted, scope unverified" if sudo_available else "nonroot; sudo unavailable")
+add("target_permissions", permission_status, permission_detail)
+
+free = shutil.disk_usage("/").free
+add("target_disk", "pass" if free >= 1073741824 else "fail", f"free_bytes={free}")
+
+sshd = "/usr/sbin/sshd"
+if not Path(sshd).is_file():
+    add("target_sshd_config", "fail", "sshd binary missing")
+elif uid != 0 and not sudo_available:
+    add("target_sshd_config", "warn", "cannot validate without root or noninteractive sudo")
+else:
+    command = [sshd, "-t"] if uid == 0 else ["sudo", "-n", sshd, "-t"]
+    try:
+        valid = subprocess.run(command, capture_output=True, timeout=8).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        valid = False
+    add("target_sshd_config", "pass" if valid else "fail", "sshd -t")
+
+if check_network == "yes":
+    for host in ("github.com", "download.docker.com"):
+        try:
+            with socket.create_connection((host, 443), timeout=4):
+                pass
+            add(f"target_network_{host}", "pass", "tcp/443 reachable")
+        except OSError:
+            add(f"target_network_{host}", "warn", "tcp/443 unavailable")
+else:
+    add("target_network", "warn", "skipped by --no-network")
+
+print(json.dumps({"checks": checks}, sort_keys=True))
+"""
+
+
+def check(name: str, status: str, detail: str) -> dict[str, str]:
+    return {"name": name, "status": status, "detail": detail}
+
+
+def controller_checks() -> list[dict[str, str]]:
+    checks = []
+    system, arch = platform.system(), platform.machine()
+    if system == "Darwin":
+        supported = arch in {"arm64", "x86_64"}
+        description = f"macOS {arch}"
+    elif system == "Linux":
+        values = {}
+        for line in Path("/etc/os-release").read_text(encoding="utf-8").splitlines():
+            if "=" in line:
+                key, value = line.split("=", 1)
+                values[key] = value.strip('"')
+        kernel = Path("/proc/sys/kernel/osrelease").read_text(encoding="utf-8").lower()
+        wsl_ok = "microsoft" not in kernel or "wsl2" in kernel
+        supported = (
+            values.get("ID") == "ubuntu"
+            and values.get("VERSION_ID") == "24.04"
+            and arch in {"aarch64", "x86_64"}
+            and wsl_ok
+        )
+        description = (
+            f"{values.get('ID', 'unknown')} {values.get('VERSION_ID', 'unknown')} {arch}"
+            + (" WSL" if "microsoft" in kernel else "")
+        )
+    else:
+        supported, description = False, f"{system} {arch}"
+    checks.append(
+        check("controller_platform", "pass" if supported else "fail", description)
+    )
+    version = sys.version_info[:2]
+    checks.append(
+        check(
+            "controller_python",
+            "pass" if (3, 12) <= version <= (3, 14) else "fail",
+            f"{version[0]}.{version[1]}",
+        )
+    )
+    return checks
+
+
+def runtime_check() -> dict[str, str]:
+    if ROOT_DIR.parent.name == "releases":
+        runtime = ROOT_DIR.parent.parent / "runtime" / f"ansible-core-{CORE_VERSION}"
+        binary = runtime / "bin/ansible-playbook"
+        ready = runtime / ".ready"
+        if (
+            not binary.is_file()
+            or not os.access(binary, os.X_OK)
+            or not ready.is_file()
+            or ready.read_text().strip() != CORE_VERSION
+        ):
+            return check(
+                "ansible_runtime",
+                "fail",
+                "installed isolated runtime missing or unready",
+            )
+        command = str(binary)
+    else:
+        command = shutil.which("ansible-playbook")
+        if not command:
+            return check("ansible_runtime", "fail", "ansible-playbook not on PATH")
+    try:
+        with tempfile.TemporaryDirectory(prefix="devops-toolkit-doctor-") as temporary:
+            environment = {**os.environ, "ANSIBLE_LOCAL_TEMP": temporary}
+            result = subprocess.run(
+                [command, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=12,
+                env=environment,
+            )
+        valid = (
+            result.returncode == 0
+            and f"[core {CORE_VERSION}]" in result.stdout.splitlines()[0]
+        )
+    except (OSError, subprocess.TimeoutExpired, IndexError):
+        valid = False
+    return check(
+        "ansible_runtime", "pass" if valid else "fail", f"required_core={CORE_VERSION}"
+    )
+
+
+def collections_check() -> dict[str, str]:
+    lock_path = ROOT_DIR / "ansible/collections.lock.json"
+    try:
+        lock_bytes = lock_path.read_bytes()
+        locked = json.loads(lock_bytes)["collections"]
+        bundled = ROOT_DIR.parent.name == "releases"
+        if bundled:
+            roots = [ROOT_DIR / "collections"]
+        elif os.environ.get("ANSIBLE_COLLECTIONS_PATH"):
+            roots = [
+                Path(path)
+                for path in os.environ["ANSIBLE_COLLECTIONS_PATH"].split(os.pathsep)
+                if path
+            ]
+        else:
+            roots = [
+                Path.home() / ".ansible/collections",
+                Path("/usr/share/ansible/collections"),
+            ]
+        for root in roots:
+            try:
+                if bundled:
+                    marker = (root / ".bundled-collections").read_text(encoding="utf-8")
+                    if (
+                        f"lock-sha256={hashlib.sha256(lock_bytes).hexdigest()}"
+                        not in marker.splitlines()
+                    ):
+                        continue
+                matches = all(
+                    json.loads(
+                        (
+                            root
+                            / "ansible_collections"
+                            / item["name"].replace(".", "/")
+                            / "MANIFEST.json"
+                        ).read_text(encoding="utf-8")
+                    )["collection_info"]["version"]
+                    == item["version"]
+                    for item in locked
+                )
+                if matches:
+                    detail = (
+                        "marker and manifest metadata"
+                        if bundled
+                        else "manifest metadata only"
+                    )
+                    return check(
+                        "collections",
+                        "pass",
+                        f"{len(locked)} locked versions present; {detail}",
+                    )
+            except (OSError, ValueError, KeyError, TypeError, AttributeError):
+                continue
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return check(
+        "collections", "fail", "locked collection metadata missing or mismatched"
+    )
+
+
+def ssh_config_check() -> dict[str, str]:
+    config = configparser.ConfigParser()
+    try:
+        config.read(ROOT_DIR / "ansible/ansible.cfg", encoding="utf-8")
+        safe = (
+            config.getboolean("defaults", "host_key_checking")
+            and not config.getboolean("privilege_escalation", "become")
+            and shutil.which("ssh") is not None
+        )
+    except (configparser.Error, ValueError):
+        safe = False
+    return check(
+        "ssh_config",
+        "pass" if safe else "fail",
+        "host_key_checking=true; global become=false; ssh available",
+    )
+
+
+def local_checks(no_network: bool) -> list[dict[str, str]]:
+    checks = controller_checks()
+    checks.extend([runtime_check(), collections_check(), ssh_config_check()])
+    free = shutil.disk_usage(ROOT_DIR).free
+    checks.append(
+        check(
+            "controller_disk",
+            "pass" if free >= MIN_FREE_BYTES else "fail",
+            f"free_bytes={free}",
+        )
+    )
+    if ROOT_DIR.parent.name == "releases":
+        base = ROOT_DIR.parent.parent
+        expected_uid = (
+            0 if base == Path("/opt/devops-toolkit") else ROOT_DIR.stat().st_uid
+        )
+        paths = [
+            base,
+            ROOT_DIR.parent,
+            ROOT_DIR,
+            base / "runtime" / f"ansible-core-{CORE_VERSION}",
+        ]
+        safe = all(
+            path.is_dir()
+            and not path.is_symlink()
+            and path.stat().st_uid == expected_uid
+            and stat.S_IMODE(path.stat().st_mode) & 0o022 == 0
+            for path in paths
+        )
+        checks.append(
+            check(
+                "release_permissions",
+                "pass" if safe else "fail",
+                "managed directories owned by installer account and not group/world writable",
+            )
+        )
+    if no_network:
+        checks.append(check("controller_network", "warn", "skipped by --no-network"))
+    else:
+        for host in ("github.com", "download.docker.com"):
+            try:
+                with socket.create_connection((host, 443), timeout=4):
+                    pass
+                checks.append(
+                    check(f"controller_network_{host}", "pass", "tcp/443 reachable")
+                )
+            except OSError:
+                checks.append(
+                    check(f"controller_network_{host}", "warn", "tcp/443 unavailable")
+                )
+    return checks
+
+
+def ssh_command(
+    host: str,
+    user: str,
+    port: int,
+    identity: Path | None,
+    known_hosts: Path,
+    mode: str,
+    no_network: bool,
+) -> list[str]:
+    if mode not in {"ubuntu", "user-only"}:
+        raise ValueError("invalid target mode")
+    command = [
+        "ssh",
+        "-T",
+        "-F",
+        "/dev/null",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "StrictHostKeyChecking=yes",
+        "-o",
+        f"UserKnownHostsFile={known_hosts}",
+        "-o",
+        "GlobalKnownHostsFile=/dev/null",
+        "-o",
+        "UpdateHostKeys=no",
+        "-o",
+        "ControlMaster=no",
+        "-o",
+        "ControlPath=none",
+        "-o",
+        "ConnectTimeout=8",
+        "-p",
+        str(port),
+        "-l",
+        user,
+    ]
+    if identity is not None:
+        command.extend(["-o", "IdentitiesOnly=yes", "-i", str(identity)])
+    network_arg = "no" if no_network else "yes"
+    return [*command, host, f"python3 - {mode} {network_arg}"]
+
+
+def remote_checks(args: argparse.Namespace) -> list[dict[str, str]]:
+    if (
+        not HOST_RE.fullmatch(args.host)
+        or args.host.startswith("-")
+        or not USER_RE.fullmatch(args.user)
+    ):
+        return [check("ssh_target", "fail", "invalid host or user")]
+    known_hosts = args.known_hosts.expanduser()
+    if not known_hosts.is_file() or stat.S_IMODE(known_hosts.stat().st_mode) & 0o022:
+        return [
+            check(
+                "ssh_target", "fail", "known_hosts missing or writable by group/others"
+            )
+        ]
+    identity = args.identity.expanduser() if args.identity else None
+    if identity is not None and (
+        not identity.is_file() or stat.S_IMODE(identity.stat().st_mode) & 0o077
+    ):
+        return [check("ssh_target", "fail", "identity missing or not private")]
+    command = ssh_command(
+        args.host,
+        args.user,
+        args.port,
+        identity,
+        known_hosts,
+        args.mode,
+        args.no_network,
+    )
+    try:
+        result = subprocess.run(
+            command,
+            input=REMOTE_SCRIPT,
+            capture_output=True,
+            text=True,
+            timeout=35,
+            check=False,
+            env={**os.environ, "SSH_ASKPASS": "/bin/false"},
+        )
+        if result.returncode != 0:
+            return [
+                check(
+                    "ssh_target",
+                    "fail",
+                    "strict SSH connection or remote preflight failed",
+                )
+            ]
+        payload = json.loads(result.stdout)
+        checks = payload["checks"]
+        if not isinstance(checks, list) or not all(
+            isinstance(item, dict) and item.get("status") in {"pass", "warn", "fail"}
+            for item in checks
+        ):
+            raise ValueError("invalid remote report")
+        return [
+            check("ssh_target", "pass", "strict host-key-checked fresh connection"),
+            *checks,
+        ]
+    except (OSError, subprocess.TimeoutExpired, ValueError, KeyError):
+        return [
+            check(
+                "ssh_target",
+                "fail",
+                "strict SSH connection or remote report unavailable",
+            )
+        ]
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Read-only DevOpsToolkit preflight; no Ansible playbook is run."
+    )
+    parser.add_argument("--json", action="store_true", help="print one JSON report")
+    parser.add_argument(
+        "--no-network", action="store_true", help="skip active TCP reachability probes"
+    )
+    parser.add_argument(
+        "--host", help="explicit SSH target; omit for controller-only checks"
+    )
+    parser.add_argument("--user", help="SSH login user (required with --host)")
+    parser.add_argument("--port", type=int, default=22)
+    parser.add_argument(
+        "--identity", type=Path, help="private key with mode 0600 or stricter"
+    )
+    parser.add_argument(
+        "--known-hosts", type=Path, default=Path.home() / ".ssh/known_hosts"
+    )
+    parser.add_argument("--mode", choices=["ubuntu", "user-only"], default="ubuntu")
+    args = parser.parse_args()
+    if (args.host is None) != (args.user is None) or not 1 <= args.port <= 65535:
+        parser.error("--host and --user must be supplied together, with a valid --port")
+    if args.host is None and (args.identity is not None or args.port != 22):
+        parser.error("--identity and --port require --host")
+    return args
+
+
+def main() -> int:
+    args = parse_args()
+    checks = local_checks(args.no_network)
+    if args.host is not None:
+        checks.extend(remote_checks(args))
+    statuses = {item["status"] for item in checks}
+    result = "fail" if "fail" in statuses else "warn" if "warn" in statuses else "pass"
+    report = {"schema": 1, "result": result, "checks": checks}
+    if args.json:
+        print(json.dumps(report, sort_keys=True))
+    else:
+        for item in checks:
+            print(f"{item['status'].upper():4} {item['name']}: {item['detail']}")
+        print(f"result={result}")
+    return 1 if result == "fail" else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

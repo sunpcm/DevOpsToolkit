@@ -29,7 +29,7 @@ python3 tests/test-wizard.py
 # Lint (matches CI in .github/workflows/env-check.yml)
 ansible-lint ansible
 yamllint .
-ruff check bin/devops-toolkit tests/test-wizard.py
+ruff check bin/devops-toolkit bin/devops-toolkit-doctor tests/test-wizard.py tests/test-capabilities.py tests/test-doctor.py tests/test-user-profile.py tests/test-orchestration.py tests/test-vm-evidence.py scripts/verify-collection-lock.py scripts/dependency-audit.py scripts/verify-vm-evidence.py
 shellcheck install.sh scripts/build-release.sh tests/*.sh bin/*   # skips bin/devops-toolkit (Python)
 
 # Build a release tarball locally (VERSION must match ^v[0-9]+\.[0-9]+\.[0-9]+)
@@ -39,14 +39,15 @@ shellcheck install.sh scripts/build-release.sh tests/*.sh bin/*   # skips bin/de
 ./tests/multipass-smoke.sh
 ```
 
-CI (`env-check.yml`) runs the lint suite plus `verify-ansible.sh` against an Ansible-core matrix of **2.12.10 (Python 3.10)** and **2.18.6 (Python 3.12)**. The toolkit must stay compatible with ansible-core ≥ 2.12 — do not use modules/syntax newer than that floor.
+CI (`env-check.yml`) runs the lint suite plus `verify-ansible.sh` against **ansible-core 2.21.4** on Python **3.12 and 3.14**. Ubuntu 22.04 remains a remote managed target, not a local control node.
 
 ## Architecture
 
 Execution flows through four layers; understand which one you're touching:
 
-1. **`install.sh`** — standalone release installer. Downloads the GitHub Release tarball, verifies **both** SHA256 and Sigstore/Cosign identity (pinned `COSIGN_VERSION`, pinned per-arch Cosign hashes), validates bundled pinned Ansible collections, extracts safely, installs immutably under `releases/<version>/` with atomic `current`/launcher symlink swaps. `--user` (below `~/.local`, never escalates) vs `--system` (below `/opt`, requires root). A failed verification never falls back to installing; only historical releases without a bundle marker use the explicit Galaxy compatibility path.
+1. **`install.sh`** — standalone release installer. Downloads the GitHub Release tarball, verifies **both** SHA256 and Sigstore/Cosign identity (pinned `COSIGN_VERSION`, pinned per-arch Cosign hashes), creates/reuses an isolated Python 3.12–3.14 + ansible-core 2.21.4 runtime under `runtime/`, validates bundled pinned Ansible collections, extracts safely, installs immutably under `releases/<version>/` with atomic `current`/launcher symlink swaps. `--user` (below `~/.local`, never escalates) vs `--system` (below `/opt`, requires root). A failed verification never falls back to installing; only historical releases without a bundle marker use the explicit Galaxy compatibility path.
 2. **`bin/devops-toolkit`** — the Python interactive wizard (the primary UX). Collects choices, writes **only** short-lived mode-`0600` inventory + `extra-vars.json` into a `TemporaryDirectory`, then execs `ansible-playbook`. Passwords are hashed in-memory via `openssl passwd -6` and never persisted; only non-sensitive selections (components, versions, git identity) are remembered in `~/.config/devops-toolkit/wizard-state.json`.
+   `devops-toolkit doctor` runs a separate read-only preflight; it never executes a Playbook and only contacts a target when `--host` and `--user` are explicitly provided.
 3. **`bin/{wsl,ubuntu,user-only}-bootstrap`, `bin/user-only-remove`** — thin bash wrappers that set `ANSIBLE_CONFIG` and exec the matching playbook with `-e target_user=...`. Use these for CI/automation; the wizard is for humans.
 4. **`ansible/playbooks/*.yml` + `ansible/roles/*`** — the actual work. Roles are shared across playbooks and parametrized by playbook-level `vars`.
 

@@ -6,16 +6,17 @@ readonly ARCHIVE_NAME="devops-toolkit.tar.gz"
 readonly CHECKSUM_NAME="${ARCHIVE_NAME}.sha256"
 readonly BUNDLE_NAME="${ARCHIVE_NAME}.sigstore.json"
 readonly COSIGN_VERSION="v3.1.1"
-readonly REQUIRED_ANSIBLE_MAJOR=2
-readonly REQUIRED_ANSIBLE_MINOR=12
-# 用范围而非精确版本：让 pip 按运行时 Python 解析可用的最高 ansible-core
-# （Ubuntu 22.04 的 Python 3.10 最高 2.17，24.04 的 3.12 可到 2.18）。
-readonly ANSIBLE_CORE_PIP_SPEC="ansible-core>=2.12,<2.19"
+readonly ANSIBLE_CORE_VERSION="2.21.4"
+readonly ANSIBLE_CORE_PIP_SPEC="ansible-core==${ANSIBLE_CORE_VERSION}"
+readonly MAX_DOWNLOAD_BYTES=$((512 * 1024 * 1024))
+readonly MAX_EXTRACT_BYTES=$((1024 * 1024 * 1024))
+readonly MAX_ARCHIVE_MEMBERS=20000
 
 INSTALL_MODE=""
 REQUESTED_VERSION="${DEVOPS_TOOLKIT_VERSION:-}"
 RUN_AFTER_INSTALL=true
 TEMP_DIR=""
+CONTROLLER_PYTHON=""
 
 usage() {
   cat <<'EOF'
@@ -29,12 +30,14 @@ Options:
   --no-run           Install only; do not launch the interactive wizard.
   --user             Install below ~/.local without privilege escalation.
   --system           Install below /opt and /usr/local/bin; requires root.
+  --capabilities-json  Print machine-readable installer capabilities; no changes.
   -h, --help         Show this help.
 
 Environment:
   DEVOPS_TOOLKIT_VERSION        Alternative to --version.
   DEVOPS_TOOLKIT_DOWNLOAD_BASE  Override the release asset directory (testing/mirror).
   DEVOPS_TOOLKIT_COSIGN_BASE    Override the pinned Cosign asset directory (mirror).
+  DEVOPS_TOOLKIT_SYSTEM_PYTHON  Trusted absolute Python path for --system (default: /usr/bin/python3).
 EOF
 }
 
@@ -48,7 +51,7 @@ info() {
 }
 
 effective_uid() {
-  id -u
+  printf '%s\n' "${EUID}"
 }
 
 cleanup() {
@@ -58,6 +61,10 @@ cleanup() {
 }
 
 parse_args() {
+  if [[ "${1:-}" == "--capabilities-json" && $# -eq 1 ]]; then
+    printf '{"schema":1,"component":"installer","version":null,"ansible_core":"%s","installation_modes":["user","system"],"controller":{"macos":{"architectures":["arm64","x86_64"],"python":"3.12-3.14"},"ubuntu":{"versions":["24.04"],"architectures":["aarch64","x86_64"],"python":"3.12-3.14"}},"verification":["sha256","sigstore-identity"]}\n' "${ANSIBLE_CORE_VERSION}"
+    exit 0
+  fi
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --version)
@@ -81,6 +88,9 @@ parse_args() {
         usage
         exit 0
         ;;
+      --capabilities-json)
+        fail "--capabilities-json 不能与安装参数组合。"
+        ;;
       *)
         fail "未知参数：$1"
         ;;
@@ -101,15 +111,75 @@ parse_args() {
   if [[ "${INSTALL_MODE}" == "system" && "$(effective_uid)" -ne 0 ]]; then
     fail "--system 需要 root；请使用 sudo 或改用 --user。"
   fi
+  if [[ "${INSTALL_MODE}" == "system" ]]; then
+    # Do not let a sudo-inherited, user-writable PATH supply root-run commands.
+    PATH="/usr/bin:/bin:/usr/sbin:/sbin"
+  fi
+}
+
+system_python_path_trusted() {
+  local candidate="$1" path prefix remaining component suffix link_target unsafe
+  local links=0
+  [[ "${candidate}" == /* ]] || return 1
+  path="${candidate}"
+  while :; do
+    prefix=""
+    remaining="${path#/}"
+    while [[ -n "${remaining}" ]]; do
+      component="${remaining%%/*}"
+      if [[ "${remaining}" == */* ]]; then
+        suffix="/${remaining#*/}"
+      else
+        suffix=""
+      fi
+      [[ -n "${component}" ]] || return 1
+      prefix="${prefix}/${component}"
+      [[ -e "${prefix}" || -L "${prefix}" ]] || return 1
+      unsafe="$(/usr/bin/find -H "${prefix}" -maxdepth 0 \
+        \( ! -uid 0 -o -perm -020 -o -perm -002 \) -print -quit)" || return 1
+      [[ -z "${unsafe}" ]] || return 1
+      if [[ -L "${prefix}" ]]; then
+        ((links += 1))
+        ((links <= 32)) || return 1
+        link_target="$(/usr/bin/readlink "${prefix}")" || return 1
+        if [[ "${link_target}" == /* ]]; then
+          path="${link_target}${suffix}"
+        else
+          path="${prefix%/*}/${link_target}${suffix}"
+        fi
+        break
+      fi
+      remaining="${suffix#/}"
+    done
+    [[ -z "${remaining}" ]] && [[ ! -L "${prefix}" ]] && break
+  done
+  [[ -f "${path}" && -x "${path}" ]]
+}
+
+select_controller_python() {
+  local candidate
+  if [[ "${INSTALL_MODE}" == "system" ]]; then
+    candidate="${DEVOPS_TOOLKIT_SYSTEM_PYTHON:-/usr/bin/python3}"
+    system_python_path_trusted "${candidate}" || \
+      fail "系统安装需要 root 持有且路径不可由普通用户写入的 Python；请使用 --user 或设置 DEVOPS_TOOLKIT_SYSTEM_PYTHON 为可信的绝对路径。"
+  else
+    candidate="$(type -P python3)" || fail "缺少 Python 3.12–3.14 控制端运行时。"
+  fi
+  CONTROLLER_PYTHON="${candidate}"
 }
 
 missing_core_commands() {
   local command_name
-  for command_name in curl tar python3 ansible-playbook ansible-galaxy git openssl; do
+  for command_name in curl tar git openssl; do
     if ! command -v "${command_name}" >/dev/null 2>&1; then
       printf '%s\n' "${command_name}"
     fi
   done
+  [[ -n "${CONTROLLER_PYTHON}" ]] || printf '%s\n' python3
+  if [[ -n "${CONTROLLER_PYTHON}" ]] && \
+     ! "${CONTROLLER_PYTHON}" -I -c 'import ensurepip' >/dev/null 2>&1; then
+    printf '%s\n' python3-venv
+  fi
 }
 
 run_apt_get() {
@@ -120,26 +190,147 @@ apt_get_available() {
   command -v apt-get >/dev/null 2>&1
 }
 
-pip_install_ansible_core() {
-  local -a pip_cmd=(python3 -m pip install --upgrade "${ANSIBLE_CORE_PIP_SPEC}")
-  # PEP 668：externally-managed 环境（如 Ubuntu 24.04）需显式放行系统级安装。
-  if python3 -c 'import os, sysconfig, sys; sys.exit(0 if os.path.exists(os.path.join(sysconfig.get_path("stdlib"), "EXTERNALLY-MANAGED")) else 1)'; then
-    pip_cmd+=(--break-system-packages)
-  fi
-  "${pip_cmd[@]}"
+check_controller_python() {
+  [[ -n "${CONTROLLER_PYTHON}" ]] || select_controller_python
+  "${CONTROLLER_PYTHON}" -I -c 'import sys; sys.exit(0 if (3, 12) <= sys.version_info[:2] <= (3, 14) else 1)' || \
+    fail "控制端需要 Python 3.12–3.14；Ubuntu 22.04/Python 3.10 仅支持作为远程受管目标。"
 }
 
-ensure_ansible_core() {
-  # 部分发行版（如 Ubuntu 22.04）apt 的 ansible 仅 2.10，低于要求；改用 pip 安装 ansible-core。
-  if ansible_core_meets_requirement; then
+read_controller_os_release() {
+  local key value os_id="" os_version=""
+  [[ -r /etc/os-release ]] || fail "Linux 控制端缺少 /etc/os-release，拒绝安装。"
+  while IFS='=' read -r key value; do
+    value="${value#\"}"
+    value="${value%\"}"
+    case "${key}" in
+      ID) os_id="${value}" ;;
+      VERSION_ID) os_version="${value}" ;;
+    esac
+  done </etc/os-release
+  printf '%s %s\n' "${os_id}" "${os_version}"
+}
+
+controller_kernel_release() {
+  [[ -r /proc/sys/kernel/osrelease ]] || fail "无法确认 Linux 内核版本，拒绝安装。"
+  cat /proc/sys/kernel/osrelease
+}
+
+check_controller_platform() {
+  local operating_system architecture os_id os_version kernel_release
+  operating_system="$(uname -s)"
+  architecture="$(uname -m)"
+  case "${operating_system}" in
+    Darwin)
+      [[ "${architecture}" == x86_64 || "${architecture}" == arm64 ]] || \
+        fail "macOS 控制端只支持 x86_64 或 arm64。"
+      ;;
+    Linux)
+      read -r os_id os_version < <(read_controller_os_release)
+      [[ "${os_id}" == ubuntu && "${os_version}" == 24.04 ]] || \
+        fail "Linux 控制端只支持 Ubuntu 24.04；Ubuntu 22.04 仅支持作为远程受管目标。"
+      [[ "${architecture}" == x86_64 || "${architecture}" == aarch64 ]] || \
+        fail "Ubuntu 控制端只支持 x86_64 或 aarch64。"
+      kernel_release="$(controller_kernel_release)"
+      if [[ "$(printf '%s' "${kernel_release}" | tr '[:upper:]' '[:lower:]')" == *microsoft* ]]; then
+        [[ "$(printf '%s' "${kernel_release}" | tr '[:upper:]' '[:lower:]')" == *microsoft*wsl2* ]] || \
+          fail "检测到 WSL1 或无法验证的 WSL 内核；只支持 WSL2。"
+      fi
+      ;;
+    *) fail "不支持的控制端系统：${operating_system}。" ;;
+  esac
+}
+
+managed_runtime_dir() {
+  printf '%s/runtime/ansible-core-%s\n' "$(toolkit_base_dir)" "${ANSIBLE_CORE_VERSION}"
+}
+
+managed_ansible_command() {
+  printf '%s/bin/%s\n' "$(managed_runtime_dir)" "$1"
+}
+
+validate_system_install_paths() {
+  [[ "${INSTALL_MODE}" == "system" ]] || return 0
+  "${CONTROLLER_PYTHON}" -I - "$(toolkit_base_dir)" <<'PY'
+import stat
+import sys
+from pathlib import Path
+
+base = Path(sys.argv[1])
+if not base.is_absolute() or ".." in base.parts:
+    raise SystemExit("system install base must be an absolute path without '..'")
+
+
+def trusted(path: Path, *, allow_link: bool = False) -> None:
+    entry = path.lstat()
+    if entry.st_uid != 0 or entry.st_mode & 0o022:
+        raise SystemExit(f"untrusted system install path: {path}")
+    if stat.S_ISLNK(entry.st_mode):
+        if not allow_link:
+            raise SystemExit(f"symlink in system install path: {path}")
+        target = path.resolve(strict=True)
+        # An external venv interpreter may be linked, but must itself be in a
+        # root-owned, non-writable path. External directory links are refused.
+        if target.is_dir() and not target.is_relative_to(base / "runtime"):
+            raise SystemExit(f"external directory link in runtime: {path}")
+        for parent in reversed(target.parents):
+            trusted(parent)
+        trusted(target)
+    elif not (stat.S_ISDIR(entry.st_mode) or stat.S_ISREG(entry.st_mode)):
+        raise SystemExit(f"unsupported system install entry: {path}")
+
+
+current = Path("/")
+trusted(current)
+for part in base.parts[1:]:
+    current /= part
+    if not current.exists() and not current.is_symlink():
+        break
+    trusted(current)
+
+for tree in (base / "runtime", base / "tools"):
+    if not tree.exists() and not tree.is_symlink():
+        continue
+    trusted(tree)
+    if not tree.is_dir():
+        raise SystemExit(f"system install path is not a directory: {tree}")
+    for entry in tree.rglob("*"):
+        trusted(entry, allow_link=tree.name == "runtime")
+PY
+}
+
+managed_runtime_valid() {
+  local runtime_dir version
+  runtime_dir="$(managed_runtime_dir)"
+  [[ -f "${runtime_dir}/.ready" && -x "${runtime_dir}/bin/ansible-playbook" && \
+     -x "${runtime_dir}/bin/ansible-galaxy" ]] || return 1
+  [[ "$(cat "${runtime_dir}/.ready")" == "${ANSIBLE_CORE_VERSION}" ]] || return 1
+  version="$(ANSIBLE_LOCAL_TEMP="${TEMP_DIR:-${TMPDIR:-/tmp}}" \
+    "${runtime_dir}/bin/ansible-playbook" --version 2>/dev/null | \
+    sed -nE '1s/.*\[core ([0-9]+\.[0-9]+\.[0-9]+)\].*/\1/p')"
+  [[ "${version}" == "${ANSIBLE_CORE_VERSION}" ]]
+}
+
+ensure_managed_runtime() {
+  local runtime_dir
+  check_controller_python
+  validate_system_install_paths || fail "系统安装路径或已有 runtime 权限不安全。"
+  runtime_dir="$(managed_runtime_dir)"
+  if managed_runtime_valid; then
+    info "复用隔离的 ${ANSIBLE_CORE_PIP_SPEC} runtime"
     return 0
   fi
-  command -v python3 >/dev/null 2>&1 || fail "缺少 python3，无法通过 pip 安装 ansible-core。"
-  info "apt 的 ansible 版本过低或缺失，改用 pip 安装 ${ANSIBLE_CORE_PIP_SPEC}"
-  pip_install_ansible_core || fail "pip 安装 ansible-core 失败。"
-  hash -r
-  ansible_core_meets_requirement || \
-    fail "pip 安装后仍未获得满足要求的 ansible-core（可能 PATH 未优先 /usr/local/bin）。"
+  [[ ! -e "${runtime_dir}" && ! -L "${runtime_dir}" ]] || \
+    fail "隔离 runtime ${runtime_dir} 不完整或版本不符；请先人工检查，安装器不会覆盖。"
+  mkdir -p "$(dirname "${runtime_dir}")"
+  chmod 0755 "$(dirname "${runtime_dir}")"
+  "${CONTROLLER_PYTHON}" -I -m venv "${runtime_dir}" || fail "创建隔离 runtime 失败；请安装 python3-venv。"
+  "${runtime_dir}/bin/python" -I -m pip install "${ANSIBLE_CORE_PIP_SPEC}" || \
+    fail "隔离 runtime 安装 ${ANSIBLE_CORE_PIP_SPEC} 失败；current 未切换。"
+  printf '%s\n' "${ANSIBLE_CORE_VERSION}" >"${runtime_dir}/.ready"
+  validate_system_install_paths || fail "新建 runtime 权限不安全；current 未切换。"
+  managed_runtime_valid || fail "隔离 runtime 自检失败；current 未切换。"
+  chmod -R a+rX "${runtime_dir}"
+  info "隔离 runtime 已就绪：${runtime_dir}"
 }
 
 install_system_dependencies() {
@@ -148,54 +339,26 @@ install_system_dependencies() {
   info "安装系统依赖"
   run_apt_get update
   DEBIAN_FRONTEND=noninteractive run_apt_get install -y \
-    ansible python3 python3-pip git curl ca-certificates openssl sshpass
-  ensure_ansible_core
+    python3 python3-venv git curl ca-certificates openssl sshpass
 }
 
 ensure_dependencies() {
   local missing
   missing="$(missing_core_commands)"
-  # 命令齐全但 ansible-core 版本过低时（如 Ubuntu 22.04 的 2.10）也需在系统模式下修复。
-  if [[ "${INSTALL_MODE}" == "system" ]] && \
-     { [[ -n "${missing}" ]] || ! ansible_core_meets_requirement; }; then
+  if [[ "${INSTALL_MODE}" == "system" && -n "${missing}" ]]; then
     install_system_dependencies
     missing="$(missing_core_commands)"
   fi
   if [[ -n "${missing}" ]]; then
     printf '缺少命令：\n%s\n' "${missing}" >&2
     if [[ "${INSTALL_MODE}" == "user" ]]; then
-      printf '普通用户安装不会提权。请让管理员安装 python3、ansible、git、curl 和 openssl。\n' >&2
+      printf '普通用户安装不会提权。请让管理员安装 Python 3.12–3.14（含 venv）、git、curl 和 openssl。\n' >&2
     fi
     exit 1
   fi
   if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
     fail "找不到 sha256sum 或 shasum。"
   fi
-}
-
-ansible_core_version() {
-  command -v ansible-playbook >/dev/null 2>&1 || return 1
-  # 兼容两种版本串：新版 "ansible-playbook [core 2.18.6]" 与旧版 "ansible-playbook 2.10.7"。
-  ansible-playbook --version 2>/dev/null | \
-    sed -nE '1s/.*(core |ansible-playbook )([0-9]+)\.([0-9]+).*/\2.\3/p'
-}
-
-ansible_core_meets_requirement() {
-  local version major minor
-  version="$(ansible_core_version)" || return 1
-  [[ -n "${version}" ]] || return 1
-  major="${version%%.*}"
-  minor="${version##*.}"
-  (( major > REQUIRED_ANSIBLE_MAJOR || \
-     (major == REQUIRED_ANSIBLE_MAJOR && minor >= REQUIRED_ANSIBLE_MINOR) ))
-}
-
-check_ansible_version() {
-  ansible_core_meets_requirement && return 0
-  local version
-  version="$(ansible_core_version || true)"
-  [[ -n "${version}" ]] || fail "无法识别 ansible-core 版本。"
-  fail "需要 ansible-core >= ${REQUIRED_ANSIBLE_MAJOR}.${REQUIRED_ANSIBLE_MINOR}，当前为 ${version}。"
 }
 
 download_base_url() {
@@ -215,12 +378,14 @@ curl_download() {
   local url="$1" output="$2"
   if [[ "${url}" == file://* ]]; then
     curl --fail --silent --show-error --location \
+      --max-filesize "${MAX_DOWNLOAD_BYTES}" \
       "${url}" --output "${output}"
   else
     # --speed-limit/--speed-time：传输速率低于 1KB/s 持续 30s 就中止本次尝试，
     # 避免连上后数据流卡死导致无限挂起；配合 --retry 让停滞的尝试自动重来。
     curl --fail --silent --show-error --location \
       --retry 5 --retry-delay 2 --retry-all-errors \
+      --max-filesize "${MAX_DOWNLOAD_BYTES}" \
       --connect-timeout 30 --speed-limit 1024 --speed-time 30 \
       "${url}" --output "${output}"
   fi
@@ -328,7 +493,7 @@ prepare_cosign() {
   cache_tmp="${cache_dir}/.cosign-$$"
   cp "${TEMP_DIR}/cosign" "${cache_tmp}"
   chmod 0755 "${cache_tmp}"
-  python3 - "${cache_tmp}" "${cached_cosign}" <<'PY'
+  "${CONTROLLER_PYTHON}" -I - "${cache_tmp}" "${cached_cosign}" <<'PY'
 import os
 import sys
 
@@ -356,19 +521,58 @@ verify_sigstore_signature() {
   info "Sigstore 身份验证通过"
 }
 
+read_archive_version() {
+  "${CONTROLLER_PYTHON}" -I - "${TEMP_DIR}/${ARCHIVE_NAME}" "${MAX_ARCHIVE_MEMBERS}" "${MAX_EXTRACT_BYTES}" <<'PY'
+import sys
+import tarfile
+
+archive, max_members, max_bytes = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+total = 0
+with tarfile.open(archive, "r|gz") as package:
+    for count, member in enumerate(package, 1):
+        if count > max_members:
+            raise SystemExit("release archive has too many entries")
+        total += member.size if member.isfile() else 0
+        if total > max_bytes:
+            raise SystemExit("release archive exceeds uncompressed size limit")
+        if member.name != "devops-toolkit/VERSION":
+            continue
+        if not member.isfile() or not 1 <= member.size <= 64:
+            raise SystemExit("invalid release VERSION entry")
+        handle = package.extractfile(member)
+        if handle is None:
+            raise SystemExit("cannot read release VERSION entry")
+        print(handle.read(65).decode("ascii").strip())
+        break
+    else:
+        raise SystemExit("release archive is missing VERSION")
+PY
+}
+
 extract_archive_safely() {
   mkdir -m 0700 "${TEMP_DIR}/extracted"
-  python3 - "${TEMP_DIR}/${ARCHIVE_NAME}" "${TEMP_DIR}/extracted" <<'PY'
+  "${CONTROLLER_PYTHON}" -I - "${TEMP_DIR}/${ARCHIVE_NAME}" "${TEMP_DIR}/extracted" \
+    "${MAX_ARCHIVE_MEMBERS}" "${MAX_EXTRACT_BYTES}" <<'PY'
+import os
 import sys
 import tarfile
 from pathlib import PurePosixPath
 
-archive, destination = sys.argv[1:]
+archive, destination = sys.argv[1:3]
+max_members, max_bytes = map(int, sys.argv[3:])
 with tarfile.open(archive, "r:gz") as package:
     members = package.getmembers()
-    if not members:
-        raise SystemExit("empty release archive")
+    if not members or len(members) > max_members:
+        raise SystemExit("empty release archive or too many entries")
+    seen = set()
+    total = 0
     for member in members:
+        if member.name in seen:
+            raise SystemExit(f"duplicate archive path: {member.name}")
+        seen.add(member.name)
+        total += member.size if member.isfile() else 0
+        if total > max_bytes:
+            raise SystemExit("release archive exceeds uncompressed size limit")
         path = PurePosixPath(member.name)
         if path.is_absolute() or ".." in path.parts:
             raise SystemExit(f"unsafe archive path: {member.name}")
@@ -376,6 +580,13 @@ with tarfile.open(archive, "r:gz") as package:
             raise SystemExit(f"unexpected archive root: {member.name}")
         if not (member.isfile() or member.isdir()):
             raise SystemExit(f"unsupported archive entry: {member.name}")
+        # Release archives are built on a CI runner whose numeric UID/GID must
+        # never become the owner of a root-installed executable directory.
+        member.uid = os.geteuid()
+        member.gid = os.getegid()
+        member.uname = ""
+        member.gname = ""
+        member.mode = (member.mode & 0o755) | (0o700 if member.isdir() else 0o600)
     package.extractall(destination)
 PY
 }
@@ -397,23 +608,34 @@ read_release_version() {
 
 bundled_collections_valid() {
   local collection_dir="$1"
-  python3 - "${collection_dir}" <<'PY'
+  local lock_file="$2"
+  "${CONTROLLER_PYTHON}" -I - "${collection_dir}" "${lock_file}" <<'PY'
+import hashlib
 import json
 import sys
 from pathlib import Path
 
 root = Path(sys.argv[1])
-expected = {
-    "ansible.posix": "1.5.4",
-    "community.general": "7.5.2",
-}
+lock_path = Path(sys.argv[2])
 marker = root / ".bundled-collections"
-expected_marker = "".join(
-    f"{name}={version}\n" for name, version in sorted(expected.items())
-)
 try:
-    if marker.read_text(encoding="utf-8") != expected_marker:
-        raise ValueError("marker mismatch")
+    marker_lines = marker.read_text(encoding="utf-8").splitlines()
+    if marker_lines and marker_lines[0].startswith("lock-sha256="):
+        lock_bytes = lock_path.read_bytes()
+        lock_digest = hashlib.sha256(lock_bytes).hexdigest()
+        if marker_lines[0] != f"lock-sha256={lock_digest}":
+            raise ValueError("collection lock digest mismatch")
+        lock = json.loads(lock_bytes)["collections"]
+        expected = {str(item["name"]): str(item["version"]) for item in lock}
+        expected_lines = [f"{name}={version}" for name, version in sorted(expected.items())]
+        if marker_lines[1:] != expected_lines:
+            raise ValueError("collection marker mismatch")
+    else:
+        # Historical signed bundles predate collections.lock.json. Preserve
+        # compatibility by requiring their marker and manifests to agree exactly.
+        expected = dict(line.split("=", 1) for line in marker_lines)
+        if not expected:
+            raise ValueError("empty historical collection marker")
     actual = {}
     for manifest in root.glob("ansible_collections/*/*/MANIFEST.json"):
         info = json.loads(manifest.read_text(encoding="utf-8"))["collection_info"]
@@ -421,6 +643,40 @@ try:
 except (KeyError, OSError, ValueError, json.JSONDecodeError):
     raise SystemExit(1)
 raise SystemExit(0 if actual == expected else 1)
+PY
+}
+
+allows_legacy_galaxy_fallback() {
+  # Only these already-published, signed Releases predate bundled collections.
+  # A future tag without a bundle must fail closed, even if its VERSION is valid.
+  case "$1" in
+    v0.1.2|v0.1.3|v0.1.4|v0.1.5|v0.1.7) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+system_release_tree_valid() {
+  local release_root="$1"
+  "${CONTROLLER_PYTHON}" -I - "${release_root}" <<'PY'
+import os
+import stat
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1]).resolve(strict=True)
+for path in (root, *root.rglob("*")):
+    entry = path.lstat()
+    if entry.st_uid != 0 or entry.st_gid != 0:
+        raise SystemExit(f"non-root owner: {path}")
+    if stat.S_ISLNK(entry.st_mode):
+        try:
+            target = path.resolve(strict=True)
+            target.relative_to(root)
+        except (OSError, RuntimeError, ValueError):
+            raise SystemExit(f"unsafe symlink: {path}") from None
+        continue
+    if entry.st_mode & 0o022 or not (stat.S_ISDIR(entry.st_mode) or stat.S_ISREG(entry.st_mode)):
+        raise SystemExit(f"unsafe mode or file type: {path}")
 PY
 }
 
@@ -442,8 +698,19 @@ install_release() {
   staging_dir="${releases_dir}/.install-${release_version}-$$"
   current_link="${base_dir}/current"
   launcher_link="${bin_dir}/devops-toolkit"
+  if [[ "${INSTALL_MODE}" == "system" ]]; then
+    [[ ! -L "${base_dir}" && ! -L "${releases_dir}" ]] || \
+      fail "系统安装根目录或 releases 目录不能是符号链接。"
+  fi
   mkdir -p "${releases_dir}"
   chmod 0755 "${base_dir}" "${releases_dir}"
+  if [[ "${INSTALL_MODE}" == "system" ]]; then
+    local unsafe_root
+    unsafe_root="$(find "${base_dir}" "${releases_dir}" -maxdepth 0 \
+      \( ! -uid 0 -o ! -gid 0 -o -perm -020 -o -perm -002 \) -print -quit)"
+    [[ -z "${unsafe_root}" ]] || \
+      fail "系统安装目录必须由 root 持有且不可由组/其他用户写入：${unsafe_root}。"
+  fi
   if [[ ! -d "${bin_dir}" ]]; then
     mkdir -p "${bin_dir}"
     chmod 0755 "${bin_dir}"
@@ -458,6 +725,8 @@ install_release() {
 
   local collection_root
   if [[ -e "${target_dir}" || -L "${target_dir}" ]]; then
+    [[ ! -L "${target_dir}" && -d "${target_dir}" ]] || \
+      fail "版本目录不能是符号链接或非目录：${target_dir}。"
     [[ -f "${target_dir}/.release-sha256" ]] || \
       fail "版本目录 ${target_dir} 已存在但缺少校验记录，拒绝覆盖。"
     [[ "$(cat "${target_dir}/.release-sha256")" == "${verified_sha}" ]] || \
@@ -468,19 +737,38 @@ install_release() {
     rm -rf "${staging_dir}"
     mkdir -m 0755 "${staging_dir}"
     cp -a "${source_dir}/." "${staging_dir}/"
+    if [[ "${INSTALL_MODE}" == "system" ]]; then
+      chown -R 0:0 "${staging_dir}"
+    fi
     chmod 0755 "${staging_dir}"
     printf '%s\n' "${verified_sha}" >"${staging_dir}/.release-sha256"
     chmod 0755 "${staging_dir}/bin/devops-toolkit"
     collection_root="${staging_dir}"
   fi
 
-  if [[ -f "${collection_root}/.collections-ready" ]]; then
-    info "Ansible collections 已就绪，跳过安装"
-  elif [[ -f "${collection_root}/collections/.bundled-collections" ]]; then
-    if ! bundled_collections_valid "${collection_root}/collections"; then
+  if [[ "${INSTALL_MODE}" == "system" ]]; then
+    if [[ "${collection_root}" != "${staging_dir}" ]] && \
+      ! system_release_tree_valid "${collection_root}"; then
+      fail "已有系统版本存在不安全所有权、权限或逃逸链接，拒绝复用；请先从可信 Release 重建该版本。"
+    fi
+  fi
+
+  local bundle_marker="${collection_root}/collections/.bundled-collections"
+  if [[ -f "${bundle_marker}" ]]; then
+    if ! bundled_collections_valid \
+      "${collection_root}/collections" \
+      "${collection_root}/ansible/collections.lock.json"; then
       [[ "${collection_root}" != "${staging_dir}" ]] || rm -rf "${staging_dir}"
       fail "Release 内置 Ansible collections 不完整，current 未切换。"
     fi
+  elif ! allows_legacy_galaxy_fallback "${release_version}"; then
+    [[ "${collection_root}" != "${staging_dir}" ]] || rm -rf "${staging_dir}"
+    fail "版本 ${release_version} 缺少内置 Ansible collections 标记，拒绝回退到 Galaxy。"
+  fi
+
+  if [[ -f "${collection_root}/.collections-ready" ]]; then
+    info "Ansible collections 已就绪，跳过安装"
+  elif [[ -f "${bundle_marker}" ]]; then
     info "使用 Release 内置 Ansible collections"
     printf '%s\n' "${verified_sha}" >"${collection_root}/.collections-ready"
   else
@@ -488,7 +776,7 @@ install_release() {
     mkdir -p "${collection_root}/collections"
     if ! ANSIBLE_COLLECTIONS_PATH="${collection_root}/collections" \
       ANSIBLE_COLLECTIONS_PATHS="${collection_root}/collections" \
-      ansible-galaxy collection install \
+      "$(managed_ansible_command ansible-galaxy)" collection install \
         --requirements-file "${collection_root}/ansible/requirements.yml" \
         --collections-path "${collection_root}/collections"; then
       [[ "${collection_root}" != "${staging_dir}" ]] || rm -rf "${staging_dir}"
@@ -497,9 +785,14 @@ install_release() {
     printf '%s\n' "${verified_sha}" >"${collection_root}/.collections-ready"
   fi
 
-  find "${collection_root}" -type d -exec chmod a+rx {} +
-  find "${collection_root}" -type f -exec chmod a+r {} +
+  find "${collection_root}" -type d -exec chmod a+rx,go-w {} +
+  find "${collection_root}" -type f -exec chmod a+r,go-w {} +
   chmod 0600 "${collection_root}/.release-sha256" "${collection_root}/.collections-ready"
+
+  if [[ "${INSTALL_MODE}" == "system" ]]; then
+    system_release_tree_valid "${collection_root}" || \
+      fail "系统版本权限验证失败，current 未切换。"
+  fi
 
   if [[ "${collection_root}" == "${staging_dir}" ]]; then
     mv "${staging_dir}" "${target_dir}"
@@ -513,7 +806,7 @@ install_release() {
   # non-root user that invokes an installation performed through sudo.
   (umask 022; ln -s "releases/${release_version}" "${current_tmp}")
   (umask 022; ln -s "${current_link}/bin/devops-toolkit" "${launcher_tmp}")
-  python3 - "${current_tmp}" "${current_link}" "${launcher_tmp}" "${launcher_link}" <<'PY'
+  "${CONTROLLER_PYTHON}" -I - "${current_tmp}" "${current_link}" "${launcher_tmp}" "${launcher_link}" <<'PY'
 import os
 import sys
 
@@ -527,8 +820,10 @@ PY
 
 main() {
   parse_args "$@"
+  check_controller_platform || return 1
+  check_controller_python
+  validate_system_install_paths || fail "系统安装路径或已有 runtime 权限不安全。"
   ensure_dependencies
-  check_ansible_version
   umask 077
   TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/devops-toolkit-install.XXXXXX")"
   chmod 0700 "${TEMP_DIR}"
@@ -538,9 +833,17 @@ main() {
   base_url="$(download_base_url)"
   download_assets "${base_url}"
   verify_checksum
-  extract_archive_safely
-  release_version="$(read_release_version)"
+  release_version="$(read_archive_version)"
+  [[ "${release_version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([._-][A-Za-z0-9.-]+)?$ ]] || \
+    fail "Release VERSION 格式无效。"
+  if [[ -n "${REQUESTED_VERSION}" && "${release_version}" != "${REQUESTED_VERSION}" ]]; then
+    fail "请求 ${REQUESTED_VERSION}，但 Release 内容为 ${release_version}。"
+  fi
   verify_sigstore_signature "${release_version}"
+  extract_archive_safely
+  [[ "$(read_release_version)" == "${release_version}" ]] || \
+    fail "Release 归档中的 VERSION 不一致。"
+  ensure_managed_runtime
   launcher="$(install_release "${release_version}" | tail -n 1)"
 
   info "DevOpsToolkit ${release_version} 已安装：${launcher}"

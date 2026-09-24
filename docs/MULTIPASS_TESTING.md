@@ -9,7 +9,7 @@ Multipass 的 `exec`、`mount` 和常规停止操作依赖虚拟机中的 SSH 22
 `Starting` 或不可达。
 
 脚本因此拒绝在非 `*-test-*` 实例上执行端口切换。端口切换后的验证改用目标用户 SSH，清理时只允许
-删除脚本生成的严格命名实例，并先强制停止这些临时实例。
+只删除脚本生成的严格命名实例，并先强制停止这些临时实例；不运行全局 `multipass purge`。
 
 ## Ubuntu 24.04 的 SSH 端口由 ssh.socket 决定
 
@@ -25,7 +25,8 @@ Ubuntu 22.10 及以后（含 24.04 LTS）默认用 systemd socket 激活 OpenSSH
 
 ## 运行
 
-宿主机需要已经具备 Multipass、Ansible、SSH、Python 3，以及仓库声明的 Ansible collections。
+宿主机需要已经具备 Multipass、Python 3.12–3.14、隔离的 ansible-core 2.21.4、SSH，
+以及仓库声明的 Ansible collections。
 脚本不会安装这些宿主机依赖。
 
 ```bash
@@ -37,16 +38,30 @@ Ubuntu 22.10 及以后（含 24.04 LTS）默认用 systemd socket 激活 OpenSSH
 - 创建 `devops-toolkit-2204-test-*` 和 `devops-toolkit-2404-test-*`；
 - 验证实例版本、Apple Silicon 架构、联网和宿主项目标记文件传输；
 - 生成一次性 SSH 密钥并配置 root bootstrap 入口；
-- 创建 `devops_test`，将 SSH 从 22 切到 2222，并验证 UFW 未锁死连接；
+- 创建 `devops_test`；prepare 保留 22/2222，随后从普通用户 2222 独立连接执行 finalize，
+  最后验证 listener/UFW 已移除 22；
 - 安装并检查 Docker 和 Nginx；
 - 第二次执行必须满足 `changed=0`、`unreachable=0`、`failed=0`；
-- 全部成功后自动清理临时实例；失败时保留实例、测试密钥和日志，并输出清理命令。
+- 成功或失败都自动清理脚本创建的临时实例、SSH ControlPath、一次性私钥和工作目录；清理失败会让测试失败。
 
-保留成功现场：
+生成不含凭据的机器可读报告：
+
+```bash
+./tests/multipass-smoke.sh run --with-faults \
+  --report /tmp/devops-toolkit-vm-smoke.txt
+```
+
+报告记录 source SHA、工作树状态、ansible-core 版本、Ubuntu 镜像、故障测试开关、结果和清理状态。
+默认即使测试失败也会写报告；报告可保存，一次性私钥和详细临时日志不会被保留。
+
+只有明确需要人工排障时才保留现场：
 
 ```bash
 ./tests/multipass-smoke.sh run --keep
 ```
+
+`--keep` 会保留一次性私钥和工作目录，且报告中的 `cleanup_status` 为 `skipped-by-request`，不能作为
+Release 证据。排障结束后应立即运行文末的严格命名清理命令并删除输出的工作目录。
 
 额外验证 uv 固定产物下载、SHA256 校验和安装：
 
@@ -71,8 +86,23 @@ MULTIPASS_TEST_PROXY="http://192.168.252.1:7898" \
   ./tests/multipass-smoke.sh run --with-uv
 ```
 
-该变量只会在一次性 VM 中写入测试用 `/etc/environment` 和 apt 配置，不会修改宿主机代理配置。代理
+该变量只会在一次性 VM 中写入测试用 `/etc/environment` 和 apt 配置，不会修改宿主机代理配置。
+脚本会把 Ansible SSH ControlPath 放在短路径的测试专用临时目录，避免 macOS Unix socket 路径超限。代理
 只能使用不含凭据的 `http://host:port`；测试结束后实例会被删除。
+
+若 VM 将官方源解析为 `198.18.0.0/15` Fake-IP，且 guest 无法路由到该地址，可先在宿主机从独立
+公共 DNS 查询当天的真实 IPv4，并仅为一次性 VM 提供白名单映射：
+
+```bash
+dig +short @1.1.1.1 ports.ubuntu.com A
+dig +short @1.1.1.1 download.docker.com A
+MULTIPASS_TEST_HOSTS="ports.ubuntu.com=<查询到的 IPv4>,download.docker.com=<查询到的 IPv4>" \
+  ./tests/multipass-smoke.sh run --with-faults --report /tmp/devops-toolkit-vm-smoke.txt
+```
+
+脚本只接受这两个官方域名和合法 IPv4，修改范围仅为本次临时 VM 的 `/etc/hosts`，并把映射写入报告。
+地址可能变化，运行前必须重新查询；不能把这些地址写入生产配置或长期 VM。发布前手工
+一次性 VM 验收如需此覆盖，仅为当次命令设置 `MULTIPASS_TEST_HOSTS`，并在报告中保留映射。
 
 在一次性实例中额外执行系统故障注入：
 
@@ -80,7 +110,7 @@ MULTIPASS_TEST_PROXY="http://192.168.252.1:7898" \
 ./tests/multipass-smoke.sh run --with-faults
 ```
 
-该模式验证无效 sshd 配置在重启前失败、陈旧 UFW profile 在启用默认拒绝前原地收敛、旧 Docker `.list`
+该模式验证无效 sshd 配置在重启前失败、新端口占用时 fail closed、陈旧 UFW profile 在启用默认拒绝前原地收敛、旧 Docker `.list`
 源在任何 apt 操作前移除，以及账户创建完成后发生受控中断时，完整重跑和第二次执行仍能达到
 `changed=0`。故障模式不会在非 `*-test-*` 实例上切换 SSH 端口；不要把这组测试手工复制到长期服务器。
 
@@ -104,16 +134,12 @@ multipass list
 
 `cleanup` 会拒绝任何不符合临时命名规则的实例。
 
-## CI 评估
+## 一次性发布前 VM 验收
 
-当前不把完整 Multipass 测试接入 GitHub-hosted runner：它依赖 macOS 虚拟化、长时间系统包下载和 SSH
-端口切换，执行时间与网络稳定性均不适合作为每次提交的阻塞门禁。现有 CI 继续承担语法、lint、secret
-scan 和轻量单元验证。
-
-如后续配置专用 Apple Silicon self-hosted runner，可新增手动或定期工作流，仅运行临时实例模式，并设置：
-
-- 独占 runner，避免多个虚拟化任务争抢资源；
-- workflow/job 超时和并发锁；
-- `always()` 清理步骤，只匹配本次 run id 对应的临时实例；
-- GitHub 与 Docker 下载失败的有限重试；
-- 保留失败日志，但不上传一次性私钥。
+GitHub-hosted 容器不能可靠提供 Multipass 所需的硬件虚拟化，不能用容器、syntax check 或 mocked systemd
+代替 SSH/UFW/Docker E2E。本仓库不再运行每周自托管 runner；每次发布前在隔离主机手工运行
+Ubuntu 22.04/24.04、二次 `changed=0` 与故障恢复，保存不含凭据的原始报告及 SHA256。
+`scripts/verify-vm-evidence.py` 检查报告的同 SHA、8 天内、通过、故障覆盖和清理结果；
+`release` Environment 的审批人再核对原件、SHA256、tag SHA 和同 SHA CI 后批准。
+这是一道人为门槛，GitHub 无法自动证明本地报告的真实性；审批缺席或证据不一致时必须拒绝发布。
+完整命令见[发布流程](RELEASING.md)。

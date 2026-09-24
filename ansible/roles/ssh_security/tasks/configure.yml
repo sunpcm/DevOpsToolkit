@@ -1,0 +1,98 @@
+---
+- name: Inspect an existing DevOpsToolkit OpenSSH drop-in
+  become: true
+  ansible.builtin.slurp:
+    path: /etc/ssh/sshd_config.d/99-devops-toolkit.conf
+  register: ssh_existing_managed_dropin
+  failed_when: false
+
+- name: Resolve the effective managed authentication hardening
+  ansible.builtin.set_fact:
+    ssh_effective_disable_root_login: >-
+      {{
+        (disable_root_login | bool)
+        if (ssh_apply_requested_hardening | bool)
+        else ('PermitRootLogin no' in
+          ((ssh_existing_managed_dropin.content | default('') | b64decode)
+           if not (ssh_existing_managed_dropin.failed | default(true)) else ''))
+      }}
+    ssh_effective_disable_password_auth: >-
+      {{
+        (disable_password_auth | bool)
+        if (ssh_apply_requested_hardening | bool)
+        else ('PasswordAuthentication no' in
+          ((ssh_existing_managed_dropin.content | default('') | b64decode)
+           if not (ssh_existing_managed_dropin.failed | default(true)) else ''))
+      }}
+
+- name: Ensure the OpenSSH drop-in directory is included
+  become: true
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: '^Include\s+/etc/ssh/sshd_config\.d/\*\.conf$'
+    line: 'Include /etc/ssh/sshd_config.d/*.conf'
+    insertbefore: BOF
+    backup: true
+  notify: Validate and restart SSH
+
+- name: Ensure the OpenSSH drop-in directory exists
+  become: true
+  ansible.builtin.file:
+    path: /etc/ssh/sshd_config.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the managed OpenSSH drop-in
+  become: true
+  ansible.builtin.template:
+    src: 99-devops-toolkit.conf.j2
+    dest: /etc/ssh/sshd_config.d/99-devops-toolkit.conf
+    owner: root
+    group: root
+    mode: "0644"
+    validate: /usr/sbin/sshd -t -f %s
+  notify: Validate and restart SSH
+
+# 只读查询，且需容忍单元不存在（failed_when: false），systemd 模块在缺单元时会报错，
+# 因此这里刻意用 command 探测 socket 激活状态。
+- name: Detect whether OpenSSH is socket-activated  # noqa: command-instead-of-module
+  become: true
+  ansible.builtin.command: systemctl is-active ssh.socket
+  register: ssh_socket_state
+  changed_when: false
+  failed_when: false
+
+- name: Record whether the SSH listener is owned by ssh.socket
+  ansible.builtin.set_fact:
+    ssh_socket_active: "{{ (ssh_socket_state.stdout | trim) == 'active' }}"
+
+- name: Ensure the ssh.socket override directory exists
+  become: true
+  ansible.builtin.file:
+    path: /etc/systemd/system/ssh.socket.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: ssh_socket_active | bool
+
+- name: Bind the socket-activated SSH listener to the managed ports
+  become: true
+  ansible.builtin.template:
+    src: ssh.socket-override.conf.j2
+    dest: /etc/systemd/system/ssh.socket.d/99-devops-toolkit.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: ssh_socket_active | bool
+  notify: Validate and restart SSH
+
+- name: Validate the complete OpenSSH configuration before handlers run
+  become: true
+  ansible.builtin.command: /usr/sbin/sshd -t
+  changed_when: false
+
+- name: Apply validated SSH changes now
+  ansible.builtin.meta: flush_handlers

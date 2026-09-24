@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "collections": [
+    {
+      "name": "ansible.posix",
+      "version": "2.2.2",
+      "artifact": "ansible-posix-2.2.2.tar.gz",
+      "sha256": "00a58c5d804c9adc99c3c3dc1b9f2246f4bb5f7337941440e0956f0e31c3b82b"
+    },
+    {
+      "name": "community.general",
+      "version": "13.4.0",
+      "artifact": "community-general-13.4.0.tar.gz",
+      "sha256": "efd1c0b5dc6f89b9667e4bd77f2426c30545861910dba188593871095ede1804"
+    },
+    {
+      "name": "community.library_inventory_filtering_v1",
+      "version": "1.1.5",
+      "artifact": "community-library_inventory_filtering_v1-1.1.5.tar.gz",
+      "sha256": "cbb9e86c5b1720df21e940cedcd2f3e1226c38262623e090a883712610733851"
+    }
+  ]
+}

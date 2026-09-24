@@ -15,9 +15,27 @@
           - target_user is match('^[a-z_][a-z0-9_-]*[$]?$')
         fail_msg: "wsl-bootstrap must run as root with -e target_user=<existing-or-new-user>."
 
-    - name: Verify WSL2
-      ansible.builtin.command: grep -qi microsoft /proc/version
+    - name: Require a supported WSL2 Ubuntu control platform before system changes
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['distribution'] == 'Ubuntu'
+          - ansible_facts['distribution_version'] == '24.04'
+          - ansible_facts['architecture'] in ['x86_64', 'aarch64']
+        fail_msg: >-
+          wsl-bootstrap supports only Ubuntu 24.04 on x86_64 or aarch64 under WSL2.
+
+    - name: Read the WSL kernel release without changing the system
+      ansible.builtin.command: cat /proc/sys/kernel/osrelease
+      register: wsl_kernel_release
       changed_when: false
+
+    - name: Reject WSL1 and unverified WSL kernels
+      ansible.builtin.assert:
+        that:
+          - wsl_kernel_release.stdout is search('(?i)microsoft.*wsl2')
+        fail_msg: >-
+          wsl-bootstrap requires a WSL2 kernel marker in
+          /proc/sys/kernel/osrelease; WSL1 and unverified kernels are not supported.
 
   roles:
     - role: system_base

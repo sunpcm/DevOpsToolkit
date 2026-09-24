@@ -1,89 +1,82 @@
 ---
-- name: Require a target key before disabling all password authentication
-  ansible.builtin.assert:
-    that:
-      - not (disable_password_auth | bool) or target_authorized_keys | length > 0
-    fail_msg: "Refusing to disable password authentication without target_authorized_keys."
+- name: Record the trusted SSH connection port
+  ansible.builtin.set_fact:
+    ssh_transition_connection_port: >-
+      {{ ansible_port | default(22) | int }}
 
-- name: Ensure the OpenSSH drop-in directory is included
-  become: true
-  ansible.builtin.lineinfile:
-    path: /etc/ssh/sshd_config
-    regexp: '^Include\s+/etc/ssh/sshd_config\.d/\*\.conf$'
-    line: 'Include /etc/ssh/sshd_config.d/*.conf'
-    insertbefore: BOF
-    backup: true
-  notify: Validate and restart SSH
-
-- name: Ensure the OpenSSH drop-in directory exists
-  become: true
-  ansible.builtin.file:
-    path: /etc/ssh/sshd_config.d
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
-
-- name: Install the managed OpenSSH drop-in
-  become: true
-  ansible.builtin.template:
-    src: 99-devops-toolkit.conf.j2
-    dest: /etc/ssh/sshd_config.d/99-devops-toolkit.conf
-    owner: root
-    group: root
-    mode: "0644"
-  notify: Validate and restart SSH
-
-# 只读查询，且需容忍单元不存在（failed_when: false），systemd 模块在缺单元时会报错，
-# 因此这里刻意用 command 探测 socket 激活状态。
-- name: Detect whether OpenSSH is socket-activated  # noqa: command-instead-of-module
+- name: Detect whether OpenSSH is currently socket-activated  # noqa: command-instead-of-module
   become: true
   ansible.builtin.command: systemctl is-active ssh.socket
-  register: ssh_socket_state
+  register: ssh_prepare_socket_state
   changed_when: false
   failed_when: false
+  when: (ssh_transition_connection_port | int) != (ssh_port | int)
 
-- name: Record whether the SSH listener is owned by ssh.socket
-  ansible.builtin.set_fact:
-    ssh_socket_active: "{{ (ssh_socket_state.stdout | trim) == 'active' }}"
-
-- name: Ensure the ssh.socket override directory exists
+- name: Inspect the active ssh.socket definition before accepting its listener
   become: true
-  ansible.builtin.file:
-    path: /etc/systemd/system/ssh.socket.d
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
-  when: ssh_socket_active | bool
-
-- name: Bind the socket-activated SSH listener to the managed port
-  become: true
-  ansible.builtin.template:
-    src: ssh.socket-override.conf.j2
-    dest: /etc/systemd/system/ssh.socket.d/99-devops-toolkit.conf
-    owner: root
-    group: root
-    mode: "0644"
-  when: ssh_socket_active | bool
-  notify: Validate and restart SSH
-
-- name: Validate the complete OpenSSH configuration before handlers run
-  become: true
-  ansible.builtin.command: /usr/sbin/sshd -t
+  ansible.builtin.command:
+    argv:
+      - systemctl
+      - cat
+      - --no-pager
+      - ssh.socket
+  register: ssh_prepare_socket_definition
   changed_when: false
+  failed_when: false
+  when:
+    - (ssh_transition_connection_port | int) != (ssh_port | int)
+    - (ssh_prepare_socket_state.stdout | default('') | trim) == 'active'
 
-- name: Apply validated SSH changes now
-  ansible.builtin.meta: flush_handlers
+- name: Inspect the desired SSH port before changing listeners
+  become: true
+  ansible.builtin.command:
+    argv:
+      - ss
+      - --tcp
+      - --listening
+      - --numeric
+      - --processes
+      - --no-header
+      - "sport = :{{ ssh_port }}"
+  register: ssh_desired_port_listener
+  changed_when: false
+  when: (ssh_transition_connection_port | int) != (ssh_port | int)
 
-- name: Switch subsequent tasks to the managed SSH port
-  ansible.builtin.set_fact:
-    ansible_port: "{{ ssh_port }}"
-  when: (hostvars[inventory_hostname].ansible_connection | default('ssh')) != 'local'
+- name: Refuse a desired SSH port owned by another service
+  ansible.builtin.assert:
+    that:
+      - >-
+        (ssh_desired_port_listener.stdout | trim | length == 0)
+        or ('sshd' in ssh_desired_port_listener.stdout)
+        or (
+          ('systemd' in ssh_desired_port_listener.stdout)
+          and ((ssh_prepare_socket_state.stdout | default('') | trim) == 'active')
+          and (
+            ('ListenStream=' ~ (ssh_port | string))
+            in (ssh_prepare_socket_definition.stdout | default(''))
+          )
+        )
+    fail_msg: >-
+      Refusing to move SSH to occupied port {{ ssh_port }}. The trusted port
+      {{ ssh_transition_connection_port }} and current login remain unchanged.
+  when: (ssh_transition_connection_port | int) != (ssh_port | int)
 
-- name: Verify the managed SSH connection from the controller
-  ansible.builtin.wait_for_connection:
-    connect_timeout: 10
-    sleep: 2
-    timeout: 60
-  when: (hostvars[inventory_hostname].ansible_connection | default('ssh')) != 'local'
+- name: Prepare SSH with both trusted and desired listener ports
+  ansible.builtin.include_tasks: configure.yml
+  vars:
+    ssh_listener_ports: >-
+      {{
+        [
+          ansible_port | default(22) | int,
+          ssh_port | default(22) | int
+        ] | unique | list
+      }}
+    ssh_apply_requested_hardening: false
+
+- name: Report the safe SSH transition boundary
+  ansible.builtin.debug:
+    msg: >-
+      SSH prepare phase complete. Trusted port {{ ssh_transition_connection_port }}
+      remains available. Verify a brand-new {{ target_user }} connection on port
+      {{ ssh_port }}, then run ubuntu-ssh-finalize from that connection to close
+      the old port and apply authentication hardening.

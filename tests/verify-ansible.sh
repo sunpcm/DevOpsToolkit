@@ -21,27 +21,58 @@ ansible-playbook --syntax-check -i 'localhost,' "${ROOT_DIR}/ansible/playbooks/w
 ansible-playbook --syntax-check -i "${TMP_DIR}/inventory.ini" \
   "${ROOT_DIR}/ansible/playbooks/ubuntu-bootstrap.yml"
 ansible-playbook --syntax-check -i "${TMP_DIR}/inventory.ini" \
+  "${ROOT_DIR}/ansible/playbooks/ubuntu-ssh-finalize.yml"
+ansible-playbook --syntax-check -i "${TMP_DIR}/inventory.ini" \
   "${ROOT_DIR}/ansible/playbooks/user-only.yml"
 ansible-playbook --syntax-check -i "${TMP_DIR}/inventory.ini" \
   "${ROOT_DIR}/ansible/playbooks/user-only-remove.yml"
 
 bash -n \
+  "${ROOT_DIR}/bin/ansible-playbook" \
   "${ROOT_DIR}/bin/wsl-bootstrap" \
   "${ROOT_DIR}/bin/ubuntu-bootstrap" \
+  "${ROOT_DIR}/bin/ubuntu-ssh-finalize" \
   "${ROOT_DIR}/bin/user-only" \
   "${ROOT_DIR}/bin/user-only-remove" \
   "${ROOT_DIR}/install.sh" \
   "${ROOT_DIR}/scripts/build-release.sh" \
   "${ROOT_DIR}/tests/test-installer.sh" \
   "${ROOT_DIR}/tests/test-release.sh" \
+  "${ROOT_DIR}/tests/test-multipass-report.sh" \
   "${ROOT_DIR}/tests/verify-idempotence.sh" \
-  "${ROOT_DIR}/tests/multipass-smoke.sh"
+  "${ROOT_DIR}/tests/multipass-smoke.sh" \
+  "${ROOT_DIR}/AcmeConfig/acme-init.sh" \
+  "${ROOT_DIR}/AcmeConfig/acme-check.sh" \
+  "${ROOT_DIR}/AcmeConfig/acme-cleanup.sh" \
+  "${ROOT_DIR}/AcmeConfig/tests/vm-smoke.sh" \
+  "${ROOT_DIR}/AcmeConfig/tests/vm-logrotate-smoke.sh" \
+  "${ROOT_DIR}/AcmeConfig/tests/test-log-permissions.sh" \
+  "${ROOT_DIR}/AcmeConfig/bin/acme-add" \
+  "${ROOT_DIR}/AcmeConfig/bin/acme-list" \
+  "${ROOT_DIR}/AcmeConfig/bin/acme-revoke"
 
 python3 -c 'import sys; from pathlib import Path; p=Path(sys.argv[1]); compile(p.read_text(), str(p), "exec")' \
   "${ROOT_DIR}/bin/devops-toolkit"
+python3 -c 'import sys; from pathlib import Path; p=Path(sys.argv[1]); compile(p.read_text(), str(p), "exec")' \
+  "${ROOT_DIR}/bin/devops-toolkit-doctor"
+python3 -c 'import sys; from pathlib import Path; p=Path(sys.argv[1]); compile(p.read_text(), str(p), "exec")' \
+  "${ROOT_DIR}/AcmeConfig/libexec/acme-manager"
+python3 "${ROOT_DIR}/scripts/verify-collection-lock.py" \
+  --lock "${ROOT_DIR}/ansible/collections.lock.json" \
+  --requirements "${ROOT_DIR}/ansible/requirements.yml"
+python3 "${ROOT_DIR}/scripts/dependency-audit.py" \
+  --output "${TMP_DIR}/dependency-audit.md"
+grep -Fq '# DevOpsToolkit 月度依赖审计' "${TMP_DIR}/dependency-audit.md"
 python3 -c 'import runpy, stat, sys; from pathlib import Path; m=runpy.run_path(sys.argv[1]); p=Path(sys.argv[2]); m["secure_write"](p, "{}\n"); assert stat.S_IMODE(p.stat().st_mode) == 0o600' \
   "${ROOT_DIR}/bin/devops-toolkit" "${TMP_DIR}/sensitive-vars.json"
 python3 "${ROOT_DIR}/tests/test-wizard.py"
+python3 "${ROOT_DIR}/tests/test-capabilities.py"
+python3 "${ROOT_DIR}/tests/test-doctor.py"
+python3 "${ROOT_DIR}/tests/test-user-profile.py"
+python3 "${ROOT_DIR}/tests/test-orchestration.py"
+python3 "${ROOT_DIR}/tests/test-vm-evidence.py"
+python3 "${ROOT_DIR}/AcmeConfig/tests/test_acme_manager.py"
+bash "${ROOT_DIR}/AcmeConfig/tests/test-log-permissions.sh"
 "${ROOT_DIR}/bin/devops-toolkit" --help >/dev/null
 [[ "$("${ROOT_DIR}/bin/devops-toolkit" --version)" == "development" ]]
 # 主推入口是 bash -c "$(curl ... install.sh)"，此时 BASH_SOURCE 为空；
@@ -49,6 +80,7 @@ python3 "${ROOT_DIR}/tests/test-wizard.py"
 bash -c "$(cat "${ROOT_DIR}/install.sh")" install-sh-entrypoint --help >/dev/null
 "${ROOT_DIR}/tests/test-installer.sh"
 "${ROOT_DIR}/tests/test-release.sh"
+"${ROOT_DIR}/tests/test-multipass-report.sh"
 
 if ! grep -Fq "(umask 022; ln -s \"releases/\${release_version}\"" \
   "${ROOT_DIR}/install.sh" || \
@@ -59,18 +91,50 @@ if ! grep -Fq "(umask 022; ln -s \"releases/\${release_version}\"" \
 fi
 
 release_workflow="${ROOT_DIR}/.github/workflows/release.yml"
+if ! grep -Fq 'uses: ./.github/workflows/env-check.yml' "${release_workflow}" || \
+   ! grep -Fq 'needs: quality' "${release_workflow}" || \
+   ! grep -Fq 'needs: validate' "${release_workflow}" || \
+   ! grep -Fq 'environment: release' "${release_workflow}" || \
+   ! grep -Fq "git merge-base --is-ancestor \"\${GITHUB_SHA}\" refs/remotes/origin/main" \
+     "${release_workflow}" || \
+   ! grep -Fq -- "--notes \"Source commit: \${GITHUB_SHA}\"" "${release_workflow}"; then
+  echo "错误：Release 未对同一 SHA 执行完整质量门禁、main 祖先检查或记录来源 SHA。" >&2
+  exit 1
+fi
+if [[ -e "${ROOT_DIR}/.github/workflows/vm-smoke.yml" ]] || \
+   grep -Eq 'vm-evidence|vm-smoke.yml|self-hosted' "${release_workflow}"; then
+  echo "错误：Release 仍依赖每周自托管 VM runner。" >&2
+  exit 1
+fi
+if grep -Fq -- '--break-system-packages' "${ROOT_DIR}/install.sh" || \
+   ! grep -Fq 'ANSIBLE_CORE_VERSION="2.21.4"' "${ROOT_DIR}/install.sh" || \
+   ! grep -Fq 'ensure_managed_runtime' "${ROOT_DIR}/install.sh" || \
+   ! grep -Fq 'community.library_inventory_filtering_v1' "${ROOT_DIR}/ansible/requirements.yml"; then
+  echo "错误：隔离 Ansible 2.21.4 runtime 或 collection 依赖锁定发生回退。" >&2
+  exit 1
+fi
 if ! grep -Fq 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02' \
   "${release_workflow}" || \
    ! grep -Fq 'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093' \
-  "${release_workflow}" || \
-   ! grep -Fq 'DEVOPS_TOOLKIT_COLLECTIONS_SOURCE:' "${release_workflow}"; then
+     "${release_workflow}" || \
+   ! grep -Fq 'DEVOPS_TOOLKIT_COLLECTIONS_SOURCE:' "${release_workflow}" || \
+   ! grep -Fq 'DEVOPS_TOOLKIT_COLLECTION_ARTIFACTS:' "${release_workflow}"; then
   echo "错误：Release workflow 没有把 validate job 的固定 collections 传给隔离的签名 job。" >&2
   exit 1
 fi
 if ! grep -Fq 'DEVOPS_TOOLKIT_COLLECTIONS_SOURCE' \
   "${ROOT_DIR}/scripts/build-release.sh" || \
+   ! grep -Fq 'DEVOPS_TOOLKIT_COLLECTION_ARTIFACTS' \
+     "${ROOT_DIR}/scripts/build-release.sh" || \
    ! grep -Fq '.bundled-collections' "${ROOT_DIR}/scripts/build-release.sh"; then
   echo "错误：Release 构建器没有强制打包固定 Ansible collections。" >&2
+  exit 1
+fi
+if ! grep -Fq 'cron: "17 6 1 * *"' \
+  "${ROOT_DIR}/.github/workflows/dependency-audit.yml" || \
+   grep -Eq 'pull_request:|gh pr|auto-merge' \
+     "${ROOT_DIR}/.github/workflows/dependency-audit.yml"; then
+  echo "错误：月度依赖审计不是只读报告，或存在自动 PR/合并路径。" >&2
   exit 1
 fi
 if ! grep -Fq '使用 Release 内置 Ansible collections' "${ROOT_DIR}/install.sh" || \
@@ -78,7 +142,7 @@ if ! grep -Fq '使用 Release 内置 Ansible collections' "${ROOT_DIR}/install.s
   echo "错误：安装器没有区分内置 collections 与旧版 Galaxy 兼容路径。" >&2
   exit 1
 fi
-for entrypoint in wsl-bootstrap ubuntu-bootstrap user-only user-only-remove; do
+for entrypoint in wsl-bootstrap ubuntu-bootstrap ubuntu-ssh-finalize user-only user-only-remove; do
   if ! grep -Fq 'ANSIBLE_COLLECTIONS_PATH=' "${ROOT_DIR}/bin/${entrypoint}" || \
      ! grep -Fq 'ANSIBLE_COLLECTIONS_PATHS=' "${ROOT_DIR}/bin/${entrypoint}"; then
     echo "错误：${entrypoint} 没有加载 Release 内置 Ansible collections。" >&2
@@ -94,9 +158,49 @@ fi
 if command -v shellcheck >/dev/null 2>&1; then
   shellcheck \
     "${ROOT_DIR}/install.sh" \
+    "${ROOT_DIR}/bin/ansible-playbook" \
+    "${ROOT_DIR}/bin/ubuntu-ssh-finalize" \
     "${ROOT_DIR}/scripts/build-release.sh" \
     "${ROOT_DIR}/tests/test-installer.sh" \
-    "${ROOT_DIR}/tests/test-release.sh"
+    "${ROOT_DIR}/tests/test-release.sh" \
+    "${ROOT_DIR}/AcmeConfig/acme-init.sh" \
+    "${ROOT_DIR}/AcmeConfig/acme-check.sh" \
+    "${ROOT_DIR}/AcmeConfig/acme-cleanup.sh" \
+    "${ROOT_DIR}/AcmeConfig/tests/vm-smoke.sh" \
+    "${ROOT_DIR}/AcmeConfig/tests/vm-logrotate-smoke.sh" \
+    "${ROOT_DIR}/AcmeConfig/tests/test-log-permissions.sh" \
+    "${ROOT_DIR}/AcmeConfig/bin/acme-add" \
+    "${ROOT_DIR}/AcmeConfig/bin/acme-list" \
+    "${ROOT_DIR}/AcmeConfig/bin/acme-revoke"
+fi
+
+acme_init="${ROOT_DIR}/AcmeConfig/acme-init.sh"
+acme_manager="${ROOT_DIR}/AcmeConfig/libexec/acme-manager"
+if ! grep -Fq '    su acme acme' "${ROOT_DIR}/AcmeConfig/logrotate/acme"; then
+  echo "错误：ACME 日志在 acme 可写目录中轮替，logrotate 必须以 acme 身份运行。" >&2
+  exit 1
+fi
+if grep -Fq 'get.acme.sh' "${acme_init}" || \
+   ! grep -Fq 'ACME_SH_COMMIT="807da6498377ee5e0cf43a78091f46f12dc59a89"' "${acme_init}" || \
+   ! grep -Fq 'ACME_SH_ARCHIVE_SHA256="ddbe1bcbd1a44a2623a2af167ebdc678669e6e2eb396742f2d1d28e02dc14220"' "${acme_init}"; then
+  echo "错误：AcmeConfig 必须下载固定提交并校验归档 SHA256，不得执行 get.acme.sh。" >&2
+  exit 1
+fi
+if ! grep -Fq "usermod --groups \"\${ACME_SECRETS_GROUP}\" \"\${ACME_USER}\"" "${acme_init}" || \
+   grep -Fq 'acme 在 ssl-cert' "${ROOT_DIR}/AcmeConfig/acme-check.sh"; then
+  echo "错误：ACME 续期账户与证书消费者组没有保持隔离。" >&2
+  exit 1
+fi
+if grep -nE 'shell[[:space:]]*=[[:space:]]*True|os[.]system' "${acme_manager}"; then
+  echo "错误：ACME 管理器不得通过 shell 或拼接命令执行外部输入。" >&2
+  exit 1
+fi
+if ! grep -Fq 'User=acme' "${ROOT_DIR}/AcmeConfig/systemd/acme-renew.service" || \
+   ! grep -Fq 'User=root' "${ROOT_DIR}/AcmeConfig/systemd/acme-deploy.service" || \
+   ! grep -Fq 'ReadWritePaths=/var/lib/acme/certs /var/lib/acme/deploy-queue /var/lib/acme/deploy-failed' \
+     "${ROOT_DIR}/AcmeConfig/systemd/acme-deploy.service"; then
+  echo "错误：ACME 续期与证书发布的 systemd 权限边界不完整。" >&2
+  exit 1
 fi
 
 if grep -R -nE 'apt_key:|apt_repository:' "${ROOT_DIR}/ansible"; then
@@ -123,6 +227,14 @@ fi
 if ! grep -Eq 'checksum:[[:space:]]+"sha256:' \
   "${ROOT_DIR}/ansible/roles/user_profile/tasks/main.yml"; then
   echo "错误：uv 下载没有强制 SHA256 校验。" >&2
+  exit 1
+fi
+
+if ! grep -Eq '^docker_apt_gpg_sha256: "[0-9a-f]{64}"$' \
+  "${ROOT_DIR}/ansible/group_vars/all.yml" || \
+   ! grep -Fq 'checksum: "sha256:{{ docker_apt_gpg_sha256 }}"' \
+     "${ROOT_DIR}/ansible/roles/docker/tasks/main.yml"; then
+  echo "错误：Docker APT 签名公钥没有固定到受校验的 SHA256。" >&2
   exit 1
 fi
 
@@ -161,17 +273,16 @@ if ! grep -Fq 'when: firewall_managed_allow_rule_exists | bool' "${firewall_task
   exit 1
 fi
 
-# 锁定 24.04 改端口修复：Ubuntu 22.10+（含 24.04）的 OpenSSH 监听端口由 ssh.socket 决定，
-# 只改 sshd_config 的 Port 无效。若下列任一环节缺失，socket 激活主机改端口不会生效，叠加
-# UFW 只放行新端口会把主机锁死。
+# 锁定 SSH 两阶段事务：prepare 必须保留可信旧端口，finalize 必须从普通用户新端口连接执行；
+# Ubuntu 22.10+ 的 ssh.socket 与传统 ssh.service 必须使用同一端口集合。
 ssh_security_role="${ROOT_DIR}/ansible/roles/ssh_security"
-if ! grep -Eq 'ListenStream=.*ssh_port' \
+if ! grep -Eq 'ListenStream=.*port' \
   "${ssh_security_role}/templates/ssh.socket-override.conf.j2" 2>/dev/null; then
-  echo "错误：ssh_security 未通过 ssh.socket 的 ListenStream 绑定托管端口；socket 激活的 Ubuntu 改 SSH 端口会失效并可能锁死主机。" >&2
+  echo "错误：ssh_security 未通过 ssh.socket 绑定两阶段端口集合。" >&2
   exit 1
 fi
 if ! grep -Fq 'ssh.socket-override.conf.j2' \
-  "${ssh_security_role}/tasks/main.yml" 2>/dev/null; then
+  "${ssh_security_role}/tasks/configure.yml" 2>/dev/null; then
   echo "错误：ssh_security 的任务未写入 ssh.socket 端口覆盖文件。" >&2
   exit 1
 fi
@@ -180,11 +291,17 @@ if ! grep -Eq 'name:[[:space:]]*ssh\.socket' \
   echo "错误：ssh_security 的 handler 未重启 ssh.socket，端口变更不会生效。" >&2
   exit 1
 fi
-if ! grep -Fq 'ansible.builtin.wait_for_connection:' \
+if ! grep -Fq 'ssh_transition_connection_port' \
   "${ssh_security_role}/tasks/main.yml" 2>/dev/null || \
-   grep -Fq 'ansible.builtin.wait_for:' \
-  "${ssh_security_role}/tasks/main.yml" 2>/dev/null; then
-  echo "错误：SSH 端口切换必须通过 wait_for_connection 验证，避免 SSH alias 或 ProxyJump 被当作 DNS 主机名。" >&2
+   ! grep -Fq "ansible_facts['user_id'] == target_user" \
+  "${ssh_security_role}/tasks/finalize.yml" 2>/dev/null || \
+   ! grep -Fq 'ansible.builtin.include_role:' \
+  "${ROOT_DIR}/ansible/playbooks/ubuntu-ssh-finalize.yml" 2>/dev/null || \
+   ! grep -Fq 'tasks_from: finalize' \
+  "${ROOT_DIR}/ansible/playbooks/ubuntu-ssh-finalize.yml" 2>/dev/null || \
+   ! grep -Fq 'firewall_prepare_allowed_ports' \
+  "${ROOT_DIR}/ansible/playbooks/ubuntu-bootstrap.yml" 2>/dev/null; then
+  echo "错误：SSH prepare/finalize 事务或旧端口 UFW 回退边界发生回退。" >&2
   exit 1
 fi
 

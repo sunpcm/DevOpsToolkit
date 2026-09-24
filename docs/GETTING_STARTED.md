@@ -6,7 +6,7 @@
 
 ### 控制端要求
 
-- `ansible-core >= 2.12`
+- Python 3.12–3.14 与隔离的 `ansible-core==2.21.4`；Ubuntu 22.04 仅可作远程受管目标
 - Git
 - SSH 客户端（远程场景）
 - 能访问 GitHub 和软件源
@@ -14,7 +14,7 @@
 安装项目依赖：
 
 ```bash
-ansible-galaxy collection install -r ansible/requirements.yml
+./.venv/bin/ansible-galaxy collection install -r ansible/requirements.yml
 ./tests/verify-ansible.sh
 ```
 
@@ -88,11 +88,11 @@ target_password_hash: "$6$..."
 
 ```bash
 sudo apt update
-sudo apt install -y ansible python3-pip git
-ansible-playbook --version
-# Ubuntu 22.04 的 apt ansible 为 2.10；仅在版本低于 2.12 时执行
-sudo python3 -m pip install 'ansible-core>=2.12,<2.19'
-ansible-galaxy collection install -r ansible/requirements.yml
+sudo apt install -y python3 python3-venv git
+python3 -m venv .venv
+.venv/bin/python -m pip install 'ansible-core==2.21.4'
+.venv/bin/ansible-galaxy collection install -r ansible/requirements.yml
+export PATH="${PWD}/.venv/bin:${PATH}"
 ```
 
 编辑公共配置：
@@ -200,7 +200,8 @@ ssh root@203.0.113.10
 
 ### SSH 加固注意事项
 
-默认不会禁用 root 登录或密码认证。当前 `ubuntu-bootstrap` 后续仍要求 root SSH，因此不要在需要继续维护的机器上设置 `disable_root_login: true`。
+默认不会禁用 root 登录或密码认证。首次 bootstrap 可使用 root；完成 finalize 后，后续
+`ubuntu-bootstrap` 也支持从同一目标普通用户连接并通过 sudo 管理，因此禁用 root 登录不会切断维护入口。
 
 确认 root 已经可以使用密钥连接，并测试目标用户密钥后，可以仅禁用 SSH 密码认证：
 
@@ -211,11 +212,13 @@ target_authorized_keys:
   - "ssh-ed25519 AAAAC3... workstation"
 ```
 
-Playbook 会先配置 UFW、写入 OpenSSH drop-in、执行 `sshd -t`，然后才重启 SSH。即便如此，也必须：
+`ubuntu-bootstrap` 只进入双端口 prepare 状态，不会立即关闭旧端口或新应用认证禁用。必须：
 
 1. 保持当前 root 会话不关闭。
 2. 在另一个终端测试目标用户的新连接。
-3. 确认密钥、端口和 sudo 符合预期后，再退出当前会话。
+3. 将 inventory 改为目标普通用户和新端口，运行 `bin/ubuntu-ssh-finalize`；禁用密码时额外传入
+   `-e ssh_finalize_key_verified=true`。
+4. finalize 成功并确认旧端口已从 listener/UFW 移除后，再退出当前会话。
 
 ### 验证
 
@@ -312,7 +315,7 @@ sudo apt install -y curl git zsh
 
 该命令只删除：
 
-- `.zshrc` 中的 DevOpsToolkit source 区块。
+- `.zshrc` 和 `.profile` 中的 DevOpsToolkit source 区块。
 - `~/.config/devops-toolkit/`。
 
 它不会删除用户原有 `.zshrc`、Oh My Zsh、NVM、Node、uv 或 Go，避免误删安装前就存在的数据。

@@ -1,0 +1,38 @@
+[Unit]
+Description=Renew ACME certificates as the unprivileged acme account
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=acme
+Group=acme
+SupplementaryGroups=acme-secrets
+WorkingDirectory=/var/lib/acme/home
+Environment=HOME=/var/lib/acme/home
+UMask=0077
+ExecStart=/var/lib/acme/home/.acme.sh/acme.sh --cron --home /var/lib/acme/home/.acme.sh --config-home /var/lib/acme/config
+NoNewPrivileges=true
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+RestrictNamespaces=true
+ProtectProc=invisible
+PrivateDevices=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+ReadOnlyPaths=/etc/acme
+ReadWritePaths=/var/lib/acme/home /var/lib/acme/config /var/lib/acme/staging /var/lib/acme/deploy-queue
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

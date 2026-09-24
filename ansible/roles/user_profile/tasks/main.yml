@@ -20,6 +20,24 @@
       - ansible_facts['getent_passwd'][profile_target_user][4] == profile_target_home
     fail_msg: "Profile HOME does not match passwd database; refusing to write."
 
+- name: Validate user-profile component combinations
+  ansible.builtin.assert:
+    that:
+      - not (install_oh_my_zsh | bool) or (configure_shell | bool)
+    fail_msg: >-
+      install_oh_my_zsh=true requires configure_shell=true. Language runtimes
+      and Linuxbrew environment loading do not require either option.
+
+- name: Resolve whether portable tool environment loading is required
+  ansible.builtin.set_fact:
+    profile_environment_enabled: >-
+      {{
+        (configure_uv | bool)
+        or (configure_node | bool)
+        or (configure_go | bool)
+        or (configure_homebrew_environment | bool)
+      }}
+
 - name: Create managed user configuration directory
   become: "{{ profile_use_become }}"
   become_user: "{{ profile_target_user }}"
@@ -28,7 +46,40 @@
     state: directory
     mode: "0700"
 
-- name: Install managed shell configuration
+- name: Inspect the shared Linuxbrew executable
+  ansible.builtin.stat:
+    path: /home/linuxbrew/.linuxbrew/bin/brew
+  register: profile_shared_brew
+  when: configure_homebrew_environment | bool
+
+- name: Explain a requested but unavailable shared Linuxbrew environment
+  ansible.builtin.debug:
+    msg: >-
+      configure_homebrew_environment=true, but the shared brew executable is
+      absent. Keeping the guarded loader so a later system-level Linuxbrew
+      install becomes available without rewriting user files.
+  when:
+    - configure_homebrew_environment | bool
+    - not profile_shared_brew.stat.exists
+
+- name: Install the portable tool environment configuration
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.template:
+    src: environment.sh.j2
+    dest: "{{ profile_target_home }}/.config/devops-toolkit/environment.sh"
+    mode: "0600"
+  when: profile_environment_enabled | bool
+
+- name: Remove the portable environment file when no tool environment is enabled
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.file:
+    path: "{{ profile_target_home }}/.config/devops-toolkit/environment.sh"
+    state: absent
+  when: not (profile_environment_enabled | bool)
+
+- name: Install managed base Zsh configuration
   become: "{{ profile_use_become }}"
   become_user: "{{ profile_target_user }}"
   ansible.builtin.template:
@@ -44,6 +95,22 @@
     path: "{{ profile_target_home }}/.zshrc"
   register: target_zshrc
 
+- name: Check whether the target login profile exists
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.stat:
+    path: "{{ profile_target_home }}/.profile"
+  register: target_login_profile
+
+- name: Remove the legacy combined Zsh loader before splitting components
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.blockinfile:
+    path: "{{ profile_target_home }}/.zshrc"
+    marker: "# {mark} DEVOPSTOOLKIT USER PROFILE"
+    state: absent
+  when: target_zshrc.stat.exists
+
 - name: Ensure the target Zsh configuration exists
   become: "{{ profile_use_become }}"
   become_user: "{{ profile_target_user }}"
@@ -54,30 +121,76 @@
     modification_time: preserve
     access_time: preserve
   when:
-    - configure_shell | bool
+    - (configure_shell | bool) or (profile_environment_enabled | bool)
     - not target_zshrc.stat.exists
 
-- name: Load the managed shell file without replacing user content
+- name: Load the portable environment from Zsh without replacing user content
   become: "{{ profile_use_become }}"
   become_user: "{{ profile_target_user }}"
   ansible.builtin.blockinfile:
     path: "{{ profile_target_home }}/.zshrc"
-    marker: "# {mark} DEVOPSTOOLKIT USER PROFILE"
+    marker: "# {mark} DEVOPSTOOLKIT USER ENVIRONMENT"
+    block: |
+      [ -r "$HOME/.config/devops-toolkit/environment.sh" ] && source "$HOME/.config/devops-toolkit/environment.sh"
+    backup: true
+  when: profile_environment_enabled | bool
+
+- name: Load the portable environment from login shells
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.blockinfile:
+    path: "{{ profile_target_home }}/.profile"
+    marker: "# {mark} DEVOPSTOOLKIT USER ENVIRONMENT"
+    block: |
+      [ -r "$HOME/.config/devops-toolkit/environment.sh" ] && . "$HOME/.config/devops-toolkit/environment.sh"
+    create: true
+    mode: "0644"
+    backup: true
+  when: profile_environment_enabled | bool
+
+- name: Load the managed base Zsh file without replacing user content
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.blockinfile:
+    path: "{{ profile_target_home }}/.zshrc"
+    marker: "# {mark} DEVOPSTOOLKIT USER SHELL"
     block: |
       [ -r "$HOME/.config/devops-toolkit/shell.zsh" ] && source "$HOME/.config/devops-toolkit/shell.zsh"
     backup: true
   when: configure_shell | bool
 
-- name: Remove the managed Zsh loader when shell management is disabled
+- name: Remove the managed base Zsh loader when shell management is disabled
   become: "{{ profile_use_become }}"
   become_user: "{{ profile_target_user }}"
   ansible.builtin.blockinfile:
     path: "{{ profile_target_home }}/.zshrc"
-    marker: "# {mark} DEVOPSTOOLKIT USER PROFILE"
+    marker: "# {mark} DEVOPSTOOLKIT USER SHELL"
     state: absent
   when:
     - not configure_shell | bool
     - target_zshrc.stat.exists
+
+- name: Remove the Zsh environment loader when no tool environment is enabled
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.blockinfile:
+    path: "{{ profile_target_home }}/.zshrc"
+    marker: "# {mark} DEVOPSTOOLKIT USER ENVIRONMENT"
+    state: absent
+  when:
+    - not (profile_environment_enabled | bool)
+    - target_zshrc.stat.exists
+
+- name: Remove the login environment loader when no tool environment is enabled
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.blockinfile:
+    path: "{{ profile_target_home }}/.profile"
+    marker: "# {mark} DEVOPSTOOLKIT USER ENVIRONMENT"
+    state: absent
+  when:
+    - not (profile_environment_enabled | bool)
+    - target_login_profile.stat.exists
 
 - name: Remove the managed shell file when shell management is disabled
   become: "{{ profile_use_become }}"
@@ -100,7 +213,7 @@
   register: ohmyzsh_revision
   changed_when: false
   failed_when: false
-  when: configure_shell | bool
+  when: install_oh_my_zsh | bool
 
 - name: Install Oh My Zsh without executing a remote installer
   become: "{{ profile_use_become }}"
@@ -111,7 +224,7 @@
     version: "{{ ohmyzsh_version }}"
     update: true
   when:
-    - configure_shell | bool
+    - install_oh_my_zsh | bool
     - ohmyzsh_revision.rc != 0 or (ohmyzsh_revision.stdout | trim) != ohmyzsh_version
 
 - name: Check managed Zsh plugin revisions
@@ -131,7 +244,7 @@
   changed_when: false
   failed_when: false
   when:
-    - configure_shell | bool
+    - install_oh_my_zsh | bool
     - item.key in zsh_plugins
 
 - name: Install managed Zsh plugins
@@ -146,7 +259,7 @@
   loop_control:
     label: "{{ item.item.key }}"
   when:
-    - configure_shell | bool
+    - install_oh_my_zsh | bool
     - not item.skipped | default(false)
     - item.rc != 0 or (item.stdout | trim) != item.item.value.version
 

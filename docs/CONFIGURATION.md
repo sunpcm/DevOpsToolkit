@@ -39,7 +39,8 @@ vim ansible/group_vars/all.yml
 
 | 变量 | 默认值 | 说明 |
 |---|---:|---|
-| `configure_shell` | `true` | Zsh、Oh My Zsh 和插件 |
+| `configure_shell` | `true` | 基础 Zsh 环境、常用别名和提示工具初始化 |
+| `install_oh_my_zsh` | 跟随 `configure_shell` | 安装并加载 Oh My Zsh 和固定版本插件 |
 | `configure_git` | `true` | Git 全局配置 |
 | `configure_uv` | `true` | uv |
 | `configure_node` | `true` | NVM 和 Node.js |
@@ -47,6 +48,15 @@ vim ansible/group_vars/all.yml
 | `configure_homebrew_environment` | `true` | 在 Shell 中加载已有 Linuxbrew |
 | `configure_wsl_integration` | `true` | WSL Windows 互操作配置 |
 | `enable_wsl_docker_integration` | `true` | 检查 Docker Desktop 可用性 |
+
+uv、NVM/Node、goenv/Go 和共享 Linuxbrew 的环境加载写入独立的
+`~/.config/devops-toolkit/environment.sh`，由 `.profile` 和 `.zshrc` 各自的托管区块加载，
+不依赖 `configure_shell=true`。`install_oh_my_zsh=true` 则必须同时启用
+`configure_shell`；交互向导遇到不兼容组合会明确提示并关闭 Oh My Zsh。
+
+`configure_homebrew_environment=true` 但 `/home/linuxbrew/.linuxbrew/bin/brew` 不存在时，
+角色会给出警告并保留带存在性判断的 loader，不会伪装成成功加载，也不会让整次配置失败。
+以后由系统级流程安装共享 Linuxbrew 后，新 Shell 会自动加载它。
 
 Git 身份默认留空，不会写入虚假姓名或邮箱：
 
@@ -100,6 +110,11 @@ Oh My Zsh、插件和 Linuxbrew 固定到不可变 Git commit。升级时应修�
 | `ssh_port` | `22` | SSH 监听端口及 UFW 放行端口 |
 | `disable_root_login` | `false` | 禁止 SSH root 登录 |
 | `disable_password_auth` | `false` | 禁止 SSH 密码认证 |
+
+Docker APT 签名公钥使用官方 Ubuntu 仓库地址和 `docker_apt_gpg_sha256` 固定摘要。
+已有文件摘要匹配时，Ansible 不再为每次重跑访问下载站；文件缺失或摘要不匹配时才重新下载并验证，
+失败则停止，不接受未经校验的密钥。Docker 轮换公钥时，应先独立核对官方来源与指纹，
+再更新摘要并完成两版 Ubuntu VM 回归。
 
 防火墙默认只放行 SSH。启用 Nginx 不会自动开放 80/443，需要显式添加：
 
@@ -161,7 +176,8 @@ SSH 公钥可以提交，但更推荐放在环境专用变量文件中。
 
 关闭功能时，只自动删除能够确定由 DevOpsToolkit 独占管理的内容：
 
-- `configure_shell=false`：删除 `.zshrc` 中的托管 source 区块和托管 `shell.zsh`。
+- `configure_shell=false`：删除基础 Zsh source 区块和托管 `shell.zsh`，但不会影响已启用语言工具的独立环境 loader。
+- uv、Node、Go 和 Linuxbrew 环境开关全部关闭：删除 `.profile`/`.zshrc` 的环境 source 区块及托管 `environment.sh`。
 - `configure_wsl_integration=false`：删除托管 WSL source 区块和 `wsl.sh`。
 - `target_passwordless_sudo=false`：删除 `90-devops-toolkit-<user>` sudoers 文件。
 
@@ -175,11 +191,51 @@ SSH 公钥可以提交，但更推荐放在环境专用变量文件中。
 ssh root@SERVER 'cp /etc/ssh/sshd_config "/etc/ssh/sshd_config.bak.$(date +%Y%m%d_%H%M%S)"'
 ```
 
-Playbook 使用 `/etc/ssh/sshd_config.d/99-devops-toolkit.conf`，并执行：
+SSH 变更是显式两阶段事务。`ubuntu-bootstrap` 的 prepare 阶段使用
+`/etc/ssh/sshd_config.d/99-devops-toolkit.conf`，先检查新端口未被其他进程占用，再让传统
+`ssh.service` 或 socket 激活的 `ssh.socket` 同时监听当前端口和新端口；UFW 的受管 profile
+也同时放行两者。prepare 不会新应用 root/password 禁用，但会保留已经生效的托管加固。
+
+每次写入都会先执行：
 
 ```bash
 /usr/sbin/sshd -t
 ```
+
+prepare 成功后，在控制端建立全新的目标普通用户连接，不要复用 root ControlMaster：
+
+```bash
+ssh -F /dev/null -o IdentitiesOnly=yes -i ~/.ssh/id_ed25519 \
+  -p 2222 developer@SERVER 'sudo true'
+```
+
+然后把 finalize inventory 的 `ansible_user` 和 `ansible_port` 分别设为目标普通用户和新端口，执行：
+
+```bash
+./bin/ubuntu-ssh-finalize ansible/inventories/ubuntu-finalize.ini developer \
+  --private-key ~/.ssh/id_ed25519 \
+  -e @ansible/your-vars.yml \
+  -e ssh_finalize_key_verified=true
+```
+
+finalize 会拒绝 root 连接、错误端口，以及在禁用密码认证时未经显式确认的密钥验证。启用 UFW 时，
+它先以独立的 `DevOpsToolkitSSHFinalizeGuard` profile 临时放行已验证的新端口，再收敛单一
+SSH 端口并应用认证策略；强制建立一次全新普通用户连接后，才从主 UFW profile 移除旧端口。
+主 profile 和新连接均通过后才清理临时 guard。prepare 失败时旧端口与原认证方式仍保留；
+finalize 若在 SSH 收敛后、UFW 收敛前失败，旧端口可能已关闭，但临时 guard 会保留新端口，
+并再次检查普通用户连接。不要假定旧 root 端口可用，也不要提前删除 guard。先用以下只读命令
+检查实际状态，再使用原 inventory、变量文件和密钥重跑上面的 finalize 命令：
+
+```bash
+sudo /usr/sbin/sshd -t
+sudo ss -lntp
+sudo ufw app info DevOpsToolkit
+sudo ufw app info DevOpsToolkitSSHFinalizeGuard
+sudo systemctl status ssh.service ssh.socket --no-pager
+```
+
+如果仅临时 guard 清理失败，主 profile 与新连接已在此前验证；仍应检查实际状态，
+不要把清理错误误认为旧端口已恢复，也不要手工删除未知的 UFW 规则。
 
 如果要删除管理配置，先验证主配置和其他 drop-in 能维持正确登录方式：
 
@@ -238,7 +294,8 @@ sudo ss -lntp
 sudo ufw status verbose
 ```
 
-检查 inventory 的端口、`ssh_port`、UFW 规则和目标用户公钥是否一致。
+检查 prepare/finalize inventory 的用户和端口、`ssh_port`、UFW profile、目标用户公钥及 sudo
+是否一致。不要通过删除旧端口或手工关闭 root/password 登录来“修复”未完成的 prepare。
 
 ### WSL Docker 检查失败
 

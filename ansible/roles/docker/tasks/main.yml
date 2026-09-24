@@ -34,6 +34,7 @@
     owner: root
     group: root
     mode: "0644"
+    checksum: "sha256:{{ docker_apt_gpg_sha256 }}"
     timeout: 30
   register: docker_repository_key
   retries: 5

@@ -22,7 +22,7 @@ devops-toolkit
 
 - 创建或更新普通用户。
 - 明确选择“密码”“SSH 公钥”“两者”或“不修改已有凭据”；密码只在随后出现的隐藏输入框中输入。
-- 选择 Shell、Git、uv、Node.js、Go、Linuxbrew 和 WSL 集成。
+- 分别选择基础 Zsh、Oh My Zsh、Git、uv、Node.js、Go、Linuxbrew 环境和 WSL 集成。
 - 可检查 Docker Desktop WSL Integration。
 
 必须在 WSL 内以 root 运行：
@@ -31,11 +31,14 @@ devops-toolkit
 sudo ./bin/devops-toolkit
 ```
 
+Oh My Zsh 依赖基础 Zsh 管理；若只选择语言工具，向导仍会通过独立的 `.profile`/`.zshrc`
+环境 loader 使新会话找到工具，不会强制安装 Oh My Zsh。
+
 ### Ubuntu
 
 - 已经以 root 登录新服务器时，可选择“当前服务器本地执行”，无需再次配置 SSH inventory。
 - 也可以从 macOS、WSL 或其他控制端通过 SSH 配置远程服务器。
-- 输入服务器、当前 SSH 端口和 root 认证方式。
+- 输入服务器、当前 SSH 端口，以及首次 root 或后续托管普通用户的认证方式。
 - 目标主机可以是可解析主机名/IP，也可以是 `~/.ssh/config` 中的 Host alias；端口切换后的验证使用
   Ansible SSH 连接配置，因此兼容 alias 与 ProxyJump。
 - bootstrap 模式每次都会明确询问是否授予目标用户 `NOPASSWD:ALL`；该高权限选项始终默认关闭且不记忆。
@@ -47,10 +50,10 @@ sudo ./bin/devops-toolkit
 - 启用 Nginx 和 UFW 时自动放行 80/443。
 - 支持输入其他 TCP/UDP 放行端口。
 
-当前 Ubuntu Playbook 仍要求 root SSH 登录，因此远程模式开始前必须允许 root 公钥登录；若服务器已设置
-`PermitRootLogin no`，应改用服务器本地执行模式，或在有备用控制台的前提下临时允许
-`PermitRootLogin prohibit-password`。向导本身不会禁用 root 登录。使用密钥连接且给目标用户配置了公钥时，
-可以选择禁用 SSH 密码认证。
+首次 Ubuntu 初始化使用 root；完成 SSH finalize 后，可直接用托管普通用户和 sudo 重跑。
+端口变更先进入旧/新端口并存的 prepare 状态。仅当连接私钥对应的公钥已写入目标用户且目标用户有
+免密 sudo 时，向导才会从普通用户新端口建立独立连接并自动 finalize；否则保留安全准备态，提示用户
+验证登录后手工运行 `bin/ubuntu-ssh-finalize`。root/password 禁用只在 finalize 阶段应用。
 
 新服务器本地初始化的推荐流程：
 
@@ -60,19 +63,18 @@ sudo ./bin/devops-toolkit
 
 安装阶段会验证 SHA256 和 Sigstore 发布身份；签名或网络验证失败时不会启动向导，也不会降级为未签名安装。详细故障排查见[安装、升级与回滚](INSTALLATION.md)。
 
-需要审查最新源码、开发调试或不使用 Release 安装器时使用 clone。源码运行要求
-`ansible-core >= 2.12`；Ubuntu 22.04 的 apt `ansible` 只有 2.10，应优先使用安装器自动补齐，
-或手工安装兼容版本：
+需要审查最新源码、开发调试或不使用 Release 安装器时使用 clone。源码控制端需要
+Python 3.12–3.14；Ubuntu 22.04 仅作为远程受管目标。Ubuntu 24.04 示例：
 
 ```bash
 apt update
-apt install -y git ansible python3-pip
+apt install -y git python3 python3-venv
 git clone https://github.com/sunpcm/DevOpsToolkit.git
 cd DevOpsToolkit
-ansible-playbook --version
-# 仅当版本低于 2.12 时执行
-python3 -m pip install 'ansible-core>=2.12,<2.19'
-ansible-galaxy collection install -r ansible/requirements.yml
+python3 -m venv .venv
+.venv/bin/python -m pip install 'ansible-core==2.21.4'
+.venv/bin/ansible-galaxy collection install -r ansible/requirements.yml
+export PATH="${PWD}/.venv/bin:${PATH}"
 ./bin/devops-toolkit
 ```
 
@@ -144,5 +146,6 @@ ssh root@SERVER
 ```bash
 sudo ./bin/wsl-bootstrap developer
 ./bin/ubuntu-bootstrap ansible/inventories/ubuntu.ini developer
+./bin/ubuntu-ssh-finalize ansible/inventories/ubuntu-finalize.ini developer
 ./bin/user-only ansible/inventories/user-only.ini
 ```

@@ -62,8 +62,11 @@ ansible.log
 config.local.yml
 
 # 测试文件
-test_*
-debug_*
+# 仅忽略仓库根目录的个人临时测试，不屏蔽子目录的正式 test_*.py。
+/test_*
+/debug_*
+__pycache__/
+*.py[cod]
 
 # 文档临时文件
 # ===================

@@ -2,6 +2,10 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ "${1:-}" == "--capabilities-json" ]]; then
+  [[ $# -eq 1 ]] || { echo "错误：--capabilities-json 不接受其他参数。" >&2; exit 2; }
+  exec "${ROOT_DIR}/bin/devops-toolkit" --capabilities-json --entrypoint ubuntu-bootstrap
+fi
 INVENTORY="${1:-}"
 TARGET_USER="${TARGET_USER:-${2:-}}"
 
@@ -20,6 +24,6 @@ if [[ -d "${COLLECTIONS_DIR}/ansible_collections" ]]; then
   export ANSIBLE_COLLECTIONS_PATHS="${COLLECTIONS_DIR}"
 fi
 export ANSIBLE_CONFIG="${ROOT_DIR}/ansible/ansible.cfg"
-exec ansible-playbook -i "${INVENTORY}" \
+exec "${ROOT_DIR}/bin/ansible-playbook" -i "${INVENTORY}" \
   "${ROOT_DIR}/ansible/playbooks/ubuntu-bootstrap.yml" \
   -e "target_user=${TARGET_USER}" "${@:3}"

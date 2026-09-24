@@ -1,273 +1,342 @@
-#!/bin/bash
-
+#!/usr/bin/env bash
 set -euo pipefail
 
-# ============================================================================
-# ACME 系统健康检查脚本
-# 功能：检查 ACME 系统配置是否正常
-# 用法：sudo bash acme-check.sh
-# ============================================================================
+readonly ACME_USER="acme"
+readonly ACME_GROUP="acme"
+readonly ACME_SECRETS_GROUP="acme-secrets"
+readonly CERT_GROUP="ssl-cert"
+readonly ACME_BASE="/var/lib/acme"
+readonly ACME_ETC="/etc/acme"
+readonly EXPECTED_VERSION="3.1.6"
+readonly EXPECTED_COMMIT="807da6498377ee5e0cf43a78091f46f12dc59a89"
+readonly EXPECTED_ARCHIVE_SHA256="ddbe1bcbd1a44a2623a2af167ebdc678669e6e2eb396742f2d1d28e02dc14220"
 
-ACME_USER="acme"
-ACME_HOME="/var/lib/acme"
-ACME_CERTS_DIR="$ACME_HOME/certs"
-ACME_CONFIG_DIR="$ACME_HOME/config"
+FAILURES=0
+WARNINGS=0
 
-# 颜色输出
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+pass() {
+  printf '[PASS] %s\n' "$*"
+}
 
-# 检查是否 root
-if [[ $EUID -ne 0 ]]; then
-    echo -e "${RED}[ERROR]${NC} 此脚本必须以 root 身份运行"
+warn() {
+  WARNINGS=$((WARNINGS + 1))
+  printf '[WARN] %s\n' "$*" >&2
+}
+
+fail_check() {
+  FAILURES=$((FAILURES + 1))
+  printf '[FAIL] %s\n' "$*" >&2
+}
+
+group_contains_user() {
+  local user="$1"
+  local expected_group="$2"
+  local group_name
+  local -a groups=()
+  read -r -a groups <<<"$(id -nG "${user}")"
+  for group_name in "${groups[@]}"; do
+    [[ "${group_name}" != "${expected_group}" ]] || return 0
+  done
+  return 1
+}
+
+check_account_boundaries() {
+  local shell primary_group
+  printf '\n== 账户与组边界 ==\n'
+  if ! id "${ACME_USER}" >/dev/null 2>&1; then
+    fail_check "缺少 ${ACME_USER} 系统账户。"
+    return
+  fi
+
+  shell="$(getent passwd "${ACME_USER}" | cut -d: -f7)"
+  primary_group="$(id -gn "${ACME_USER}")"
+  if [[ "${shell}" == */nologin ]]; then
+    pass "acme 使用 nologin shell。"
+  else
+    fail_check "acme shell 不是 nologin：${shell}"
+  fi
+  if [[ "${primary_group}" == "${ACME_GROUP}" ]]; then
+    pass "acme 主组正确。"
+  else
+    fail_check "acme 主组应为 ${ACME_GROUP}，实际为 ${primary_group}。"
+  fi
+  if group_contains_user "${ACME_USER}" "${ACME_SECRETS_GROUP}"; then
+    pass "acme 可读取 DNS 密钥。"
+  else
+    fail_check "acme 不在 ${ACME_SECRETS_GROUP}。"
+  fi
+  if group_contains_user "${ACME_USER}" "${CERT_GROUP}"; then
+    fail_check "acme 不应属于 ${CERT_GROUP}；续期进程不应读取已部署私钥。"
+  else
+    pass "acme 与证书消费者组已隔离。"
+  fi
+
+  if id www-data >/dev/null 2>&1; then
+    if group_contains_user www-data "${CERT_GROUP}"; then
+      pass "www-data 可读取已部署私钥。"
+    else
+      warn "www-data 不在 ${CERT_GROUP}；使用其他服务账户时可忽略。"
+    fi
+    if group_contains_user www-data "${ACME_SECRETS_GROUP}"; then
+      fail_check "www-data 不得属于 ${ACME_SECRETS_GROUP}。"
+    else
+      pass "www-data 无 DNS 密钥读取权限。"
+    fi
+  fi
+}
+
+check_path() {
+  local path="$1"
+  local expected_type="$2"
+  local expected_owner="$3"
+  local expected_mode="$4"
+  local actual_owner actual_mode
+
+  if [[ "${expected_type}" == "dir" ]]; then
+    [[ -d "${path}" && ! -L "${path}" ]] || {
+      fail_check "目录缺失或类型不安全：${path}"
+      return
+    }
+  else
+    [[ -f "${path}" && ! -L "${path}" ]] || {
+      fail_check "文件缺失或类型不安全：${path}"
+      return
+    }
+  fi
+  actual_owner="$(stat -c '%U:%G' "${path}")"
+  actual_mode="$(stat -c '%a' "${path}")"
+  if [[ "${actual_owner}" == "${expected_owner}" && "${actual_mode}" == "${expected_mode}" ]]; then
+    pass "${path} = ${actual_owner} ${actual_mode}。"
+  else
+    fail_check "${path} 期望 ${expected_owner} ${expected_mode}，实际 ${actual_owner} ${actual_mode}。"
+  fi
+}
+
+check_filesystem() {
+  printf '\n== 文件系统权限 ==\n'
+  check_path "${ACME_BASE}" dir root:root 755
+  check_path "${ACME_BASE}/home" dir acme:acme 700
+  check_path "${ACME_BASE}/config" dir acme:acme 700
+  check_path "${ACME_BASE}/logs" dir acme:acme 700
+  check_path "${ACME_BASE}/staging" dir acme:acme 700
+  check_path "${ACME_BASE}/deploy-queue" dir acme:acme 700
+  check_path "${ACME_BASE}/deploy-failed" dir root:root 700
+  check_path "${ACME_BASE}/certs" dir root:ssl-cert 750
+  check_path "${ACME_ETC}" dir root:acme-secrets 750
+
+  check_path /usr/local/libexec/devops-toolkit/acme-manager file root:root 755
+  check_path /usr/local/bin/acme-add file root:root 755
+  check_path /usr/local/bin/acme-list file root:root 755
+  check_path /usr/local/bin/acme-revoke file root:root 755
+  check_path /etc/acme/reload-services file root:root 644
+
+  if [[ -e /etc/acme/dns-config ]]; then
+    check_path /etc/acme/dns-config file root:acme-secrets 640
+  else
+    warn "未配置 /etc/acme/dns-config；仅使用 webroot 时可忽略。"
+  fi
+}
+
+check_client_logs() {
+  local config_dir="${1:-${ACME_BASE}/config}"
+  local expected_owner="${2:-acme:acme}"
+  local log_file links count=0
+  printf '\n== ACME 日志权限 ==\n'
+  if [[ ! -d "${config_dir}" || -L "${config_dir}" ]]; then
+    fail_check "ACME 日志目录缺失或类型不安全：${config_dir}"
+    return
+  fi
+  for log_file in "${config_dir}"/*.log*; do
+    [[ -e "${log_file}" || -L "${log_file}" ]] || continue
+    count=$((count + 1))
+    check_path "${log_file}" file "${expected_owner}" 600
+    [[ -f "${log_file}" && ! -L "${log_file}" ]] || continue
+    links="$(stat -c '%h' "${log_file}")"
+    if [[ "${links}" != 1 ]]; then
+      fail_check "ACME 日志硬链接数量不安全：${log_file}"
+    fi
+  done
+  printf '已检查 %s 个当前或轮替 ACME 日志文件。\n' "${count}"
+}
+
+check_source_pin() {
+  local marker="${ACME_ETC}/acme-source"
+  local installed_sha256 actual_sha256
+  printf '\n== 上游来源锁定 ==\n'
+  check_path "${marker}" file root:root 644
+  [[ -f "${marker}" && ! -L "${marker}" ]] || return
+  if grep -Fxq "version=${EXPECTED_VERSION}" "${marker}" && \
+     grep -Fxq "commit=${EXPECTED_COMMIT}" "${marker}" && \
+     grep -Fxq "archive_sha256=${EXPECTED_ARCHIVE_SHA256}" "${marker}"; then
+    pass "acme.sh 版本、提交和归档 SHA256 与仓库锁定值一致。"
+  else
+    fail_check "acme.sh 来源 marker 与仓库锁定值不一致。"
+  fi
+  installed_sha256="$(sed -nE 's/^installed_sha256=([0-9a-f]{64})$/\1/p' "${marker}")"
+  if [[ "${#installed_sha256}" -ne 64 ]]; then
+    fail_check "acme.sh 已安装程序缺少 SHA256 marker。"
+    return
+  fi
+  if [[ ! -f "${ACME_BASE}/home/.acme.sh/acme.sh" ]]; then
+    fail_check "acme.sh 已安装程序不存在。"
+    return
+  fi
+  actual_sha256="$(sha256sum "${ACME_BASE}/home/.acme.sh/acme.sh")"
+  if [[ "${actual_sha256%% *}" == "${installed_sha256}" ]]; then
+    pass "acme.sh 已安装程序 SHA256 匹配。"
+  else
+    fail_check "acme.sh 已安装程序 SHA256 与 marker 不匹配。"
+  fi
+}
+
+check_systemd() {
+  local unit
+  printf '\n== systemd 调度与沙箱 ==\n'
+  for unit in acme-renew.service acme-renew.timer acme-deploy.service acme-deploy.path; do
+    check_path "/etc/systemd/system/${unit}" file root:root 644
+  done
+  if command -v systemd-analyze >/dev/null 2>&1 && \
+     systemd-analyze verify \
+       /etc/systemd/system/acme-renew.service \
+       /etc/systemd/system/acme-renew.timer \
+       /etc/systemd/system/acme-deploy.service \
+       /etc/systemd/system/acme-deploy.path >/dev/null; then
+    pass "systemd-analyze verify 通过。"
+  else
+    fail_check "systemd unit 静态校验失败或 systemd-analyze 不可用。"
+  fi
+
+  for unit in acme-renew.timer acme-deploy.path; do
+    if systemctl is-enabled --quiet "${unit}"; then
+      pass "${unit} 已启用。"
+    else
+      fail_check "${unit} 未启用。"
+    fi
+    if systemctl is-active --quiet "${unit}"; then
+      pass "${unit} 运行中。"
+    else
+      fail_check "${unit} 未运行。"
+    fi
+  done
+}
+
+check_certificate_material() {
+  local domain_dir domain current target revision_dir activated
+  local key_file fullchain_file ca_file
+  local -a domains=() unexpected=() symlinks=() pending=() failed=()
+  printf '\n== 证书与队列 ==\n'
+  if [[ ! -d "${ACME_BASE}/certs" ]]; then
+    fail_check "证书目录不存在。"
+    return
+  fi
+
+  mapfile -d '' domains < <(find "${ACME_BASE}/certs" -mindepth 1 -maxdepth 1 -type d -print0)
+  mapfile -d '' unexpected < <(find "${ACME_BASE}/certs" -mindepth 1 -maxdepth 1 \
+    -type f ! -name '.deploy.lock' -print0)
+  mapfile -d '' symlinks < <(find "${ACME_BASE}/certs" -maxdepth 1 -type l -print0)
+  if ((${#unexpected[@]} > 0 || ${#symlinks[@]} > 0)); then
+    fail_check "证书根目录存在旧版平铺文件或非法链接，须人工迁移。"
+  else
+    pass "证书根目录没有旧版平铺文件或非法链接。"
+  fi
+
+  if [[ -e "${ACME_BASE}/certs/.deploy.lock" ]]; then
+    check_path "${ACME_BASE}/certs/.deploy.lock" file root:root 600
+  fi
+  for domain_dir in "${domains[@]}"; do
+    domain="$(basename "${domain_dir}")"
+    if [[ ! "${domain}" =~ ^[a-z0-9.-]+$ || "${domain}" != *.* ]]; then
+      fail_check "证书 bundle 目录名非法：${domain_dir}"
+      continue
+    fi
+    check_path "${domain_dir}" dir root:ssl-cert 750
+    check_path "${domain_dir}/revisions" dir root:ssl-cert 750
+    current="${domain_dir}/current"
+    if find "${domain_dir}" -type l ! -path "${current}" -print -quit | grep -q .; then
+      fail_check "证书 bundle 中存在非 current 符号链接：${domain_dir}"
+    fi
+    if [[ ! -L "${current}" ]]; then
+      fail_check "当前证书指针缺失或不是链接：${current}"
+      continue
+    fi
+    target="$(readlink "${current}")"
+    if [[ ! "${target}" =~ ^revisions/[0-9a-f]{32}$ ]]; then
+      fail_check "当前证书指针目标非法：${current}"
+      continue
+    fi
+    revision_dir="${domain_dir}/${target}"
+    check_path "${revision_dir}" dir root:ssl-cert 750
+    key_file="${revision_dir}/privkey.pem"
+    fullchain_file="${revision_dir}/fullchain.pem"
+    ca_file="${revision_dir}/ca.pem"
+    check_path "${key_file}" file root:ssl-cert 640
+    check_path "${fullchain_file}" file root:ssl-cert 644
+    check_path "${ca_file}" file root:ssl-cert 644
+    if [[ -f "${key_file}" && -f "${fullchain_file}" && -f "${ca_file}" ]]; then
+      openssl pkey -in "${key_file}" -noout >/dev/null 2>&1 || \
+        fail_check "私钥 PEM 无法解析：${key_file}"
+      openssl x509 -in "${fullchain_file}" -noout >/dev/null 2>&1 || \
+        fail_check "证书 PEM 无法解析：${fullchain_file}"
+      openssl x509 -in "${ca_file}" -noout >/dev/null 2>&1 || \
+        fail_check "CA PEM 无法解析：${ca_file}"
+      if ! diff -q \
+        <(openssl pkey -in "${key_file}" -pubout 2>/dev/null) \
+        <(openssl x509 -in "${fullchain_file}" -pubkey -noout 2>/dev/null) \
+        >/dev/null; then
+        fail_check "私钥与证书公钥不匹配：${domain}"
+      fi
+    fi
+    activated="${domain_dir}/.activated"
+    if [[ -e "${activated}" || -L "${activated}" ]]; then
+      check_path "${activated}" file root:ssl-cert 600
+      if [[ "$(<"${activated}")" != "${target#revisions/}" ]]; then
+        warn "${domain} 的新证书尚未完成 reload；保留队列请求后重试。"
+      fi
+    else
+      warn "${domain} 缺少激活标记；请检查部署队列。"
+    fi
+  done
+  pass "已检查 ${#domains[@]} 个证书 bundle。"
+
+  mapfile -d '' pending < <(find "${ACME_BASE}/deploy-queue" -mindepth 1 -maxdepth 1 -print0)
+  mapfile -d '' failed < <(find "${ACME_BASE}/deploy-failed" -mindepth 1 -maxdepth 1 -print0)
+  ((${#pending[@]} == 0)) || warn "存在 ${#pending[@]} 个待部署请求。"
+  ((${#failed[@]} == 0)) || warn "存在 ${#failed[@]} 个隔离的失败请求。"
+}
+
+check_acme_client() {
+  local executable="${ACME_BASE}/home/.acme.sh/acme.sh"
+  printf '\n== ACME 客户端 ==\n'
+  if [[ ! -x "${executable}" || -L "${executable}" ]]; then
+    fail_check "acme.sh 缺失、不可执行或为符号链接。"
+    return
+  fi
+  if runuser --user "${ACME_USER}" -- env HOME="${ACME_BASE}/home" \
+       "${executable}" --version >/dev/null; then
+    pass "acme.sh 可由非特权账户执行。"
+  else
+    fail_check "acme.sh 版本命令执行失败。"
+  fi
+}
+
+main() {
+  [[ "${EUID}" -eq 0 ]] || {
+    printf '错误：必须以 root 身份运行。\n' >&2
     exit 1
+  }
+  check_account_boundaries
+  check_filesystem
+  check_client_logs "${ACME_BASE}/config"
+  check_client_logs "${ACME_BASE}/logs"
+  check_source_pin
+  check_systemd
+  check_certificate_material
+  check_acme_client
+
+  printf '\n检查完成：%d 个失败，%d 个警告。\n' "${FAILURES}" "${WARNINGS}"
+  ((FAILURES == 0))
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
 fi
-
-echo -e "${BLUE}========================================"
-echo -e "ACME 系统健康检查"
-echo -e "========================================${NC}"
-echo ""
-
-# ============================================================================
-# 1. 检查用户和组
-# ============================================================================
-echo -e "${BLUE}[1/9]${NC} 检查用户和组配置..."
-
-if id "$ACME_USER" &>/dev/null; then
-    echo -e "  ${GREEN}✓${NC} acme 用户存在"
-    
-    if groups "$ACME_USER" | grep -q ssl-cert; then
-        echo -e "  ${GREEN}✓${NC} acme 在 ssl-cert 组"
-    else
-        echo -e "  ${RED}✗${NC} acme 不在 ssl-cert 组"
-    fi
-else
-    echo -e "  ${RED}✗${NC} acme 用户不存在"
-fi
-
-if id www-data &>/dev/null; then
-    if groups www-data | grep -q ssl-cert; then
-        echo -e "  ${GREEN}✓${NC} www-data 在 ssl-cert 组"
-    else
-        echo -e "  ${YELLOW}!${NC} www-data 不在 ssl-cert 组（如使用 nginx 需要）"
-    fi
-fi
-
-echo ""
-
-# ============================================================================
-# 2. 检查目录结构
-# ============================================================================
-echo -e "${BLUE}[2/9]${NC} 检查目录结构..."
-
-for dir in "$ACME_HOME" "$ACME_HOME/home" "$ACME_CERTS_DIR" "$ACME_CONFIG_DIR" "$ACME_HOME/logs" "/etc/acme"; do
-    if [[ -d "$dir" ]]; then
-        echo -e "  ${GREEN}✓${NC} $dir 存在"
-    else
-        echo -e "  ${RED}✗${NC} $dir 不存在"
-    fi
-done
-
-# 检查证书目录权限
-if [[ -d "$ACME_CERTS_DIR" ]]; then
-    CERT_DIR_PERMS=$(stat -c "%a" "$ACME_CERTS_DIR" 2>/dev/null || stat -f "%Lp" "$ACME_CERTS_DIR" 2>/dev/null || echo "unknown")
-    CERT_DIR_OWNER=$(stat -c "%U:%G" "$ACME_CERTS_DIR" 2>/dev/null || stat -f "%Su:%Sg" "$ACME_CERTS_DIR" 2>/dev/null || echo "unknown")
-    echo -e "  ${BLUE}ℹ${NC} 证书目录权限: $CERT_DIR_PERMS ($CERT_DIR_OWNER)"
-fi
-
-echo ""
-
-# ============================================================================
-# 3. 检查 acme.sh 安装
-# ============================================================================
-echo -e "${BLUE}[3/9]${NC} 检查 acme.sh 安装..."
-
-if [[ -f "$ACME_HOME/home/.acme.sh/acme.sh" ]]; then
-    echo -e "  ${GREEN}✓${NC} acme.sh 已安装"
-    
-    # 检查版本
-    ACME_VERSION=$(sudo -u "$ACME_USER" bash -c "cd $ACME_HOME/home && ./.acme.sh/acme.sh --version 2>/dev/null | head -1" || echo "未知")
-    echo -e "  ${BLUE}ℹ${NC} 版本: $ACME_VERSION"
-else
-    echo -e "  ${RED}✗${NC} acme.sh 未安装"
-fi
-
-echo ""
-
-# ============================================================================
-# 4. 检查 systemd 服务
-# ============================================================================
-echo -e "${BLUE}[4/9]${NC} 检查 systemd 自动续期..."
-
-if systemctl is-enabled acme-renew.timer &>/dev/null; then
-    echo -e "  ${GREEN}✓${NC} acme-renew.timer 已启用"
-else
-    echo -e "  ${RED}✗${NC} acme-renew.timer 未启用"
-fi
-
-if systemctl is-active acme-renew.timer &>/dev/null; then
-    echo -e "  ${GREEN}✓${NC} acme-renew.timer 运行中"
-    
-    # 显示下次执行时间
-    NEXT_RUN=$(systemctl status acme-renew.timer 2>/dev/null | grep -i "trigger" | head -1 || echo "  未知")
-    echo -e "  ${BLUE}ℹ${NC} 下次执行: $NEXT_RUN"
-else
-    echo -e "  ${RED}✗${NC} acme-renew.timer 未运行"
-fi
-
-# 检查 service 文件
-if [[ -f "/etc/systemd/system/acme-renew.service" ]]; then
-    echo -e "  ${GREEN}✓${NC} acme-renew.service 文件存在"
-    
-    # 检查是否以 root 运行
-    if grep -q "User=root" /etc/systemd/system/acme-renew.service; then
-        echo -e "  ${GREEN}✓${NC} service 配置为 root 运行（可重启服务）"
-    else
-        echo -e "  ${YELLOW}!${NC} service 未配置为 root 运行（可能无法自动重启服务）"
-    fi
-fi
-
-echo ""
-
-# ============================================================================
-# 5. 检查辅助脚本
-# ============================================================================
-echo -e "${BLUE}[5/9]${NC} 检查辅助脚本..."
-
-for script in acme-add acme-list acme-revoke; do
-    if [[ -x "/usr/local/bin/$script" ]]; then
-        echo -e "  ${GREEN}✓${NC} $script 存在且可执行"
-    else
-        echo -e "  ${RED}✗${NC} $script 不存在或不可执行"
-    fi
-done
-
-# 检查 acme-add 中的 xray 支持
-if [[ -f "/usr/local/bin/acme-add" ]]; then
-    if grep -q "systemctl restart xray" /usr/local/bin/acme-add 2>/dev/null; then
-        echo -e "  ${GREEN}✓${NC} acme-add 包含 xray 重启逻辑"
-    else
-        echo -e "  ${YELLOW}!${NC} acme-add 不包含 xray 重启逻辑"
-    fi
-fi
-
-echo ""
-
-# ============================================================================
-# 6. 检查 DNS 配置（如果存在）
-# ============================================================================
-echo -e "${BLUE}[6/9]${NC} 检查 DNS 配置..."
-
-if [[ -f "/etc/acme/dns-config" ]]; then
-    echo -e "  ${GREEN}✓${NC} DNS 配置文件存在"
-    
-    # 检查权限
-    DNS_PERMS=$(stat -c "%a" /etc/acme/dns-config 2>/dev/null || stat -f "%Lp" /etc/acme/dns-config 2>/dev/null || echo "unknown")
-    DNS_OWNER=$(stat -c "%U:%G" /etc/acme/dns-config 2>/dev/null || stat -f "%Su:%Sg" /etc/acme/dns-config 2>/dev/null || echo "unknown")
-    echo -e "  ${BLUE}ℹ${NC} 权限: $DNS_PERMS ($DNS_OWNER)"
-    
-    if [[ "$DNS_PERMS" == "640" ]] && [[ "$DNS_OWNER" == "root:ssl-cert" ]]; then
-        echo -e "  ${GREEN}✓${NC} DNS 配置权限正确"
-    else
-        echo -e "  ${YELLOW}!${NC} DNS 配置权限建议为 640 root:ssl-cert"
-    fi
-else
-    echo -e "  ${YELLOW}!${NC} DNS 配置文件不存在（如使用 DNS 验证需要）"
-fi
-
-echo ""
-
-# ============================================================================
-# 7. 检查已安装证书
-# ============================================================================
-echo -e "${BLUE}[7/9]${NC} 检查已安装证书..."
-
-if [[ -d "$ACME_HOME/home/.acme.sh" ]]; then
-    CERT_COUNT=$(sudo -u "$ACME_USER" bash -c "cd $ACME_HOME/home && ./.acme.sh/acme.sh --list 2>/dev/null" | grep -c "Main_Domain" || echo "0")
-    
-    if [[ "$CERT_COUNT" -gt 0 ]]; then
-        echo -e "  ${GREEN}✓${NC} 已安装 $CERT_COUNT 个证书"
-        echo ""
-        sudo -u "$ACME_USER" bash -c "cd $ACME_HOME/home && ./.acme.sh/acme.sh --list 2>/dev/null" | head -20
-    else
-        echo -e "  ${YELLOW}!${NC} 未安装任何证书"
-    fi
-else
-    echo -e "  ${RED}✗${NC} 无法检查证书列表"
-fi
-
-echo ""
-
-# ============================================================================
-# 8. 检查证书 reload 命令
-# ============================================================================
-echo -e "${BLUE}[8/9]${NC} 检查证书 reload 命令..."
-
-if [[ -d "$ACME_HOME/home/.acme.sh" ]]; then
-    FOUND_CERTS=0
-    for conf in "$ACME_HOME/home/.acme.sh"/*/*.conf; do
-        [[ -f "$conf" ]] || continue
-        FOUND_CERTS=1
-        
-        domain=$(basename "$(dirname "$conf")" | sed 's/_ecc$//')
-        reload_cmd=$(grep "Le_ReloadCmd=" "$conf" 2>/dev/null | sed "s/.*__ACME_BASE64__START_//;s/__ACME_BASE64__END_.*//" | base64 -d 2>/dev/null || echo "未设置")
-        
-        echo -e "  ${BLUE}ℹ${NC} $domain: $reload_cmd"
-    done
-    
-    if [[ $FOUND_CERTS -eq 0 ]]; then
-        echo -e "  ${YELLOW}!${NC} 未找到任何证书配置"
-    fi
-else
-    echo -e "  ${RED}✗${NC} 无法检查 reload 命令"
-fi
-
-echo ""
-
-# ============================================================================
-# 9. 检查服务状态
-# ============================================================================
-echo -e "${BLUE}[9/9]${NC} 检查相关服务状态..."
-
-if systemctl is-active xray &>/dev/null; then
-    echo -e "  ${GREEN}✓${NC} xray 运行中"
-elif systemctl list-units --all xray.service 2>/dev/null | grep -q xray; then
-    echo -e "  ${YELLOW}!${NC} xray 已安装但未运行"
-else
-    echo -e "  ${BLUE}ℹ${NC} xray 未安装"
-fi
-
-if systemctl is-active nginx &>/dev/null; then
-    echo -e "  ${GREEN}✓${NC} nginx 运行中"
-elif systemctl list-units --all nginx.service 2>/dev/null | grep -q nginx; then
-    echo -e "  ${YELLOW}!${NC} nginx 已安装但未运行"
-else
-    echo -e "  ${BLUE}ℹ${NC} nginx 未安装"
-fi
-
-if systemctl is-active openresty &>/dev/null; then
-    echo -e "  ${GREEN}✓${NC} openresty 运行中"
-elif systemctl list-units --all openresty.service 2>/dev/null | grep -q openresty; then
-    echo -e "  ${YELLOW}!${NC} openresty 已安装但未运行"
-else
-    echo -e "  ${BLUE}ℹ${NC} openresty 未安装"
-fi
-
-echo ""
-
-# ============================================================================
-# 总结
-# ============================================================================
-echo -e "${BLUE}========================================"
-echo -e "检查完成"
-echo -e "========================================${NC}"
-echo ""
-echo -e "${BLUE}建议操作：${NC}"
-echo -e "  - 如有 ${RED}✗${NC} 标记，请检查相应配置"
-echo -e "  - 如有 ${YELLOW}!${NC} 标记，建议根据需要调整"
-echo -e "  - 查看详细日志：journalctl -u acme-renew.service -n 50"
-echo -e "  - 手动测试续期：sudo -u acme bash -c 'cd /var/lib/acme/home && ./.acme.sh/acme.sh --cron --home /var/lib/acme/home'"
-echo ""

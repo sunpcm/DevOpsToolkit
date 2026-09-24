@@ -1,0 +1,880 @@
+#!/usr/bin/env python3
+"""Privilege-separated ACME certificate management helpers.
+
+The public commands run as root, while every acme.sh invocation is executed as
+the dedicated ``acme`` account without a shell.  Renewed material is first
+written to an acme-owned staging directory and then copied through a small,
+validated root deployment boundary.
+"""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import grp
+import os
+import pwd
+import re
+import secrets
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+from contextlib import contextmanager
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable, Sequence
+
+
+ACME_USER = "acme"
+ACME_CERT_GROUP = "ssl-cert"
+ACME_KEY_LENGTH = "ec-256"
+MAX_MANAGED_FILE_SIZE = 2 * 1024 * 1024
+MANAGER_PATH = Path("/usr/local/libexec/devops-toolkit/acme-manager")
+DOMAIN_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+SERVICE_NAME_RE = re.compile(r"^[A-Za-z0-9_.@-]+$")
+REVISION_RE = re.compile(r"^[0-9a-f]{32}$")
+FORBIDDEN_ENV_NAMES = {
+    "BASH_ENV",
+    "ENV",
+    "HOME",
+    "IFS",
+    "LD_AUDIT",
+    "LD_LIBRARY_PATH",
+    "LD_PRELOAD",
+    "LOGNAME",
+    "PATH",
+    "PYTHONPATH",
+    "SHELLOPTS",
+    "USER",
+}
+
+
+class ManagerError(RuntimeError):
+    """A user-facing validation or deployment failure."""
+
+
+class PublicationUncertain(ManagerError):
+    """The current pointer may have switched; retain the queue marker."""
+
+
+@dataclass(frozen=True)
+class Layout:
+    base: Path = Path("/var/lib/acme")
+    etc: Path = Path("/etc/acme")
+
+    @property
+    def user_home(self) -> Path:
+        return self.base / "home"
+
+    @property
+    def acme_bin(self) -> Path:
+        return self.user_home / ".acme.sh" / "acme.sh"
+
+    @property
+    def config(self) -> Path:
+        return self.base / "config"
+
+    @property
+    def certs(self) -> Path:
+        return self.base / "certs"
+
+    @property
+    def staging(self) -> Path:
+        return self.base / "staging"
+
+    @property
+    def queue(self) -> Path:
+        return self.base / "deploy-queue"
+
+    @property
+    def failed(self) -> Path:
+        return self.base / "deploy-failed"
+
+    @property
+    def dns_config(self) -> Path:
+        return self.etc / "dns-config"
+
+    @property
+    def reload_services(self) -> Path:
+        return self.etc / "reload-services"
+
+
+DEFAULT_LAYOUT = Layout()
+
+
+def require_root() -> None:
+    if os.geteuid() != 0:
+        raise ManagerError("此操作必须以 root 身份运行。")
+
+
+def account_ids() -> tuple[int, int, int]:
+    try:
+        account = pwd.getpwnam(ACME_USER)
+        cert_group = grp.getgrnam(ACME_CERT_GROUP)
+    except KeyError as exc:
+        raise ManagerError(f"缺少系统账户或组：{exc}") from exc
+    return account.pw_uid, account.pw_gid, cert_group.gr_gid
+
+
+def normalize_domain(value: str, *, allow_wildcard: bool) -> str:
+    domain = value.strip().lower().rstrip(".")
+    wildcard = domain.startswith("*.")
+    if wildcard:
+        if not allow_wildcard:
+            raise ManagerError(f"此处不允许通配符域名：{value}")
+        domain = domain[2:]
+    if not domain or len(domain) > 253 or any(ch.isspace() for ch in domain):
+        raise ManagerError(f"域名格式无效：{value}")
+    labels = domain.split(".")
+    if len(labels) < 2 or any(not DOMAIN_LABEL_RE.fullmatch(label) for label in labels):
+        raise ManagerError(f"域名格式无效：{value}")
+    normalized = f"*.{domain}" if wildcard else domain
+    return normalized
+
+
+def normalize_primary_domain(value: str) -> str:
+    return normalize_domain(value, allow_wildcard=False)
+
+
+def validate_webroot(value: str) -> Path:
+    path = Path(value)
+    if not path.is_absolute() or path == Path("/") or ".." in path.parts:
+        raise ManagerError("WEBROOT 必须是绝对路径，且不能为 / 或包含 ..。")
+    return path
+
+
+def _secure_regular_file(
+    path: Path,
+    *,
+    expected_uid: int | None = None,
+    expected_links: int | None = None,
+) -> os.stat_result:
+    try:
+        file_stat = path.lstat()
+    except FileNotFoundError as exc:
+        raise ManagerError(f"文件不存在：{path}") from exc
+    if not stat.S_ISREG(file_stat.st_mode) or path.is_symlink():
+        raise ManagerError(f"拒绝非普通文件或符号链接：{path}")
+    if expected_uid is not None and file_stat.st_uid != expected_uid:
+        raise ManagerError(f"文件 owner 不符合预期：{path}")
+    if expected_links is not None and file_stat.st_nlink != expected_links:
+        raise ManagerError(f"文件硬链接数量不符合预期：{path}")
+    return file_stat
+
+
+def load_dns_environment(path: Path, *, expected_uid: int = 0) -> list[str]:
+    file_stat = _secure_regular_file(path, expected_uid=expected_uid)
+    if file_stat.st_mode & 0o022:
+        raise ManagerError(f"DNS 配置不得被 group/other 写入：{path}")
+    if file_stat.st_size > 64 * 1024:
+        raise ManagerError("DNS 配置异常过大。")
+
+    values: dict[str, str] = {}
+    for line_number, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].lstrip()
+        name, separator, value = line.partition("=")
+        name = name.strip()
+        value = value.strip()
+        if not separator or not ENV_NAME_RE.fullmatch(name):
+            raise ManagerError(f"DNS 配置第 {line_number} 行格式无效。")
+        if name in FORBIDDEN_ENV_NAMES:
+            raise ManagerError(f"DNS 配置禁止覆盖环境变量：{name}")
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        if "\x00" in value or "\n" in value or "\r" in value:
+            raise ManagerError(f"DNS 配置第 {line_number} 行包含非法字符。")
+        values[name] = value
+    if not values:
+        raise ManagerError(f"DNS 配置为空：{path}")
+    return [f"{name}={value}" for name, value in values.items()]
+
+
+def run_as_acme(
+    layout: Layout,
+    arguments: Sequence[str],
+    *,
+    extra_environment: Sequence[str] = (),
+    capture_output: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    runuser = shutil.which("runuser")
+    if not runuser:
+        raise ManagerError("找不到 runuser，无法切换到 acme 账户。")
+    if not layout.acme_bin.is_file():
+        raise ManagerError(f"acme.sh 未安装：{layout.acme_bin}")
+    environment = {
+        "HOME": str(layout.user_home),
+        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "USER": ACME_USER,
+        "LOGNAME": ACME_USER,
+    }
+    for assignment in extra_environment:
+        name, separator, value = assignment.partition("=")
+        if not separator or not ENV_NAME_RE.fullmatch(name) or name in FORBIDDEN_ENV_NAMES:
+            raise ManagerError(f"拒绝传递非法 ACME 环境变量：{name}")
+        environment[name] = value
+    command = [
+        runuser,
+        "--user",
+        ACME_USER,
+        "--preserve-environment",
+        "--",
+        str(layout.acme_bin),
+        *arguments,
+    ]
+    return subprocess.run(
+        command,
+        check=True,
+        text=True,
+        capture_output=capture_output,
+        env=environment,
+        umask=0o077,
+    )
+
+
+def request_deploy(layout: Layout, raw_domain: str) -> None:
+    domain = normalize_primary_domain(raw_domain)
+    acme_uid, acme_gid, _ = account_ids()
+    if os.geteuid() not in {0, acme_uid}:
+        raise ManagerError("只有 root 或 acme 账户可以提交证书部署请求。")
+    layout.queue.mkdir(mode=0o700, parents=True, exist_ok=True)
+    marker = layout.queue / domain
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{domain}.", dir=layout.staging)
+    temporary = Path(temporary_name)
+    try:
+        os.write(descriptor, f"{domain}\n".encode())
+        os.fsync(descriptor)
+        if os.geteuid() == 0:
+            os.fchown(descriptor, acme_uid, acme_gid)
+        os.fchmod(descriptor, 0o600)
+    finally:
+        os.close(descriptor)
+    try:
+        if marker.is_symlink():
+            raise ManagerError(f"部署请求目标为符号链接：{marker}")
+        os.replace(temporary, marker)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _read_staged_file(path: Path, *, expected_uid: int, kind: str) -> bytes:
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise ManagerError(f"无法安全打开 staging 文件：{path}: {exc}") from exc
+    try:
+        file_stat = os.fstat(descriptor)
+        if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_uid != expected_uid:
+            raise ManagerError(f"staging 文件类型或 owner 非法：{path}")
+        if file_stat.st_size <= 0 or file_stat.st_size > MAX_MANAGED_FILE_SIZE:
+            raise ManagerError(f"staging 文件大小非法：{path}")
+        chunks: list[bytes] = []
+        remaining = MAX_MANAGED_FILE_SIZE + 1
+        while remaining > 0:
+            chunk = os.read(descriptor, min(64 * 1024, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        content = b"".join(chunks)
+    finally:
+        os.close(descriptor)
+    expected_marker = b"PRIVATE KEY" if kind == "key" else b"CERTIFICATE"
+    if not content.startswith(b"-----BEGIN ") or expected_marker not in content[:128]:
+        raise ManagerError(f"staging 文件不是预期 PEM：{path}")
+    return content
+
+
+def _atomic_install(
+    path: Path,
+    content: bytes,
+    *,
+    mode: int,
+    owner_uid: int,
+    group_gid: int,
+) -> None:
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+            os.fchown(handle.fileno(), owner_uid, group_gid)
+            os.fchmod(handle.fileno(), mode)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _validate_certificate_bundle(domain: str, staged: dict[str, bytes]) -> None:
+    openssl = shutil.which("openssl")
+    if not openssl:
+        raise ManagerError("找不到 openssl，无法验证证书和私钥。")
+    with tempfile.TemporaryDirectory(prefix="acme-validate-") as temporary_dir:
+        paths = {
+            kind: Path(temporary_dir) / kind
+            for kind in ("key", "crt", "ca")
+        }
+        for kind, path in paths.items():
+            path.write_bytes(staged[kind])
+            path.chmod(0o600)
+
+        def verify(arguments: list[str]) -> bytes:
+            result = subprocess.run(
+                [openssl, *arguments],
+                check=False,
+                capture_output=True,
+            )
+            if result.returncode != 0:
+                raise ManagerError(f"证书材料验证失败：{domain}")
+            return result.stdout
+
+        key_public = verify(["pkey", "-in", str(paths["key"]), "-pubout"])
+        cert_public = verify(["x509", "-in", str(paths["crt"]), "-pubkey", "-noout"])
+        if key_public != cert_public:
+            raise ManagerError(f"证书与私钥不匹配：{domain}")
+        verify(["x509", "-in", str(paths["crt"]), "-noout", "-checkend", "3600"])
+        verify(
+            [
+                "verify",
+                "-partial_chain",
+                "-verify_hostname",
+                domain,
+                "-CAfile",
+                str(paths["ca"]),
+                str(paths["crt"]),
+            ]
+        )
+
+
+def _secure_directory(path: Path, *, owner_uid: int, group_gid: int, mode: int) -> None:
+    try:
+        details = path.lstat()
+    except FileNotFoundError as exc:
+        raise ManagerError(f"证书目录缺失：{path}") from exc
+    if (
+        not stat.S_ISDIR(details.st_mode)
+        or details.st_uid != owner_uid
+        or details.st_gid != group_gid
+        or stat.S_IMODE(details.st_mode) != mode
+    ):
+        raise ManagerError(f"证书目录类型或权限不安全：{path}")
+
+
+def _ensure_bundle_directory(path: Path, *, owner_uid: int, group_gid: int) -> None:
+    if not path.exists() and not path.is_symlink():
+        path.mkdir(mode=0o750)
+        os.chown(path, owner_uid, group_gid)
+        os.chmod(path, 0o750)
+    _secure_directory(path, owner_uid=owner_uid, group_gid=group_gid, mode=0o750)
+
+
+def _fsync_directory(path: Path) -> None:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _current_revision(
+    domain_directory: Path, *, owner_uid: int, group_gid: int
+) -> tuple[str, dict[str, bytes]] | None:
+    current = domain_directory / "current"
+    if not current.exists() and not current.is_symlink():
+        return None
+    if not current.is_symlink():
+        raise ManagerError(f"当前证书指针不是符号链接：{current}")
+    target = os.readlink(current)
+    if not target.startswith("revisions/") or not REVISION_RE.fullmatch(target[10:]):
+        raise ManagerError(f"当前证书指针目标非法：{current}")
+    revision = target[10:]
+    revision_directory = domain_directory / "revisions" / revision
+    _secure_directory(
+        revision_directory, owner_uid=owner_uid, group_gid=group_gid, mode=0o750
+    )
+    content: dict[str, bytes] = {}
+    for kind, name in (("key", "privkey.pem"), ("crt", "fullchain.pem"), ("ca", "ca.pem")):
+        path = revision_directory / name
+        details = _secure_regular_file(path, expected_uid=owner_uid, expected_links=1)
+        expected_mode = 0o640 if kind == "key" else 0o644
+        if details.st_gid != group_gid or stat.S_IMODE(details.st_mode) != expected_mode:
+            raise ManagerError(f"当前证书文件权限不安全：{path}")
+        if details.st_size <= 0 or details.st_size > MAX_MANAGED_FILE_SIZE:
+            raise ManagerError(f"当前证书文件大小非法：{path}")
+        content[kind] = path.read_bytes()
+    return revision, content
+
+
+def _published_revision(
+    layout: Layout,
+    domain: str,
+    staged: dict[str, bytes],
+    *,
+    owner_uid: int,
+    group_gid: int,
+) -> str:
+    for suffix in ("key", "crt", "ca"):
+        legacy = layout.certs / f"{domain}.{suffix}"
+        if legacy.exists() or legacy.is_symlink():
+            raise ManagerError(f"存在旧版平铺证书，须先迁移消费者路径：{legacy}")
+    domain_directory = layout.certs / domain
+    _ensure_bundle_directory(domain_directory, owner_uid=owner_uid, group_gid=group_gid)
+    revisions = domain_directory / "revisions"
+    _ensure_bundle_directory(revisions, owner_uid=owner_uid, group_gid=group_gid)
+    current = _current_revision(domain_directory, owner_uid=owner_uid, group_gid=group_gid)
+    if current is not None and current[1] == staged:
+        return current[0]
+
+    revision = secrets.token_hex(16)
+    destination = revisions / revision
+    if destination.exists() or destination.is_symlink():
+        raise ManagerError(f"证书 revision 已存在：{destination}")
+    prepared = Path(tempfile.mkdtemp(prefix=".pending-", dir=revisions))
+    os.chown(prepared, owner_uid, group_gid)
+    try:
+        for kind, name in (
+            ("key", "privkey.pem"),
+            ("crt", "fullchain.pem"),
+            ("ca", "ca.pem"),
+        ):
+            _atomic_install(
+                prepared / name,
+                staged[kind],
+                mode=0o640 if kind == "key" else 0o644,
+                owner_uid=owner_uid,
+                group_gid=group_gid,
+            )
+        os.chmod(prepared, 0o750)
+        _fsync_directory(prepared)
+        os.replace(prepared, destination)
+    except (ManagerError, OSError):
+        if prepared.exists() and not prepared.is_symlink():
+            shutil.rmtree(prepared)
+        raise
+    _fsync_directory(revisions)
+
+    pointer = domain_directory / f".current-{revision}"
+    pointer.symlink_to(f"revisions/{revision}")
+    try:
+        os.replace(pointer, domain_directory / "current")
+    except OSError:
+        try:
+            pointer.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+    try:
+        _fsync_directory(domain_directory)
+    except OSError as exc:
+        raise PublicationUncertain(f"证书指针可能已切换，保留部署请求：{domain}") from exc
+    return revision
+
+
+def _activated_revision(domain_directory: Path, *, owner_uid: int) -> str | None:
+    marker = domain_directory / ".activated"
+    if not marker.exists() and not marker.is_symlink():
+        return None
+    details = _secure_regular_file(marker, expected_uid=owner_uid, expected_links=1)
+    if stat.S_IMODE(details.st_mode) != 0o600 or details.st_size != 33:
+        raise ManagerError(f"激活标记权限或内容非法：{marker}")
+    value = marker.read_text(encoding="ascii").strip()
+    if not REVISION_RE.fullmatch(value):
+        raise ManagerError(f"激活标记内容非法：{marker}")
+    return value
+
+
+@contextmanager
+def _deployment_lock(certs: Path, *, owner_uid: int):
+    path = certs / ".deploy.lock"
+    flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        details = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(details.st_mode)
+            or details.st_uid != owner_uid
+            or details.st_nlink != 1
+            or stat.S_IMODE(details.st_mode) != 0o600
+        ):
+            raise ManagerError(f"部署锁文件不安全：{path}")
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(descriptor)
+
+
+def _move_failed_marker(
+    layout: Layout,
+    marker: Path,
+    domain: str,
+    *,
+    owner_uid: int = 0,
+    owner_gid: int = 0,
+) -> None:
+    marker_stat = marker.lstat()
+    if not stat.S_ISREG(marker_stat.st_mode) or marker_stat.st_nlink != 1:
+        marker.unlink(missing_ok=True)
+        return
+    layout.failed.mkdir(mode=0o700, parents=True, exist_ok=True)
+    # systemd ReadWritePaths may expose queue and failed as distinct bind mounts:
+    # rename(2) across them returns EXDEV. Never copy attacker-controlled marker
+    # content; write a new root-controlled failure record and then unlink it.
+    descriptor, destination_name = tempfile.mkstemp(
+        prefix=f"{domain}.{int(time.time())}.",
+        dir=layout.failed,
+    )
+    destination = Path(destination_name)
+    try:
+        os.fchown(descriptor, owner_uid, owner_gid)
+        os.fchmod(descriptor, 0o600)
+        os.write(descriptor, f"{domain}\n".encode())
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    try:
+        marker.unlink(missing_ok=True)
+    except OSError:
+        destination.unlink(missing_ok=True)
+        raise
+
+
+def _read_reload_services(path: Path, *, expected_uid: int = 0) -> list[str]:
+    if not path.exists() and not path.is_symlink():
+        return []
+    file_stat = _secure_regular_file(path, expected_uid=expected_uid)
+    if file_stat.st_mode & 0o022:
+        raise ManagerError(f"reload service 配置不得被 group/other 写入：{path}")
+    services: list[str] = []
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        service = raw_line.strip()
+        if not service or service.startswith("#"):
+            continue
+        if not SERVICE_NAME_RE.fullmatch(service):
+            raise ManagerError(f"非法 systemd service 名称：{service}")
+        services.append(service)
+    return list(dict.fromkeys(services))
+
+
+def _reload_active_services(
+    services: Sequence[str],
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> None:
+    if not services:
+        return
+    systemctl = shutil.which("systemctl")
+    if not systemctl:
+        raise ManagerError("找不到 systemctl，无法 reload 证书消费者。")
+    for service in services:
+        active = runner(
+            [systemctl, "is-active", "--quiet", service],
+            check=False,
+            text=True,
+        )
+        if active.returncode != 0:
+            continue
+        runner([systemctl, "reload-or-restart", service], check=True, text=True)
+
+
+def _prepare_challenge_directory(path: Path) -> None:
+    acme_uid, acme_gid, _ = account_ids()
+    path.mkdir(mode=0o755, parents=True, exist_ok=True)
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise ManagerError(f"webroot challenge 目录不安全：{path}: {exc}") from exc
+    try:
+        directory_stat = os.fstat(descriptor)
+        if not stat.S_ISDIR(directory_stat.st_mode):
+            raise ManagerError(f"webroot challenge 不是目录：{path}")
+        os.fchown(descriptor, acme_uid, acme_gid)
+        os.fchmod(descriptor, 0o755)
+    finally:
+        os.close(descriptor)
+
+
+def process_queue(
+    layout: Layout,
+    *,
+    reload_runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    identity: tuple[int, int, int] | None = None,
+    require_privileged: bool = True,
+    deployed_owner_uid: int = 0,
+    config_owner_uid: int = 0,
+) -> int:
+    if require_privileged:
+        require_root()
+    acme_uid, _, cert_group_gid = identity or account_ids()
+    layout.certs.mkdir(mode=0o750, parents=True, exist_ok=True)
+    if not stat.S_ISDIR(layout.certs.lstat().st_mode):
+        raise ManagerError(f"证书根目录不是普通目录：{layout.certs}")
+    os.chown(layout.certs, deployed_owner_uid, cert_group_gid)
+    os.chmod(layout.certs, 0o750)
+    with _deployment_lock(layout.certs, owner_uid=deployed_owner_uid):
+        return _process_queue_locked(
+            layout,
+            acme_uid=acme_uid,
+            cert_group_gid=cert_group_gid,
+            deployed_owner_uid=deployed_owner_uid,
+            config_owner_uid=config_owner_uid,
+            reload_runner=reload_runner,
+        )
+
+
+def _process_queue_locked(
+    layout: Layout,
+    *,
+    acme_uid: int,
+    cert_group_gid: int,
+    deployed_owner_uid: int,
+    config_owner_uid: int,
+    reload_runner: Callable[..., subprocess.CompletedProcess[str]],
+) -> int:
+    processed: list[tuple[Path, str, str, bool]] = []
+    failures = 0
+    markers = sorted(layout.queue.iterdir() if layout.queue.exists() else [])
+    if not markers:
+        return 0
+    services = _read_reload_services(
+        layout.reload_services, expected_uid=config_owner_uid
+    )
+    for marker in markers:
+        published = False
+        try:
+            domain = normalize_primary_domain(marker.name)
+            _secure_regular_file(marker, expected_uid=acme_uid, expected_links=1)
+            staged = {
+                "key": _read_staged_file(
+                    layout.staging / f"{domain}.key", expected_uid=acme_uid, kind="key"
+                ),
+                "crt": _read_staged_file(
+                    layout.staging / f"{domain}.crt", expected_uid=acme_uid, kind="crt"
+                ),
+                "ca": _read_staged_file(
+                    layout.staging / f"{domain}.ca", expected_uid=acme_uid, kind="ca"
+                ),
+            }
+            _validate_certificate_bundle(domain, staged)
+            revision = _published_revision(
+                layout,
+                domain,
+                staged,
+                owner_uid=deployed_owner_uid,
+                group_gid=cert_group_gid,
+            )
+            published = True
+            activated = _activated_revision(
+                layout.certs / domain, owner_uid=deployed_owner_uid
+            )
+            processed.append((marker, domain, revision, activated != revision))
+            print(f"已部署证书：{domain}")
+        except PublicationUncertain as exc:
+            failures += 1
+            print(f"部署状态待确认：{marker.name}: {exc}", file=sys.stderr)
+        except (ManagerError, OSError) as exc:
+            failures += 1
+            print(f"部署失败：{marker.name}: {exc}", file=sys.stderr)
+            try:
+                if not published and (marker.exists() or marker.is_symlink()):
+                    _move_failed_marker(
+                        layout,
+                        marker,
+                        marker.name.replace("/", "_"),
+                        owner_uid=deployed_owner_uid,
+                        owner_gid=cert_group_gid,
+                    )
+            except OSError as move_exc:
+                print(f"无法隔离失败 marker：{move_exc}", file=sys.stderr)
+
+    if any(needs_reload for _, _, _, needs_reload in processed):
+        _reload_active_services(services, runner=reload_runner)
+    for marker, domain, revision, needs_reload in processed:
+        if needs_reload:
+            _atomic_install(
+                layout.certs / domain / ".activated",
+                f"{revision}\n".encode("ascii"),
+                mode=0o600,
+                owner_uid=deployed_owner_uid,
+                group_gid=cert_group_gid,
+            )
+            _fsync_directory(layout.certs / domain)
+        marker.unlink(missing_ok=True)
+    return 1 if failures else 0
+
+
+def add_certificate(args: argparse.Namespace, layout: Layout) -> int:
+    require_root()
+    values = list(args.domains)
+    method = args.method
+    if values and values[-1].lower() in {"dns", "webroot"}:
+        trailing_method = values.pop().lower()
+        if method and method != trailing_method:
+            raise ManagerError("验证方式参数冲突。")
+        method = trailing_method
+    method = method or "webroot"
+    if not values:
+        raise ManagerError("至少需要一个域名。")
+
+    domains = [normalize_domain(value, allow_wildcard=True) for value in values]
+    primary = normalize_primary_domain(domains[0])
+    if method == "webroot" and any(domain.startswith("*.") for domain in domains):
+        raise ManagerError("通配符域名只能使用 DNS 验证。")
+
+    issue_args: list[str] = ["--issue", "--keylength", ACME_KEY_LENGTH]
+    for domain in domains:
+        issue_args.extend(["-d", domain])
+    environment: list[str] = []
+    if method == "webroot":
+        webroot = validate_webroot(args.webroot)
+        challenge = webroot / ".well-known" / "acme-challenge"
+        _prepare_challenge_directory(challenge)
+        issue_args.extend(["--webroot", str(webroot)])
+    else:
+        if not re.fullmatch(r"dns_[A-Za-z0-9_]+", args.dns_provider):
+            raise ManagerError(f"DNS provider 名称无效：{args.dns_provider}")
+        environment = load_dns_environment(layout.dns_config)
+        issue_args.extend(["--dns", args.dns_provider])
+    issue_args.extend(["--log", str(layout.config / f"issue-{primary}.log")])
+    run_as_acme(
+        layout, issue_args, extra_environment=environment, capture_output=True
+    )
+
+    reload_command = f"{MANAGER_PATH} request-deploy {primary}"
+    install_args = [
+        "--install-cert",
+        "-d",
+        primary,
+        "--key-file",
+        str(layout.staging / f"{primary}.key"),
+        "--fullchain-file",
+        str(layout.staging / f"{primary}.crt"),
+        "--ca-file",
+        str(layout.staging / f"{primary}.ca"),
+        "--reloadcmd",
+        reload_command,
+        "--log",
+        str(layout.config / f"install-{primary}.log"),
+        "--ecc",
+    ]
+    run_as_acme(layout, install_args)
+    request_deploy(layout, primary)
+    return process_queue(layout)
+
+
+def list_certificates(args: argparse.Namespace, layout: Layout) -> int:
+    require_root()
+    command = ["--list"]
+    if args.domain:
+        command = ["--info", "-d", normalize_primary_domain(args.domain), "--ecc"]
+    run_as_acme(layout, command)
+    return 0
+
+
+def revoke_certificate(args: argparse.Namespace, layout: Layout) -> int:
+    require_root()
+    domain = normalize_primary_domain(args.domain)
+    owner_uid = os.geteuid()
+    _, _, group_gid = account_ids()
+    domain_directory = layout.certs / domain
+    _secure_directory(domain_directory, owner_uid=owner_uid, group_gid=group_gid, mode=0o750)
+    current = _current_revision(domain_directory, owner_uid=owner_uid, group_gid=group_gid)
+    if current is None:
+        raise ManagerError(f"当前证书不存在：{domain_directory}")
+    certificate = domain_directory / "current" / "fullchain.pem"
+    subprocess.run(
+        ["openssl", "x509", "-in", str(certificate), "-noout", "-subject", "-dates"],
+        check=False,
+        text=True,
+    )
+    if not args.force:
+        confirmation = input(f"即将吊销并移除 {domain}，请输入 yes 确认：").strip()
+        if confirmation != "yes":
+            print("操作已取消。")
+            return 0
+    run_as_acme(
+        layout,
+        [
+            "--revoke",
+            "-d",
+            domain,
+            "--log",
+            str(layout.config / f"revoke-{domain}.log"),
+            "--ecc",
+        ],
+    )
+    run_as_acme(layout, ["--remove", "-d", domain, "--ecc"])
+    shutil.rmtree(domain_directory)
+    for suffix in ("key", "crt", "ca"):
+        (layout.staging / f"{domain}.{suffix}").unlink(missing_ok=True)
+    (layout.queue / domain).unlink(missing_ok=True)
+    print(f"已吊销并移除证书：{domain}")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="DevOpsToolkit ACME 管理器")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    add_parser = subparsers.add_parser("add", help="签发并部署证书")
+    add_parser.add_argument("domains", nargs="+")
+    add_parser.add_argument("--method", choices=("dns", "webroot"))
+    add_parser.add_argument("--webroot", default=os.environ.get("WEBROOT", "/var/www/html"))
+    add_parser.add_argument("--dns-provider", default="dns_cf")
+
+    list_parser = subparsers.add_parser("list", help="列出证书")
+    list_parser.add_argument("domain", nargs="?")
+
+    revoke_parser = subparsers.add_parser("revoke", help="吊销并移除证书")
+    revoke_parser.add_argument("domain")
+    revoke_parser.add_argument("--force", action="store_true")
+
+    request_parser = subparsers.add_parser("request-deploy", help=argparse.SUPPRESS)
+    request_parser.add_argument("domain")
+    subparsers.add_parser("process-queue", help=argparse.SUPPRESS)
+    return parser
+
+
+def main(argv: Sequence[str] | None = None, *, layout: Layout = DEFAULT_LAYOUT) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        if args.command == "add":
+            return add_certificate(args, layout)
+        if args.command == "list":
+            return list_certificates(args, layout)
+        if args.command == "revoke":
+            return revoke_certificate(args, layout)
+        if args.command == "request-deploy":
+            request_deploy(layout, args.domain)
+            return 0
+        if args.command == "process-queue":
+            return process_queue(layout)
+    except subprocess.CalledProcessError as exc:
+        print(
+            f"外部命令失败（exit={exc.returncode}）；请检查受限 ACME 日志。",
+            file=sys.stderr,
+        )
+        return exc.returncode or 1
+    except (ManagerError, OSError, UnicodeError) as exc:
+        print(f"错误：{exc}", file=sys.stderr)
+        return 1
+    parser.error(f"未知命令：{args.command}")
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
