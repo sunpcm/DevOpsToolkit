@@ -8,16 +8,16 @@
 ## 当前基线与边界
 
 - 2026-09-22 review 从干净的 `main@74ef67b` 开始；这是历史审计基线，不是当前开发分支。
-- 2026-09-24 独立 Review 检查草稿 PR #2 的 `018b706` 后给出 CHANGES REQUESTED：
-  系统安装复用已有 runtime 前缺少权限验证，且验签前完整解包存在磁盘耗尽风险。
-  后续复审 `45a1c07` 又指出系统模式在校验路径前执行 `PATH` 中的 Python。
-  本分支已补修复与回归测试；最终 head 仍须重新经过独立复核及 CI 门禁。
+- 2026-09-24 PR #2 经两轮 CHANGES REQUESTED 修复后，最终 head `a639190` 获独立 Review
+  APPROVED，已合并为 `main@9d613e8`；合并提交的 quality、Python 3.12/3.14 检查通过。
+  该精确 SHA 的发布前一次性 VM 验收见
+  [`archive/progress/2026-09-24-release-vm-9d613e8.md`](archive/progress/2026-09-24-release-vm-9d613e8.md)。
 - 最新正式 GitHub Release 仍为 `v0.1.7`；新分支没有正式签名 Release。
 - 唯一受支持的环境配置实现仍是 `ansible/`，受支持入口是 `bin/` 与 `install.sh`。
 - `AcmeConfig/` 不属于主线 Release，但根 README 仍向用户公开它；在完成下列 P0 安全整改前，不应宣称其为生产级。
 - 2026-09-23 控制面缺口是历史快照。2026-09-24 重新认证并回查后，`main`/`v*`
   ruleset、`release` 审批、immutable releases、Actions SHA pin 与 Dependabot 已启用；
-  真实 tag/Release 及每次发布的一次性 VM 验收仍未发生。
+  当前候选 SHA 的一次性 VM 验收已通过；真实 tag/Release 与受保护发布审批仍未发生。
 - 静态验证通过不等于真实 VM、升级回滚、SSH 登录切换或 ACME 证书续期已经完成验收。
 - 2026-09-24 起暂缓 `AcmeConfig/` 的真实 CA/DNS 与独立仓库工作：它不在主线 Release 包中，
   其真实 CA 门槛不阻塞主线开发与发布，已有静态检查仍保留；但在自身真实环境验收完成前
@@ -25,8 +25,9 @@
 
 ## 当前执行顺序
 
-1. P0-2/P0-3：独立复核草稿 PR #2；确认最终合并提交的必需检查，再为新版本执行
-   一次性 VM 验收、受保护审批、正式签名 Release 与安装/回滚验收。未经发布授权不打 tag。
+1. P0-2/P0-3：PR #2、合并提交 CI 与 `main@9d613e8` 一次性 VM 验收已完成；
+   接下来在明确授权后创建 tag，经受保护审批完成正式签名 Release，再做安装/回滚验收。
+   若候选 SHA 变化或 VM 报告超过 8 天，须重新验收；未经发布授权不打 tag。
 2. P1/P2：并行推进不依赖正式 Release 的可靠性回归与文档工作。
 3. 暂缓范围：P0-1 ACME 真实签发与续期、P2 ACME 独立仓库迁移；不以静态或自签证据替代其上线门槛。
 
@@ -70,9 +71,10 @@ Environment 仍无保护规则。随后完成并回查的控制面设置、一�
 同一 tag SHA 的完整质量门禁、`origin/main` 祖先校验、Release 来源 SHA 记录已在
 `.github/workflows/release.yml` 实现；固定安装器 commit 与 SHA256 的示例见
 [`docs/SUPPLY_CHAIN_SECURITY.md`](docs/SUPPLY_CHAIN_SECURITY.md)。这些实现仍须随新版本在远端实际验收。
+PR #2 的最终 head 已获独立复核并合并，`main@9d613e8` 的三项必需检查通过；
+候选提交的 VM 报告原件及 SHA256 见
+[`archive/progress/2026-09-24-release-vm-9d613e8.md`](archive/progress/2026-09-24-release-vm-9d613e8.md)。
 
-- [ ] 对安装安全 Review 修复重新独立复核草稿 PR #2，合并前核对最终 head 的 push/PR 检查；通过真实合并确认
-      `main` 的三项必需检查未误阻正常路径。单维护者阶段不要求第二人 approval。
 - [ ] 首次新 tag 发布时验证 `v*` 更新/删除保护、仅 `v*` 可进入 `release` Environment、
       审批确实阻止发布且管理员不能强制绕过；审批人核对当次同 SHA VM 报告原件与 SHA256。
 - [ ] 在新版本的真实 Release 中确认同 SHA 质量门禁、main 祖先检查、Source commit 记录及固定 commit 安装入口按预期生效；本地 workflow 和示例不能代替远端执行。
@@ -89,13 +91,13 @@ Environment 仍无保护规则。随后完成并回查的控制面设置、一�
 当前分支的锁定产物、完整本地门禁及临时构建复核见
 [`archive/progress/2026-09-24-p0-3-current-branch-local-review.md`](archive/progress/2026-09-24-p0-3-current-branch-local-review.md)。
 已固定 Python 3.12–3.14 / core 2.21.4、隔离 venv、22.04 目标边界及三项 collections，
-并更新 README、安装/交互文档和 CI 定义。当前是已推送但未合并的草稿 PR 分支。
+并更新 README、安装/交互文档和 CI 定义。PR #2 已合并至 `main@9d613e8`，
+最终 head 的独立 Review 与合并 SHA 的质量门禁均通过；同 SHA 一次性 VM 报告见
+[`archive/progress/2026-09-24-release-vm-9d613e8.md`](archive/progress/2026-09-24-release-vm-9d613e8.md)。
 安装器对未来版本缺失 collection bundle 的 Galaxy 回退已改为拒绝；仅五个已发布的
 旧版本保留精确兼容名单。证据见
 [`archive/progress/2026-09-24-bundle-fallback-allowlist.md`](archive/progress/2026-09-24-bundle-fallback-allowlist.md)。
 
-- [ ] `018b706` 与 `45a1c07` 的独立 Review 所提安装安全问题已在后续分支修复；合并前须复审修复范围，
-      并在最终 head 与合并 SHA 上重新确认 quality、Python 3.12/3.14 门禁结果。
 - [ ] 新版本发布前重新验证 2.21.4 runtime 与三项 collections 的 Release 构建、签名、安装及回滚门槛；
       不把本地测试 tarball 视为正式 Release。
 
@@ -141,11 +143,14 @@ SSH/UFW/Docker/Nginx 和故障恢复见
 [`archive/progress/2026-09-23-ssh-p1-1-final-vm.md`](archive/progress/2026-09-23-ssh-p1-1-final-vm.md)。
 SSH finalize 在 UFW 更新失败时的新端口保活与恢复证据见
 [`archive/progress/2026-09-23-ssh-p1-1-guard-final.md`](archive/progress/2026-09-23-ssh-p1-1-guard-final.md)。
-PR 编排测试、双版本本地 VM smoke、报告及失败清理代码已有本地证据；草稿 PR #2
-的 quality 与双 Python 矩阵也已通过。以下只保留最终合并、当次 VM 与新 Release 门槛。
+PR 编排测试、双版本本地 VM smoke、报告及失败清理代码已有本地证据；PR #2
+已合并，合并 SHA 的 quality 与双 Python 矩阵通过。以下保留每次发布的当次 VM 与新 Release 门槛。
 2026-09-24 补强了运行时实际 Ubuntu 版本断言及报告中同一次测试的双实例校验；
 本地证据见 [`archive/progress/2026-09-24-vm-report-image-proof.md`](archive/progress/2026-09-24-vm-report-image-proof.md)。
-它防止单实例/错版本报告被当作双版本证据，但不能替代候选 SHA 的当次真实 VM 验收。
+它防止单实例/错版本报告被当作双版本证据。`main@9d613e8` 的当次真实 VM 已通过，
+报告原件及 SHA256 见
+[`archive/progress/2026-09-24-release-vm-9d613e8.md`](archive/progress/2026-09-24-release-vm-9d613e8.md)；
+这是当前候选的一次性证据，不免除以后每次发布重新验收。
 
 - [ ] 每次发布前在隔离主机针对候选 SHA 运行一次性 Ubuntu 22.04/24.04 VM，覆盖首次收敛、
       二次 `changed=0`、SSH/UFW/Docker/Nginx 与故障恢复；保留 8 天内的报告原件和 SHA256。

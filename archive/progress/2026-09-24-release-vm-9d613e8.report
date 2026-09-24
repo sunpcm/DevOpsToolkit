@@ -1,0 +1,15 @@
+schema=1
+result=passed
+source_sha=9d613e85b4adaae4c9c8a5a7231556d68960b07e
+source_dirty=false
+started_at=2026-09-24T15:40:15Z
+finished_at=2026-09-24T15:50:37Z
+ansible_core=2.21.4
+ubuntu_images=22.04,24.04
+instances=devops-toolkit-2204-test-20260924234015-28327,devops-toolkit-2404-test-20260924234015-28327
+managed_ssh_port=2222
+test_uv=0
+test_faults=1
+test_hosts=
+last_stage=complete
+cleanup_status=passed
