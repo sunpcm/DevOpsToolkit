@@ -35,3 +35,19 @@
 未创建 tag、Release、PR，也未推送分支。远端尚未运行新 workflow，因此审批 UI、同 SHA
 Python 3.12/3.14、签名构建、不可变资产和安装/回滚仍待新版本真实验收。审批人不得以本文
 替代每次发布时新生成的同 SHA VM 报告。
+
+## 后续远端 CI 与规则更新
+
+上述“未推送”的描述仅是首次配置完成时的快照。随后推送了开发分支并创建
+[草稿 PR #2](https://github.com/sunpcm/DevOpsToolkit/pull/2)，未合并、未创建 tag 或 Release。
+首个 `232bd2c` 的双 Python 验证通过，但 quality 因 `tests/multipass-smoke.sh` 的
+ShellCheck `SC2119/SC2120` 失败；修正调用方式后，`ec06cc4abaa6918c44026b6f4c76e254285d954a`
+的 [push Validate](https://github.com/sunpcm/DevOpsToolkit/actions/runs/35946546136) 与
+[PR Validate](https://github.com/sunpcm/DevOpsToolkit/actions/runs/35946597109) 均成功，
+包括 quality、Python 3.12/3.14 + core 2.21.4。修复后本地完整
+`./tests/verify-ansible.sh` 与全部活跃 Shell 脚本的 ShellCheck 亦通过。
+
+确认真实 check 名称及来源 GitHub Actions App ID `15368` 后，更新 `main` ruleset
+`23913370`：要求 `quality`、`validate (3.12, 2.21.4)`、
+`validate (3.14, 2.21.4)`，启用 strict latest-code policy，保留 deletion/non-fast-forward
+保护且无 bypass。该规则尚未通过真实合并验证，不能把 API 回查等同于实际阻断测试。

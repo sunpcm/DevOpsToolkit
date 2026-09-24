@@ -68,8 +68,9 @@ Environment 仍无保护规则。随后完成并回查的控制面设置、一�
 `.github/workflows/release.yml` 实现；固定安装器 commit 与 SHA256 的示例见
 [`docs/SUPPLY_CHAIN_SECURITY.md`](docs/SUPPLY_CHAIN_SECURITY.md)。这些实现仍须随新版本在远端实际验收。
 
-- [ ] `main` 已禁止 force push/deletion；新 Validate 矩阵在远端跑通后再配置必需检查。
-      有第二维护者时再要求 approval 和防自审，避免单人仓库被锁死。
+- [ ] `main` 已禁止 force push/deletion，并以 GitHub Actions 为来源要求 quality 与 Python
+      3.12/3.14 三项必需检查；在草稿 PR 合并前复核规则实际拦截行为。有第二维护者时再要求
+      approval 和防自审，避免单人仓库被锁死。
 - [ ] `v*` 已禁止更新/删除；在首次新 tag 发布中验证创建与 Environment 限制均按预期工作。
 - [ ] `release` Environment 已限制 `v*` 并要求 `sunpcm` 审批；在新 Release 中核实审批
       真正阻止发布，并由审批人核对当次同 SHA VM 报告原件与 SHA256。
@@ -89,8 +90,8 @@ Environment 仍无保护规则。随后完成并回查的控制面设置、一�
 已固定 Python 3.12–3.14 / core 2.21.4、隔离 venv、22.04 目标边界及三项 collections，
 并更新 README、安装/交互文档和 CI 定义。当前仍是未发布的本地分支。
 
-- [ ] 推送前独立复核本地提交，并取得 GitHub Validate 在 Python 3.12、3.14 上对同一 SHA 的真实通过结果；
-      本地 macOS Python 3.14 门禁与 Ubuntu 24.04 Python 3.12 runtime/两版目标 VM smoke 不等于远端矩阵通过。
+- [ ] `ec06cc4` 的 GitHub push 与草稿 PR Validate 中 quality、Python 3.12/3.14 均已通过；
+      合并前仍须独立复核 PR 内容，并在最终合并 SHA 上重新确认门禁结果。
 - [ ] 新版本发布前重新验证 2.21.4 runtime 与三项 collections 的 Release 构建、签名、安装及回滚门槛；
       不把本地测试 tarball 视为正式 Release。
 
@@ -139,8 +140,8 @@ SSH finalize 在 UFW 更新失败时的新端口保活与恢复证据见
 PR 编排测试、双版本本地 VM smoke、报告及失败清理代码已有本地证据；以下验收项在
 真实 PR、受保护 Environment 与新 Release 实际运行前保持开放。
 
-- [ ] 在真实 PR 的同一 SHA 上取得 Python 3.12/3.14 Validate 结果，确认 role/向导组合测试随 PR
-      自动运行，而不只依赖本地静态检查。
+- [ ] 草稿 PR #2 已在同一 SHA 上取得 Python 3.12/3.14 Validate 成功结果；合并前继续
+      核对最终 SHA，避免后续提交使先前结果失效。
 - [ ] 每次发布前在隔离主机针对候选 SHA 运行一次性 Ubuntu 22.04/24.04 VM，覆盖首次收敛、
       二次 `changed=0`、SSH/UFW/Docker/Nginx 与故障恢复；保留 8 天内的报告原件和 SHA256。
 - [ ] 核验报告准确记录镜像、来源 SHA、Ansible 版本、结果和清理状态；失败时实例仍清理，
