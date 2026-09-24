@@ -59,7 +59,7 @@ shasum -a 256 "${REPORT_FILE}"
 证明本地 VM 报告的真实性。
 
 审批前还要检查 `.github/workflows/release.yml` 中已验证 collections 中间产物的
-`retention-days`。当前 `main@9d613e8` 仅为 1 天，短于 VM 报告的 8 天有效期；
+`retention-days`。2026-09-24 的候选提交 `9d613e8` 仅为 1 天，短于 VM 报告的 8 天有效期；
 若等待审批导致中间产物过期，不要绕过门禁或手工创建 Release，应保留失败现场，
 修复工作流后按新候选 SHA 重做同 SHA VM 验收，并使用未占用的新版本号。
 
