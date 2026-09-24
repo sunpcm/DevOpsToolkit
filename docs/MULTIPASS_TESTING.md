@@ -101,8 +101,8 @@ MULTIPASS_TEST_HOSTS="ports.ubuntu.com=<查询到的 IPv4>,download.docker.com=<
 ```
 
 脚本只接受这两个官方域名和合法 IPv4，修改范围仅为本次临时 VM 的 `/etc/hosts`，并把映射写入报告。
-地址可能变化，运行前必须重新查询；不能把这些地址写入生产配置或长期 VM。专用 runner 若需要此覆盖，
-应在其受控变量中设置 `MULTIPASS_TEST_HOSTS`。
+地址可能变化，运行前必须重新查询；不能把这些地址写入生产配置或长期 VM。发布前手工
+一次性 VM 验收如需此覆盖，仅为当次命令设置 `MULTIPASS_TEST_HOSTS`，并在报告中保留映射。
 
 在一次性实例中额外执行系统故障注入：
 

@@ -14,11 +14,16 @@
 
 ## 发布前检查
 
+先完成独立 PR 复核并合并到 `main`。开发分支的 push 检查验证精确提交，PR 检查验证与
+`main` 的模拟合并结果；两者都不能代替合并后提交的检查，更不能代替 tag SHA 的
+Release workflow 门禁。当前 `main` 规则要求 quality 与 Python 3.12/3.14 三项检查。
+
 ```bash
 git fetch origin
 git switch main && git pull --ff-only
 ./tests/verify-ansible.sh          # release.yml 的门禁就是它
 git status --short                 # 应为空
+test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" || exit 1
 ```
 
 `release.yml` 会在同一 tag SHA 上调用完整 `env-check.yml`，quality 与 Ansible/Python 矩阵任一失败都会
@@ -49,7 +54,9 @@ shasum -a 256 "${REPORT_FILE}"
 
 完成上述同 SHA VM 验收后，打 tag、推 tag，并在 GitHub 的 `release` Environment 待审批阶段
 再次核对报告原件、报告 SHA256、来源 SHA 与 tag SHA。只有证据一致且同 SHA CI 通过，审批人
-才批准；不能为了解除等待而直接批准。单维护者自审只是人工暂停点，不是独立第二人复核。
+才批准；不能为了解除等待而直接批准。当前环境限制为 `v*` tag、要求 `sunpcm` 审批且
+禁止管理员强制绕过。单维护者自审只是人工暂停点，不是独立第二人复核；GitHub 无法自动
+证明本地 VM 报告的真实性。
 
 ```bash
 # 版本号遵循 vMAJOR.MINOR.PATCH；v0.1.8 仅是当前示例，使用前确认未被占用。

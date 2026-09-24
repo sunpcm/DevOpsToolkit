@@ -7,14 +7,16 @@
 
 ## 当前基线与边界
 
-- 2026-09-22 review 从干净的 `main@74ef67b`（与 `origin/main` 一致）开始；以下结论以该基线为准。
-- 最新 GitHub Release 为 `v0.1.7`；Validate、Release 均成功，三个固定名称资产齐全。
-- `./tests/verify-ansible.sh`、ShellCheck、Actionlint、gitleaks 在 2026-09-22 review 中通过。
+- 2026-09-22 review 从干净的 `main@74ef67b` 开始；这是历史审计基线，不是当前开发分支。
+- 2026-09-24 本次文档修订前复核时 `origin/main@74ef67b`，草稿 PR #2 的 head 为
+  `c07c986`，未合并；该 head 的 push 精确提交检查及 PR 模拟合并检查均通过
+  quality、Python 3.12/3.14。后续提交须重新验收最终 SHA。
+- 最新正式 GitHub Release 仍为 `v0.1.7`；新分支没有正式签名 Release。
 - 唯一受支持的环境配置实现仍是 `ansible/`，受支持入口是 `bin/` 与 `install.sh`。
 - `AcmeConfig/` 不属于主线 Release，但根 README 仍向用户公开它；在完成下列 P0 安全整改前，不应宣称其为生产级。
-- 2026-09-23 首次审计时 GitHub 控制面尚未落实仓库文档要求：`main`/`v*` 无 ruleset，
-  `release` Environment 无保护规则，Release 未启用 immutable，Actions 未强制 SHA pin，
-  Dependabot alerts/security updates 未启用；后续须重新认证并复核，不能将旧快照当成现状。
+- 2026-09-23 控制面缺口是历史快照。2026-09-24 重新认证并回查后，`main`/`v*`
+  ruleset、`release` 审批、immutable releases、Actions SHA pin 与 Dependabot 已启用；
+  真实 tag/Release 及每次发布的一次性 VM 验收仍未发生。
 - 静态验证通过不等于真实 VM、升级回滚、SSH 登录切换或 ACME 证书续期已经完成验收。
 - 2026-09-24 起暂缓 `AcmeConfig/` 的真实 CA/DNS 与独立仓库工作：它不在主线 Release 包中，
   其真实 CA 门槛不阻塞主线开发与发布，已有静态检查仍保留；但在自身真实环境验收完成前
@@ -22,10 +24,10 @@
 
 ## 当前执行顺序
 
-1. P0-2：GitHub 发布控制面；`gh` 已由用户重新认证，先只读复核再小步落实设置。
-2. P0-3：独立复核控制端基线并取得同 SHA 远端 Validate/正式 Release 证据。
-3. P1/P2：继续可独立验收的运行安全、回归、升级回滚与文档工作。
-4. 暂缓范围：P0-1 ACME 真实签发与续期、P2 ACME 独立仓库迁移；不以静态或自签证据替代其上线门槛。
+1. P0-2/P0-3：独立复核草稿 PR #2；确认最终合并提交的必需检查，再为新版本执行
+   一次性 VM 验收、受保护审批、正式签名 Release 与安装/回滚验收。未经发布授权不打 tag。
+2. P1/P2：并行推进不依赖正式 Release 的可靠性回归与文档工作。
+3. 暂缓范围：P0-1 ACME 真实签发与续期、P2 ACME 独立仓库迁移；不以静态或自签证据替代其上线门槛。
 
 ## P0：安全与发布阻塞项
 
@@ -68,15 +70,13 @@ Environment 仍无保护规则。随后完成并回查的控制面设置、一�
 `.github/workflows/release.yml` 实现；固定安装器 commit 与 SHA256 的示例见
 [`docs/SUPPLY_CHAIN_SECURITY.md`](docs/SUPPLY_CHAIN_SECURITY.md)。这些实现仍须随新版本在远端实际验收。
 
-- [ ] `main` 已禁止 force push/deletion，并以 GitHub Actions 为来源要求 quality 与 Python
-      3.12/3.14 三项必需检查；在草稿 PR 合并前复核规则实际拦截行为。有第二维护者时再要求
-      approval 和防自审，避免单人仓库被锁死。
-- [ ] `v*` 已禁止更新/删除；在首次新 tag 发布中验证创建与 Environment 限制均按预期工作。
-- [ ] `release` Environment 已限制 `v*`、要求 `sunpcm` 审批且禁止管理员强制绕过；在新 Release 中核实审批
-      真正阻止发布，并由审批人核对当次同 SHA VM 报告原件与 SHA256。
-- [ ] 已启用 immutable releases、官方 Action allowlist/完整 SHA pin、Dependabot alerts/
-      security updates；在新 Release/PR 中验证不会误阻 CI，非标准 YAML/Shell 依赖审计仍人工维护。
+- [ ] 独立复核草稿 PR #2，合并前核对最终 head 的 push/PR 检查；通过真实合并确认
+      `main` 的三项必需检查未误阻正常路径。单维护者阶段不要求第二人 approval。
+- [ ] 首次新 tag 发布时验证 `v*` 更新/删除保护、仅 `v*` 可进入 `release` Environment、
+      审批确实阻止发布且管理员不能强制绕过；审批人核对当次同 SHA VM 报告原件与 SHA256。
 - [ ] 在新版本的真实 Release 中确认同 SHA 质量门禁、main 祖先检查、Source commit 记录及固定 commit 安装入口按预期生效；本地 workflow 和示例不能代替远端执行。
+- [ ] 验证新 Release 资产不可替换、三个固定资产及签名/安装/回滚通过；当前
+      immutable、官方 Action allowlist/完整 SHA pin、Dependabot 仅有设置和 PR CI 证据。
 
 验收证据：GitHub API 显示 rulesets、Environment protection、immutable 和 Actions 限制均已生效；创建测试 tag 时只有受保护路径可发布；
 新 Release 无法替换 tag 或资产，三个资产及 attestation/签名验证通过。
@@ -88,10 +88,10 @@ Environment 仍无保护规则。随后完成并回查的控制面设置、一�
 当前分支的锁定产物、完整本地门禁及临时构建复核见
 [`archive/progress/2026-09-24-p0-3-current-branch-local-review.md`](archive/progress/2026-09-24-p0-3-current-branch-local-review.md)。
 已固定 Python 3.12–3.14 / core 2.21.4、隔离 venv、22.04 目标边界及三项 collections，
-并更新 README、安装/交互文档和 CI 定义。当前仍是未发布的本地分支。
+并更新 README、安装/交互文档和 CI 定义。当前是已推送但未合并的草稿 PR 分支。
 
-- [ ] `ec06cc4` 的 GitHub push 与草稿 PR Validate 中 quality、Python 3.12/3.14 均已通过；
-      合并前仍须独立复核 PR 内容，并在最终合并 SHA 上重新确认门禁结果。
+- [ ] 文档修订前 `c07c986` 的精确 push 检查与 PR 模拟合并检查中 quality、Python
+      3.12/3.14 均已通过；合并前仍须独立复核 PR 内容，并在最终合并 SHA 上重新确认门禁结果。
 - [ ] 新版本发布前重新验证 2.21.4 runtime 与三项 collections 的 Release 构建、签名、安装及回滚门槛；
       不把本地测试 tarball 视为正式 Release。
 
@@ -137,12 +137,9 @@ SSH/UFW/Docker/Nginx 和故障恢复见
 [`archive/progress/2026-09-23-ssh-p1-1-final-vm.md`](archive/progress/2026-09-23-ssh-p1-1-final-vm.md)。
 SSH finalize 在 UFW 更新失败时的新端口保活与恢复证据见
 [`archive/progress/2026-09-23-ssh-p1-1-guard-final.md`](archive/progress/2026-09-23-ssh-p1-1-guard-final.md)。
-PR 编排测试、双版本本地 VM smoke、报告及失败清理代码已有本地证据；以下验收项在
-真实 PR、受保护 Environment 与新 Release 实际运行前保持开放。
+PR 编排测试、双版本本地 VM smoke、报告及失败清理代码已有本地证据；草稿 PR #2
+的 quality 与双 Python 矩阵也已通过。以下只保留最终合并、当次 VM 与新 Release 门槛。
 
-- [ ] 草稿 PR #2 已取得 Python 3.12/3.14 Validate 成功结果；push 检查精确候选提交，
-      PR 检查默认检验候选与 `main` 的合并结果。合并前继续核对最终候选 SHA，避免后续
-      提交使先前结果失效。
 - [ ] 每次发布前在隔离主机针对候选 SHA 运行一次性 Ubuntu 22.04/24.04 VM，覆盖首次收敛、
       二次 `changed=0`、SSH/UFW/Docker/Nginx 与故障恢复；保留 8 天内的报告原件和 SHA256。
 - [ ] 核验报告准确记录镜像、来源 SHA、Ansible 版本、结果和清理状态；失败时实例仍清理，

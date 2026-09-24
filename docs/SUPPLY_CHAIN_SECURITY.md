@@ -40,9 +40,17 @@ Release 包含三个固定名称资产：
 
 任何条件不匹配都会在发布版本目录和切换 `current` 之前失败。
 
-## 必须手工完成的 GitHub 设置
+## GitHub 控制面：当前状态与复核清单
 
-仓库代码不能替代以下账号和 GitHub 控制面设置。下一次发布前应逐项完成并用 API 复核。
+截至 2026-09-24，仓库控制面已启用并由 API 回查：`main` 禁止删除/force push，
+要求来源为 GitHub Actions 的 `quality`、Python 3.12/3.14 三项检查；`v*` tag 禁止
+更新/删除；`release` Environment 只允许 `v*` tag，要求 `sunpcm` 审批且不允许管理员
+强制绕过；immutable releases、仅 GitHub 官方 Action、完整 SHA pin、Dependabot alerts
+和 security updates 均已启用。草稿 PR #2 的检查成功**不能**替代新 tag、Environment
+审批和不可变资产的真实发布验收。详细 API 证据见
+[2026-09-24 发布门禁记录](../archive/progress/2026-09-24-release-gate-manual-vm.md)。
+
+以下是维护或重新配置时的清单；账号 2FA/恢复代码不在仓库 API 验证范围内，必须由账户持有人确认。
 
 ### 1. 保护 GitHub 账号
 
@@ -51,57 +59,65 @@ Release 包含三个固定名称资产：
 - 删除不再使用的 Personal Access Token、SSH key、OAuth App 和 GitHub App 授权。
 - 日常操作优先使用细粒度、短有效期 Token，避免 classic PAT。
 
-### 2. 创建 `release` Environment
+### 2. 复核 `release` Environment
 
 进入仓库：
 
-`Settings` → `Environments` → `New environment` → 输入 `release`
+`Settings` → `Environments` → `release`（新仓库才需创建同名环境）
 
 必须设置：
 
 - Required reviewers：至少一名可信维护者；审批前执行[发布流程](RELEASING.md)中的一次性 VM 验收。
 - Prevent self-review：有第二名维护者时开启；单人仓库开启后会无法自行发布。
 - 禁止管理员强制绕过保护规则（`can_admins_bypass=false`）。
-- Deployment branches and tags：只允许受保护的 `v*` tags。
+- Deployment branches and tags：只允许 `v*` tag；tag 的更新/删除另由 tag ruleset 禁止。
 
 Release workflow 已引用该 Environment。Environment 不需要配置 Cosign 私钥或 Secret。
 
 必须在推送新 `v*` tag 前完成这一步；仅创建同名空 Environment 不构成保护。单维护者
 自审是可执行的人工暂停点，不提供独立第二人复核；有第二名维护者时开启防自审。
 
-### 3. 保护 `main`
+### 3. 复核 `main`
 
-在 `Settings` → `Rules` → `Rulesets` 新建分支规则，目标为默认分支：
+当前规则集 `23913370` 已覆盖 `main`：禁止删除和 force push，并要求上述三项
+GitHub Actions 检查，采用 strict latest-code policy，且无 bypass。待草稿 PR 经独立复核、
+完成真实合并后，继续核对最终合并提交的检查。当前**未**要求 PR approval；单维护者
+无法满足第二人复核，不能把现有规则写成已经强制了审批。
+
+有第二名可信维护者后，可在 `Settings` → `Rules` → `Rulesets` 评估增加：
 
 - Require a pull request before merging。
 - 至少 1 个 approval，并开启 Dismiss stale approvals。
-- Require status checks，选择 Validate workflow 的两个 Ansible 矩阵任务。
+- 保持 required status checks 覆盖 quality 与两个 Ansible/Python 矩阵任务。
 - Require conversation resolution。
-- Block force pushes 和 deletions。
 - 建议 Require signed commits 与 linear history。
-- 不允许常规维护者绕过规则；保留受控的紧急恢复账号。
+- 不允许常规维护者绕过规则；如确需紧急恢复路径，单独审查其权限。
 
-如果仓库只有一名维护者，强制他人 approval 会阻塞日常开发。可以先保留 required checks、禁止 force push，并尽快增加第二名可信 reviewer。
+单维护者阶段保留当前必需检查和禁止重写规则，不把尚未实施的第二人审批写成已完成。
 
 ### 4. 保护 Release tags
 
-新建 tag ruleset，目标模式为 `v*`：
+当前 tag ruleset `23913374` 以 `v*` 为目标，禁止更新/删除，且无 bypass。
+新 tag 的创建尚未另设 ruleset 限制；当前仓库只有一名管理员具备写权限。若增加维护者，
+须重新设计 tag 创建权限，不能误以为目前已经按发布角色隔离。维护时检查：
 
-- 限制创建权限到仓库管理员或发布角色。
+- 新 tag 只能由被授权的发布者创建；新增写入者前复核权限。
 - 禁止更新和删除已经推送的 tag。
-- 启用仓库级 immutable releases；它只保护启用后新发布的 Release，历史版本不能追溯变更。
+- 保持仓库级 immutable releases 启用；它只保护启用后新发布的 Release，历史版本不能追溯变更。
 
 发布后不要复用版本号。需要修复时创建新版本，例如 `v0.1.1`。
 
 ### 5. 收紧 Actions
 
-进入 `Settings` → `Actions` → `General`：
+当前设置只允许 GitHub 官方 Action（非官方 verified 与自定义 pattern 均关闭），并强制完整
+commit SHA pin；Dependabot alerts/security updates 已启用。进入 `Settings` → `Actions` →
+`General` 定期复核：
 
 - Workflow permissions 默认设为 Read repository contents。
 - 不需要时关闭 Allow GitHub Actions to create and approve pull requests。
-- 只允许 GitHub 官方和经过审核的 Actions。
+- 只允许 GitHub 官方 Action；确需第三方 Action 时先独立审核，再增加显式允许项。
 - 开启“Require actions to be pinned to a full-length commit SHA”。
-- 开启 Dependabot alerts 与 security updates；固定版本与 checksum 的自动更新仍须经 PR 复核。
+- 保持 Dependabot alerts 与 security updates 开启；固定版本与 checksum 的更新仍须经 PR 复核。
 
 本项目引用的 GitHub Actions（包括 collections 在 job 间传递使用的 artifact actions）已固定到完整
 commit SHA，避免上游移动 tag 后改变执行代码。

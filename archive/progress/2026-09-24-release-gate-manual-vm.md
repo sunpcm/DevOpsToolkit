@@ -56,3 +56,14 @@ checkout 了相同的 commit SHA。
 保护且无 bypass。该规则尚未通过真实合并验证，不能把 API 回查等同于实际阻断测试。
 另一次只读回查发现 `release` Environment 起初允许管理员强制绕过；随后通过 API 将
 `can_admins_bypass` 设为 `false` 并再次读回确认。该设置不等于完成了真实 tag 发布审批验收。
+
+## 本轮文档收敛前的最后远端快照
+
+2026-09-24 再次只读复核：`origin/main@74ef67b`，草稿 PR #2 仍开放、未合并，
+head `c07c986fcd727a0fd9df4a6021824c9063c3ed8e`；该提交的
+[push Validate](https://github.com/sunpcm/DevOpsToolkit/actions/runs/35947174653) 与
+[PR 模拟合并 Validate](https://github.com/sunpcm/DevOpsToolkit/actions/runs/35947178786)
+均成功。最新正式 Release 仍为 `v0.1.7`。`main` 的三个 GitHub Actions 必需检查、
+`v*` tag 规则、`release` 审批与 `can_admins_bypass=false`、immutable releases、
+官方 Action allowlist/完整 SHA pin、Dependabot alerts/security updates 均再次读回确认。
+这只是控制面与 CI 证据，尚无新版本的真实签名 Release 或当次 VM 验收。
