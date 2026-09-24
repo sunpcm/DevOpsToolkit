@@ -151,11 +151,18 @@ PR 编排测试、双版本本地 VM smoke、报告及失败清理代码已有�
 报告原件及 SHA256 见
 [`archive/progress/2026-09-24-release-vm-9d613e8.md`](archive/progress/2026-09-24-release-vm-9d613e8.md)；
 这是当前候选的一次性证据，不免除以后每次发布重新验收。
+当前候选的 Release 工作流将已验证 collections 的中间产物仅保留 1 天，
+短于人工 VM 报告的 8 天有效期；审批拖过 1 天可能因产物过期而失败。
+本地维护提交 `9cd3f21` 已将其改为 8 天并获独立 Review APPROVED，
+但因 GitHub 凭据缺少修改 workflow 的权限而尚未推送，不能视为当前 `main` 行为。
 
 - [ ] 每次发布前在隔离主机针对候选 SHA 运行一次性 Ubuntu 22.04/24.04 VM，覆盖首次收敛、
       二次 `changed=0`、SSH/UFW/Docker/Nginx 与故障恢复；保留 8 天内的报告原件和 SHA256。
 - [ ] 核验报告准确记录镜像、来源 SHA、Ansible 版本、结果和清理状态；失败时实例仍清理，
       报告失败或缺失时审批人拒绝 Release。不能用容器 syntax check 或历史报告替代。
+- [ ] 将 Release 已验证 collections 中间产物的保留期从 1 天提高至不少于 8 天，
+      并验证等待人工审批后仍可使用；若在当前版本发布前合并修复并改变候选 SHA，
+      必须重新完成该 SHA 的一次性 VM 验收。未经权限授权不扩大 GitHub 凭据范围。
 - [ ] 在新 Release 实际验证同 SHA CI 通过后进入受保护审批，审批人核对报告原件、摘要、
       tag SHA 与候选 SHA 后才批准；单人自审不是独立复核。
 
