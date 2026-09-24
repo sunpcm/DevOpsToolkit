@@ -1,0 +1,142 @@
+
+playbook: /private/tmp/devopstoolkit-acceptance.FDgQJb/goenv-immutable-repo/ansible/playbooks/wsl-bootstrap.yml
+
+playbook: /private/tmp/devopstoolkit-acceptance.FDgQJb/goenv-immutable-repo/ansible/playbooks/ubuntu-bootstrap.yml
+
+playbook: /private/tmp/devopstoolkit-acceptance.FDgQJb/goenv-immutable-repo/ansible/playbooks/ubuntu-ssh-finalize.yml
+
+playbook: /private/tmp/devopstoolkit-acceptance.FDgQJb/goenv-immutable-repo/ansible/playbooks/user-only.yml
+
+playbook: /private/tmp/devopstoolkit-acceptance.FDgQJb/goenv-immutable-repo/ansible/playbooks/user-only-remove.yml
+
+模式
+  1. A
+  2. B *
+
+组件
+  [x] 1. 一
+  [x] 2. 二
+  [ ] 3. 三
+
+组件
+  [x] 1. 一
+  [ ] 2. 二
+  [x] 3. 三
+提示：Oh My Zsh 依赖基础 Zsh 管理，已自动关闭 Oh My Zsh。
+提示：仅密钥的新用户没有本地密码，常规 sudo 密码验证将不可用。
+交互式向导测试通过。
+机器可读能力输出测试通过。
+只读 doctor 与严格 SSH 边界测试通过。
+用户环境开关矩阵测试通过。
+
+执行摘要：
+  模式: test
+  启用组件: SSH
+  目标密码: 已安全生成哈希
+  目标公钥: 1 条
+
+注意：首次 SSH 连接请先人工核对并接受主机指纹；向导不会关闭主机指纹校验。
+
+==> 使用普通用户和新端口建立独立 SSH 连接并执行第二阶段
+已记住本次非敏感选择：/tmp/test-wizard-state.json
+向导编排与 Playbook/role 组合测试通过。
+VM smoke Release 证据测试通过。
+.............部署状态待确认：example.com: 证书指针可能已切换，保留部署请求：example.com
+.部署失败：example.com: injected pointer failure
+.部署失败：example.com: injected revision preparation failure
+.部署失败：example.com: 存在旧版平铺证书，须先迁移消费者路径：/var/folders/3f/6p8p1wvd1fzc92hh79fs2n_c0000gn/T/tmp3m1ktg_l/state/certs/example.com.key
+.部署失败：example.com: 文件硬链接数量不符合预期：/var/folders/3f/6p8p1wvd1fzc92hh79fs2n_c0000gn/T/tmp06ee95mk/state/deploy-queue/example.com
+.部署失败：example.com: 证书材料验证失败：example.com
+.部署失败：example.com: 无法安全打开 staging 文件：/var/folders/3f/6p8p1wvd1fzc92hh79fs2n_c0000gn/T/tmpy9ud_x_y/state/staging/example.com.key: [Errno 62] Too many levels of symbolic links: '/var/folders/3f/6p8p1wvd1fzc92hh79fs2n_c0000gn/T/tmpy9ud_x_y/state/staging/example.com.key'
+....
+----------------------------------------------------------------------
+Ran 23 tests in 0.903s
+
+OK
+已部署证书：example.com
+已部署证书：example.com
+已部署证书：example.com
+已部署证书：example.com
+已部署证书：example.com
+已部署证书：example.com
+已部署证书：example.com
+已部署证书：example.com
+已部署证书：example.com
+已部署证书：example.com
+已部署证书：example.com
+
+== ACME 日志权限 ==
+[PASS] /var/folders/3f/6p8p1wvd1fzc92hh79fs2n_c0000gn/T/tmp.B3cic9Uy1D/issue-example.com.log = sunpcm:staff 600。
+[PASS] /var/folders/3f/6p8p1wvd1fzc92hh79fs2n_c0000gn/T/tmp.B3cic9Uy1D/issue-example.com.log.1.gz = sunpcm:staff 600。
+已检查 2 个当前或轮替 ACME 日志文件。
+
+== ACME 日志权限 ==
+[FAIL] /var/folders/3f/6p8p1wvd1fzc92hh79fs2n_c0000gn/T/tmp.B3cic9Uy1D/issue-example.com.log 期望 __unexpected_owner__:__unexpected_group__ 600，实际 sunpcm:staff 600。
+[FAIL] /var/folders/3f/6p8p1wvd1fzc92hh79fs2n_c0000gn/T/tmp.B3cic9Uy1D/issue-example.com.log.1.gz 期望 __unexpected_owner__:__unexpected_group__ 600，实际 sunpcm:staff 600。
+已检查 2 个当前或轮替 ACME 日志文件。
+
+== ACME 日志权限 ==
+[PASS] /var/folders/3f/6p8p1wvd1fzc92hh79fs2n_c0000gn/T/tmp.B3cic9Uy1D/issue-example.com.log = sunpcm:staff 600。
+[FAIL] /var/folders/3f/6p8p1wvd1fzc92hh79fs2n_c0000gn/T/tmp.B3cic9Uy1D/issue-example.com.log.1.gz 期望 sunpcm:staff 600，实际 sunpcm:staff 644。
+已检查 2 个当前或轮替 ACME 日志文件。
+
+== ACME 日志权限 ==
+[PASS] /var/folders/3f/6p8p1wvd1fzc92hh79fs2n_c0000gn/T/tmp.B3cic9Uy1D/issue-example.com.log = sunpcm:staff 600。
+[PASS] /var/folders/3f/6p8p1wvd1fzc92hh79fs2n_c0000gn/T/tmp.B3cic9Uy1D/issue-example.com.log.1.gz = sunpcm:staff 600。
+[FAIL] 文件缺失或类型不安全：/var/folders/3f/6p8p1wvd1fzc92hh79fs2n_c0000gn/T/tmp.B3cic9Uy1D/linked.log
+已检查 3 个当前或轮替 ACME 日志文件。
+
+== ACME 日志权限 ==
+[PASS] /var/folders/3f/6p8p1wvd1fzc92hh79fs2n_c0000gn/T/tmp.B3cic9Uy1D/hardlinked.log = sunpcm:staff 600。
+[FAIL] ACME 日志硬链接数量不安全：/var/folders/3f/6p8p1wvd1fzc92hh79fs2n_c0000gn/T/tmp.B3cic9Uy1D/hardlinked.log
+[PASS] /var/folders/3f/6p8p1wvd1fzc92hh79fs2n_c0000gn/T/tmp.B3cic9Uy1D/issue-example.com.log = sunpcm:staff 600。
+[FAIL] ACME 日志硬链接数量不安全：/var/folders/3f/6p8p1wvd1fzc92hh79fs2n_c0000gn/T/tmp.B3cic9Uy1D/issue-example.com.log
+[PASS] /var/folders/3f/6p8p1wvd1fzc92hh79fs2n_c0000gn/T/tmp.B3cic9Uy1D/issue-example.com.log.1.gz = sunpcm:staff 600。
+已检查 3 个当前或轮替 ACME 日志文件。
+
+== ACME 日志权限 ==
+[FAIL] ACME 日志目录缺失或类型不安全：/var/folders/3f/6p8p1wvd1fzc92hh79fs2n_c0000gn/T/tmp.B3cic9Uy1D/missing
+ACME 当前与轮替日志权限测试通过。
+==> 下载 DevOpsToolkit Release
+==> SHA256 校验通过
+==> 验证 Sigstore 签名与 GitHub Actions 身份
+==> Sigstore 身份验证通过
+==> DevOpsToolkit v0.1.0 已安装：/var/folders/3f/6p8p1wvd1fzc92hh79fs2n_c0000gn/T/tmp.Pq5b5ARGxN/home/.local/bin/devops-toolkit
+提示：请将 /var/folders/3f/6p8p1wvd1fzc92hh79fs2n_c0000gn/T/tmp.Pq5b5ARGxN/home/.local/bin 加入 PATH。
+==> 下载 DevOpsToolkit Release
+==> SHA256 校验通过
+==> 验证 Sigstore 签名与 GitHub Actions 身份
+==> Sigstore 身份验证通过
+==> DevOpsToolkit v0.1.0 已安装：/var/folders/3f/6p8p1wvd1fzc92hh79fs2n_c0000gn/T/tmp.Pq5b5ARGxN/home/.local/bin/devops-toolkit
+提示：请将 /var/folders/3f/6p8p1wvd1fzc92hh79fs2n_c0000gn/T/tmp.Pq5b5ARGxN/home/.local/bin 加入 PATH。
+==> 下载 DevOpsToolkit Release
+==> SHA256 校验通过
+==> 验证 Sigstore 签名与 GitHub Actions 身份
+==> Sigstore 身份验证通过
+==> DevOpsToolkit v0.1.0 已安装：/var/folders/3f/6p8p1wvd1fzc92hh79fs2n_c0000gn/T/tmp.Pq5b5ARGxN/home/.local/bin/devops-toolkit
+提示：请将 /var/folders/3f/6p8p1wvd1fzc92hh79fs2n_c0000gn/T/tmp.Pq5b5ARGxN/home/.local/bin 加入 PATH。
+==> 下载 DevOpsToolkit Release
+==> SHA256 校验通过
+==> 验证 Sigstore 签名与 GitHub Actions 身份
+==> Sigstore 身份验证通过
+==> DevOpsToolkit v0.2.0 已安装：/var/folders/3f/6p8p1wvd1fzc92hh79fs2n_c0000gn/T/tmp.Pq5b5ARGxN/home/.local/bin/devops-toolkit
+提示：请将 /var/folders/3f/6p8p1wvd1fzc92hh79fs2n_c0000gn/T/tmp.Pq5b5ARGxN/home/.local/bin 加入 PATH。
+==> 下载 DevOpsToolkit Release
+==> SHA256 校验通过
+==> 验证 Sigstore 签名与 GitHub Actions 身份
+==> Sigstore 身份验证通过
+==> DevOpsToolkit v0.1.0 已安装：/var/folders/3f/6p8p1wvd1fzc92hh79fs2n_c0000gn/T/tmp.Pq5b5ARGxN/non-tty-home/.local/bin/devops-toolkit
+提示：请将 /var/folders/3f/6p8p1wvd1fzc92hh79fs2n_c0000gn/T/tmp.Pq5b5ARGxN/non-tty-home/.local/bin 加入 PATH。
+==> 当前不是交互终端，已跳过启动向导；稍后运行 devops-toolkit。
+==> 下载 DevOpsToolkit Release
+==> SHA256 校验通过
+==> 验证 Sigstore 签名与 GitHub Actions 身份
+==> Sigstore 身份验证通过
+==> DevOpsToolkit v0.1.0 已安装：/var/folders/3f/6p8p1wvd1fzc92hh79fs2n_c0000gn/T/tmp.Pq5b5ARGxN/tty-home/.local/bin/devops-toolkit
+提示：请将 /var/folders/3f/6p8p1wvd1fzc92hh79fs2n_c0000gn/T/tmp.Pq5b5ARGxN/tty-home/.local/bin 加入 PATH。
+==> 安装系统依赖
+安装器测试通过。
+Release 包测试通过。
+devops-toolkit-2204-test-20260922010101-123: 已加入一次性 VM 测试 DNS 覆盖：ports.ubuntu.com=91.189.92.19,download.docker.com=3.169.231.109
+Multipass 报告与清理边界测试通过。
+统一 Ansible 入口静态验证通过。

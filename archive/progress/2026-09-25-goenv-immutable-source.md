@@ -24,7 +24,11 @@ git ls-remote https://github.com/go-nv/goenv.git 'refs/tags/3.1.4' 'refs/tags/3.
 
 - 在隔离的 ansible-core 2.21.4 与已锁定 collections 下，
   `./tests/verify-ansible.sh` 完整通过，退出码 0。沙箱内首次尝试因 Ansible
-  本机 RPC 无法启动而中断；在允许 RPC 的同一宿主环境重跑成功。
+  本机 RPC 无法启动而中断；在允许 RPC 的同一宿主环境重跑成功。针对本阶段
+  `e5cc171b56c9db83e428ed90c72c99580a274b18` 的再次完整运行原始输出见
+  [`2026-09-25-goenv-verify-ansible.report`](2026-09-25-goenv-verify-ansible.report)，
+  SHA256 `86b8f3668ecce75e9d9422b89fe3a405b62587dc46ee699fa01ecfe2b1f3a4ff`，
+  退出码 0。日志中的 ACME `[FAIL]` 为预期的负向权限测试，整体测试结论为通过。
 - `shellcheck tests/verify-ansible.sh`、Python 语法编译、月度依赖审计与
   `git diff --check` 均通过；没有安装宿主机软件。
 - 独立只读 Review 对提交 `0e0d318` 给出 APPROVED，并在临时副本中把 goenv
