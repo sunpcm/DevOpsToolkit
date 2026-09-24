@@ -35,9 +35,9 @@ export PATH="$HOME/.local/bin:$PATH"
 
 普通用户安装绝不提权。控制端需要 Python 3.12–3.14（含 `venv`）、Git、curl 和 OpenSSL。
 安装器在自有目录创建 `ansible-core==2.21.4` 隔离 runtime，不修改系统 Python；重复安装复用已经自检的 runtime。
-`--system` 模式要求已有 runtime 及其解释器链接指向 root 持有、不可由组/其他用户写入的路径；
-若 macOS 的 Python 位于普通用户可修改的 Homebrew 前缀，系统安装会安全失败，请改用 `--user`
-或先由管理员提供可信的系统 Python。不要为通过检查而放宽目录权限。
+`--system` 模式忽略继承的 `PATH`，默认仅使用 `/usr/bin/python3`，并在执行前检查它、其链接目标和所有父目录均由 root 持有且不可由组/其他用户写入；已有 runtime 也遵守同样的路径信任边界。
+如系统 Python 版本不符合要求，可设置 `DEVOPS_TOOLKIT_SYSTEM_PYTHON` 为管理员提供的可信绝对路径。
+普通用户可修改的 Homebrew Python 不能供 root 模式使用；这种 macOS 安装请改用 `--user`，不要为通过检查而放宽目录权限。
 Ubuntu 22.04 / Python 3.10 可作为远程受管目标，但不支持本机或 WSL 控制端模式。Linux 控制端
 只支持 x86_64/aarch64 的 Ubuntu 24.04；macOS 控制端支持 x86_64/arm64。WSL 初始化只支持
 Ubuntu 24.04 + WSL2，WSL1 会在任何 apt 或系统配置前被拒绝。user-only 的可选系统依赖安装

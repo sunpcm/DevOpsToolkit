@@ -10,6 +10,7 @@
 - 2026-09-22 review 从干净的 `main@74ef67b` 开始；这是历史审计基线，不是当前开发分支。
 - 2026-09-24 独立 Review 检查草稿 PR #2 的 `018b706` 后给出 CHANGES REQUESTED：
   系统安装复用已有 runtime 前缺少权限验证，且验签前完整解包存在磁盘耗尽风险。
+  后续复审 `45a1c07` 又指出系统模式在校验路径前执行 `PATH` 中的 Python。
   本分支已补修复与回归测试；最终 head 仍须重新经过独立复核及 CI 门禁。
 - 最新正式 GitHub Release 仍为 `v0.1.7`；新分支没有正式签名 Release。
 - 唯一受支持的环境配置实现仍是 `ansible/`，受支持入口是 `bin/` 与 `install.sh`。
@@ -70,7 +71,7 @@ Environment 仍无保护规则。随后完成并回查的控制面设置、一�
 `.github/workflows/release.yml` 实现；固定安装器 commit 与 SHA256 的示例见
 [`docs/SUPPLY_CHAIN_SECURITY.md`](docs/SUPPLY_CHAIN_SECURITY.md)。这些实现仍须随新版本在远端实际验收。
 
-- [ ] 对两项 Review 修复重新独立复核草稿 PR #2，合并前核对最终 head 的 push/PR 检查；通过真实合并确认
+- [ ] 对安装安全 Review 修复重新独立复核草稿 PR #2，合并前核对最终 head 的 push/PR 检查；通过真实合并确认
       `main` 的三项必需检查未误阻正常路径。单维护者阶段不要求第二人 approval。
 - [ ] 首次新 tag 发布时验证 `v*` 更新/删除保护、仅 `v*` 可进入 `release` Environment、
       审批确实阻止发布且管理员不能强制绕过；审批人核对当次同 SHA VM 报告原件与 SHA256。
@@ -93,7 +94,7 @@ Environment 仍无保护规则。随后完成并回查的控制面设置、一�
 旧版本保留精确兼容名单。证据见
 [`archive/progress/2026-09-24-bundle-fallback-allowlist.md`](archive/progress/2026-09-24-bundle-fallback-allowlist.md)。
 
-- [ ] `018b706` 的独立 Review 所提两项安装安全问题已在后续分支修复；合并前须复审修复范围，
+- [ ] `018b706` 与 `45a1c07` 的独立 Review 所提安装安全问题已在后续分支修复；合并前须复审修复范围，
       并在最终 head 与合并 SHA 上重新确认 quality、Python 3.12/3.14 门禁结果。
 - [ ] 新版本发布前重新验证 2.21.4 runtime 与三项 collections 的 Release 构建、签名、安装及回滚门槛；
       不把本地测试 tarball 视为正式 Release。

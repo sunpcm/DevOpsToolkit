@@ -354,6 +354,27 @@ fi
   fail "Sigstore 验证失败后切换了 current"
 
 # Never execute a pre-existing system runtime from a non-root-owned path.
+UNTRUSTED_PYTHON_DIR="${TMP_DIR}/untrusted-python"
+UNTRUSTED_PYTHON_MARKER="${TMP_DIR}/untrusted-python-executed"
+mkdir -p "${UNTRUSTED_PYTHON_DIR}"
+cat >"${UNTRUSTED_PYTHON_DIR}/python3" <<'EOF'
+#!/usr/bin/env bash
+: >"${DEVOPS_TOOLKIT_TEST_UNTRUSTED_PYTHON_MARKER}"
+exit 0
+EOF
+chmod +x "${UNTRUSTED_PYTHON_DIR}/python3"
+PATH="${UNTRUSTED_PYTHON_DIR}:${PATH}" \
+  DEVOPS_TOOLKIT_TEST_UNTRUSTED_PYTHON_MARKER="${UNTRUSTED_PYTHON_MARKER}" \
+  bash -c 'source "$1"; effective_uid() { printf 0; }; parse_args --system; [[ "$PATH" == /usr/bin:/bin:/usr/sbin:/sbin ]]' \
+    _ "${ROOT_DIR}/install.sh" || fail "系统安装没有清理继承的 PATH"
+[[ ! -e "${UNTRUSTED_PYTHON_MARKER}" ]] || fail "系统安装执行了 PATH 中的不可信 Python"
+if DEVOPS_TOOLKIT_SYSTEM_PYTHON="${UNTRUSTED_PYTHON_DIR}/python3" \
+  DEVOPS_TOOLKIT_TEST_UNTRUSTED_PYTHON_MARKER="${UNTRUSTED_PYTHON_MARKER}" \
+  bash -c 'source "$1"; INSTALL_MODE=system; check_controller_python' _ "${ROOT_DIR}/install.sh" >/dev/null 2>&1; then
+  fail "系统安装接受了不可信 Python"
+fi
+[[ ! -e "${UNTRUSTED_PYTHON_MARKER}" ]] || fail "验证路径前执行了不可信 Python"
+
 UNTRUSTED_RUNTIME_BASE="${TMP_DIR}/untrusted-system-runtime"
 UNTRUSTED_RUNTIME_MARKER="${TMP_DIR}/untrusted-runtime-executed"
 mkdir -p "${UNTRUSTED_RUNTIME_BASE}/runtime/ansible-core-2.21.4/bin"
@@ -367,7 +388,7 @@ chmod +x "${UNTRUSTED_RUNTIME_BASE}/runtime/ansible-core-2.21.4/bin/ansible-play
 cp "${MOCK_BIN}/ansible-galaxy" "${UNTRUSTED_RUNTIME_BASE}/runtime/ansible-core-2.21.4/bin/ansible-galaxy"
 if DEVOPS_TOOLKIT_INSTALL_BASE="${UNTRUSTED_RUNTIME_BASE}" \
   DEVOPS_TOOLKIT_TEST_UNTRUSTED_RUNTIME_MARKER="${UNTRUSTED_RUNTIME_MARKER}" \
-  bash -c 'source "$1"; INSTALL_MODE=system; ensure_managed_runtime' _ "${ROOT_DIR}/install.sh" >/dev/null 2>&1; then
+  bash -c 'source "$1"; INSTALL_MODE=system; CONTROLLER_PYTHON=/usr/bin/python3; check_controller_python() { :; }; ensure_managed_runtime' _ "${ROOT_DIR}/install.sh" >/dev/null 2>&1; then
   fail "不可信系统 runtime 未被拒绝"
 fi
 [[ ! -e "${UNTRUSTED_RUNTIME_MARKER}" ]] || fail "验证权限前执行了不可信系统 runtime"
@@ -473,7 +494,7 @@ PY
 APT_LOG="${TMP_DIR}/apt.log"
 (
   source "${ROOT_DIR}/install.sh"
-  python3() { return 1; }
+  CONTROLLER_PYTHON=/bin/false
   missing_core_commands | grep -Fx python3-venv >/dev/null
 ) || fail "缺少 ensurepip 时未识别 python3-venv 依赖"
 if (

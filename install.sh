@@ -16,6 +16,7 @@ INSTALL_MODE=""
 REQUESTED_VERSION="${DEVOPS_TOOLKIT_VERSION:-}"
 RUN_AFTER_INSTALL=true
 TEMP_DIR=""
+CONTROLLER_PYTHON=""
 
 usage() {
   cat <<'EOF'
@@ -36,6 +37,7 @@ Environment:
   DEVOPS_TOOLKIT_VERSION        Alternative to --version.
   DEVOPS_TOOLKIT_DOWNLOAD_BASE  Override the release asset directory (testing/mirror).
   DEVOPS_TOOLKIT_COSIGN_BASE    Override the pinned Cosign asset directory (mirror).
+  DEVOPS_TOOLKIT_SYSTEM_PYTHON  Trusted absolute Python path for --system (default: /usr/bin/python3).
 EOF
 }
 
@@ -49,7 +51,7 @@ info() {
 }
 
 effective_uid() {
-  id -u
+  printf '%s\n' "${EUID}"
 }
 
 cleanup() {
@@ -109,17 +111,73 @@ parse_args() {
   if [[ "${INSTALL_MODE}" == "system" && "$(effective_uid)" -ne 0 ]]; then
     fail "--system 需要 root；请使用 sudo 或改用 --user。"
   fi
+  if [[ "${INSTALL_MODE}" == "system" ]]; then
+    # Do not let a sudo-inherited, user-writable PATH supply root-run commands.
+    PATH="/usr/bin:/bin:/usr/sbin:/sbin"
+  fi
+}
+
+system_python_path_trusted() {
+  local candidate="$1" path prefix remaining component suffix link_target unsafe
+  local links=0
+  [[ "${candidate}" == /* ]] || return 1
+  path="${candidate}"
+  while :; do
+    prefix=""
+    remaining="${path#/}"
+    while [[ -n "${remaining}" ]]; do
+      component="${remaining%%/*}"
+      if [[ "${remaining}" == */* ]]; then
+        suffix="/${remaining#*/}"
+      else
+        suffix=""
+      fi
+      [[ -n "${component}" ]] || return 1
+      prefix="${prefix}/${component}"
+      [[ -e "${prefix}" || -L "${prefix}" ]] || return 1
+      unsafe="$(/usr/bin/find -H "${prefix}" -maxdepth 0 \
+        \( ! -uid 0 -o -perm -020 -o -perm -002 \) -print -quit)" || return 1
+      [[ -z "${unsafe}" ]] || return 1
+      if [[ -L "${prefix}" ]]; then
+        ((links += 1))
+        ((links <= 32)) || return 1
+        link_target="$(/usr/bin/readlink "${prefix}")" || return 1
+        if [[ "${link_target}" == /* ]]; then
+          path="${link_target}${suffix}"
+        else
+          path="${prefix%/*}/${link_target}${suffix}"
+        fi
+        break
+      fi
+      remaining="${suffix#/}"
+    done
+    [[ -z "${remaining}" ]] && [[ ! -L "${prefix}" ]] && break
+  done
+  [[ -f "${path}" && -x "${path}" ]]
+}
+
+select_controller_python() {
+  local candidate
+  if [[ "${INSTALL_MODE}" == "system" ]]; then
+    candidate="${DEVOPS_TOOLKIT_SYSTEM_PYTHON:-/usr/bin/python3}"
+    system_python_path_trusted "${candidate}" || \
+      fail "系统安装需要 root 持有且路径不可由普通用户写入的 Python；请使用 --user 或设置 DEVOPS_TOOLKIT_SYSTEM_PYTHON 为可信的绝对路径。"
+  else
+    candidate="$(type -P python3)" || fail "缺少 Python 3.12–3.14 控制端运行时。"
+  fi
+  CONTROLLER_PYTHON="${candidate}"
 }
 
 missing_core_commands() {
   local command_name
-  for command_name in curl tar python3 git openssl; do
+  for command_name in curl tar git openssl; do
     if ! command -v "${command_name}" >/dev/null 2>&1; then
       printf '%s\n' "${command_name}"
     fi
   done
-  if command -v python3 >/dev/null 2>&1 && \
-     ! python3 -c 'import ensurepip' >/dev/null 2>&1; then
+  [[ -n "${CONTROLLER_PYTHON}" ]] || printf '%s\n' python3
+  if [[ -n "${CONTROLLER_PYTHON}" ]] && \
+     ! "${CONTROLLER_PYTHON}" -I -c 'import ensurepip' >/dev/null 2>&1; then
     printf '%s\n' python3-venv
   fi
 }
@@ -133,8 +191,8 @@ apt_get_available() {
 }
 
 check_controller_python() {
-  command -v python3 >/dev/null 2>&1 || fail "缺少 Python 3.12–3.14 控制端运行时。"
-  python3 -c 'import sys; sys.exit(0 if (3, 12) <= sys.version_info[:2] <= (3, 14) else 1)' || \
+  [[ -n "${CONTROLLER_PYTHON}" ]] || select_controller_python
+  "${CONTROLLER_PYTHON}" -I -c 'import sys; sys.exit(0 if (3, 12) <= sys.version_info[:2] <= (3, 14) else 1)' || \
     fail "控制端需要 Python 3.12–3.14；Ubuntu 22.04/Python 3.10 仅支持作为远程受管目标。"
 }
 
@@ -192,7 +250,7 @@ managed_ansible_command() {
 
 validate_system_install_paths() {
   [[ "${INSTALL_MODE}" == "system" ]] || return 0
-  python3 - "$(toolkit_base_dir)" <<'PY'
+  "${CONTROLLER_PYTHON}" -I - "$(toolkit_base_dir)" <<'PY'
 import stat
 import sys
 from pathlib import Path
@@ -265,8 +323,8 @@ ensure_managed_runtime() {
     fail "隔离 runtime ${runtime_dir} 不完整或版本不符；请先人工检查，安装器不会覆盖。"
   mkdir -p "$(dirname "${runtime_dir}")"
   chmod 0755 "$(dirname "${runtime_dir}")"
-  python3 -m venv "${runtime_dir}" || fail "创建隔离 runtime 失败；请安装 python3-venv。"
-  "${runtime_dir}/bin/python" -m pip install "${ANSIBLE_CORE_PIP_SPEC}" || \
+  "${CONTROLLER_PYTHON}" -I -m venv "${runtime_dir}" || fail "创建隔离 runtime 失败；请安装 python3-venv。"
+  "${runtime_dir}/bin/python" -I -m pip install "${ANSIBLE_CORE_PIP_SPEC}" || \
     fail "隔离 runtime 安装 ${ANSIBLE_CORE_PIP_SPEC} 失败；current 未切换。"
   printf '%s\n' "${ANSIBLE_CORE_VERSION}" >"${runtime_dir}/.ready"
   validate_system_install_paths || fail "新建 runtime 权限不安全；current 未切换。"
@@ -435,7 +493,7 @@ prepare_cosign() {
   cache_tmp="${cache_dir}/.cosign-$$"
   cp "${TEMP_DIR}/cosign" "${cache_tmp}"
   chmod 0755 "${cache_tmp}"
-  python3 - "${cache_tmp}" "${cached_cosign}" <<'PY'
+  "${CONTROLLER_PYTHON}" -I - "${cache_tmp}" "${cached_cosign}" <<'PY'
 import os
 import sys
 
@@ -464,7 +522,7 @@ verify_sigstore_signature() {
 }
 
 read_archive_version() {
-  python3 - "${TEMP_DIR}/${ARCHIVE_NAME}" "${MAX_ARCHIVE_MEMBERS}" "${MAX_EXTRACT_BYTES}" <<'PY'
+  "${CONTROLLER_PYTHON}" -I - "${TEMP_DIR}/${ARCHIVE_NAME}" "${MAX_ARCHIVE_MEMBERS}" "${MAX_EXTRACT_BYTES}" <<'PY'
 import sys
 import tarfile
 
@@ -493,7 +551,7 @@ PY
 
 extract_archive_safely() {
   mkdir -m 0700 "${TEMP_DIR}/extracted"
-  python3 - "${TEMP_DIR}/${ARCHIVE_NAME}" "${TEMP_DIR}/extracted" \
+  "${CONTROLLER_PYTHON}" -I - "${TEMP_DIR}/${ARCHIVE_NAME}" "${TEMP_DIR}/extracted" \
     "${MAX_ARCHIVE_MEMBERS}" "${MAX_EXTRACT_BYTES}" <<'PY'
 import os
 import sys
@@ -551,7 +609,7 @@ read_release_version() {
 bundled_collections_valid() {
   local collection_dir="$1"
   local lock_file="$2"
-  python3 - "${collection_dir}" "${lock_file}" <<'PY'
+  "${CONTROLLER_PYTHON}" -I - "${collection_dir}" "${lock_file}" <<'PY'
 import hashlib
 import json
 import sys
@@ -599,7 +657,7 @@ allows_legacy_galaxy_fallback() {
 
 system_release_tree_valid() {
   local release_root="$1"
-  python3 - "${release_root}" <<'PY'
+  "${CONTROLLER_PYTHON}" -I - "${release_root}" <<'PY'
 import os
 import stat
 import sys
@@ -748,7 +806,7 @@ install_release() {
   # non-root user that invokes an installation performed through sudo.
   (umask 022; ln -s "releases/${release_version}" "${current_tmp}")
   (umask 022; ln -s "${current_link}/bin/devops-toolkit" "${launcher_tmp}")
-  python3 - "${current_tmp}" "${current_link}" "${launcher_tmp}" "${launcher_link}" <<'PY'
+  "${CONTROLLER_PYTHON}" -I - "${current_tmp}" "${current_link}" "${launcher_tmp}" "${launcher_link}" <<'PY'
 import os
 import sys
 
