@@ -756,7 +756,7 @@ main() {
   require_command ssh-keygen
   require_command ssh-keyscan
   require_command python3
-  validate_test_hosts
+  validate_test_hosts "${TEST_HOSTS}"
   SOURCE_SHA="$(git -C "${ROOT_DIR}" rev-parse HEAD)"
   if [[ -n "$(git -C "${ROOT_DIR}" status --porcelain)" ]]; then
     SOURCE_DIRTY=true
