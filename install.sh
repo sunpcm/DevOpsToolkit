@@ -8,6 +8,9 @@ readonly BUNDLE_NAME="${ARCHIVE_NAME}.sigstore.json"
 readonly COSIGN_VERSION="v3.1.1"
 readonly ANSIBLE_CORE_VERSION="2.21.4"
 readonly ANSIBLE_CORE_PIP_SPEC="ansible-core==${ANSIBLE_CORE_VERSION}"
+readonly MAX_DOWNLOAD_BYTES=$((512 * 1024 * 1024))
+readonly MAX_EXTRACT_BYTES=$((1024 * 1024 * 1024))
+readonly MAX_ARCHIVE_MEMBERS=20000
 
 INSTALL_MODE=""
 REQUESTED_VERSION="${DEVOPS_TOOLKIT_VERSION:-}"
@@ -187,6 +190,56 @@ managed_ansible_command() {
   printf '%s/bin/%s\n' "$(managed_runtime_dir)" "$1"
 }
 
+validate_system_install_paths() {
+  [[ "${INSTALL_MODE}" == "system" ]] || return 0
+  python3 - "$(toolkit_base_dir)" <<'PY'
+import stat
+import sys
+from pathlib import Path
+
+base = Path(sys.argv[1])
+if not base.is_absolute() or ".." in base.parts:
+    raise SystemExit("system install base must be an absolute path without '..'")
+
+
+def trusted(path: Path, *, allow_link: bool = False) -> None:
+    entry = path.lstat()
+    if entry.st_uid != 0 or entry.st_mode & 0o022:
+        raise SystemExit(f"untrusted system install path: {path}")
+    if stat.S_ISLNK(entry.st_mode):
+        if not allow_link:
+            raise SystemExit(f"symlink in system install path: {path}")
+        target = path.resolve(strict=True)
+        # An external venv interpreter may be linked, but must itself be in a
+        # root-owned, non-writable path. External directory links are refused.
+        if target.is_dir() and not target.is_relative_to(base / "runtime"):
+            raise SystemExit(f"external directory link in runtime: {path}")
+        for parent in reversed(target.parents):
+            trusted(parent)
+        trusted(target)
+    elif not (stat.S_ISDIR(entry.st_mode) or stat.S_ISREG(entry.st_mode)):
+        raise SystemExit(f"unsupported system install entry: {path}")
+
+
+current = Path("/")
+trusted(current)
+for part in base.parts[1:]:
+    current /= part
+    if not current.exists() and not current.is_symlink():
+        break
+    trusted(current)
+
+for tree in (base / "runtime", base / "tools"):
+    if not tree.exists() and not tree.is_symlink():
+        continue
+    trusted(tree)
+    if not tree.is_dir():
+        raise SystemExit(f"system install path is not a directory: {tree}")
+    for entry in tree.rglob("*"):
+        trusted(entry, allow_link=tree.name == "runtime")
+PY
+}
+
 managed_runtime_valid() {
   local runtime_dir version
   runtime_dir="$(managed_runtime_dir)"
@@ -202,6 +255,7 @@ managed_runtime_valid() {
 ensure_managed_runtime() {
   local runtime_dir
   check_controller_python
+  validate_system_install_paths || fail "系统安装路径或已有 runtime 权限不安全。"
   runtime_dir="$(managed_runtime_dir)"
   if managed_runtime_valid; then
     info "复用隔离的 ${ANSIBLE_CORE_PIP_SPEC} runtime"
@@ -215,6 +269,7 @@ ensure_managed_runtime() {
   "${runtime_dir}/bin/python" -m pip install "${ANSIBLE_CORE_PIP_SPEC}" || \
     fail "隔离 runtime 安装 ${ANSIBLE_CORE_PIP_SPEC} 失败；current 未切换。"
   printf '%s\n' "${ANSIBLE_CORE_VERSION}" >"${runtime_dir}/.ready"
+  validate_system_install_paths || fail "新建 runtime 权限不安全；current 未切换。"
   managed_runtime_valid || fail "隔离 runtime 自检失败；current 未切换。"
   chmod -R a+rX "${runtime_dir}"
   info "隔离 runtime 已就绪：${runtime_dir}"
@@ -265,12 +320,14 @@ curl_download() {
   local url="$1" output="$2"
   if [[ "${url}" == file://* ]]; then
     curl --fail --silent --show-error --location \
+      --max-filesize "${MAX_DOWNLOAD_BYTES}" \
       "${url}" --output "${output}"
   else
     # --speed-limit/--speed-time：传输速率低于 1KB/s 持续 30s 就中止本次尝试，
     # 避免连上后数据流卡死导致无限挂起；配合 --retry 让停滞的尝试自动重来。
     curl --fail --silent --show-error --location \
       --retry 5 --retry-delay 2 --retry-all-errors \
+      --max-filesize "${MAX_DOWNLOAD_BYTES}" \
       --connect-timeout 30 --speed-limit 1024 --speed-time 30 \
       "${url}" --output "${output}"
   fi
@@ -406,20 +463,58 @@ verify_sigstore_signature() {
   info "Sigstore 身份验证通过"
 }
 
+read_archive_version() {
+  python3 - "${TEMP_DIR}/${ARCHIVE_NAME}" "${MAX_ARCHIVE_MEMBERS}" "${MAX_EXTRACT_BYTES}" <<'PY'
+import sys
+import tarfile
+
+archive, max_members, max_bytes = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+total = 0
+with tarfile.open(archive, "r|gz") as package:
+    for count, member in enumerate(package, 1):
+        if count > max_members:
+            raise SystemExit("release archive has too many entries")
+        total += member.size if member.isfile() else 0
+        if total > max_bytes:
+            raise SystemExit("release archive exceeds uncompressed size limit")
+        if member.name != "devops-toolkit/VERSION":
+            continue
+        if not member.isfile() or not 1 <= member.size <= 64:
+            raise SystemExit("invalid release VERSION entry")
+        handle = package.extractfile(member)
+        if handle is None:
+            raise SystemExit("cannot read release VERSION entry")
+        print(handle.read(65).decode("ascii").strip())
+        break
+    else:
+        raise SystemExit("release archive is missing VERSION")
+PY
+}
+
 extract_archive_safely() {
   mkdir -m 0700 "${TEMP_DIR}/extracted"
-  python3 - "${TEMP_DIR}/${ARCHIVE_NAME}" "${TEMP_DIR}/extracted" <<'PY'
+  python3 - "${TEMP_DIR}/${ARCHIVE_NAME}" "${TEMP_DIR}/extracted" \
+    "${MAX_ARCHIVE_MEMBERS}" "${MAX_EXTRACT_BYTES}" <<'PY'
 import os
 import sys
 import tarfile
 from pathlib import PurePosixPath
 
-archive, destination = sys.argv[1:]
+archive, destination = sys.argv[1:3]
+max_members, max_bytes = map(int, sys.argv[3:])
 with tarfile.open(archive, "r:gz") as package:
     members = package.getmembers()
-    if not members:
-        raise SystemExit("empty release archive")
+    if not members or len(members) > max_members:
+        raise SystemExit("empty release archive or too many entries")
+    seen = set()
+    total = 0
     for member in members:
+        if member.name in seen:
+            raise SystemExit(f"duplicate archive path: {member.name}")
+        seen.add(member.name)
+        total += member.size if member.isfile() else 0
+        if total > max_bytes:
+            raise SystemExit("release archive exceeds uncompressed size limit")
         path = PurePosixPath(member.name)
         if path.is_absolute() or ".." in path.parts:
             raise SystemExit(f"unsafe archive path: {member.name}")
@@ -669,6 +764,7 @@ main() {
   parse_args "$@"
   check_controller_platform || return 1
   check_controller_python
+  validate_system_install_paths || fail "系统安装路径或已有 runtime 权限不安全。"
   ensure_dependencies
   umask 077
   TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/devops-toolkit-install.XXXXXX")"
@@ -679,9 +775,16 @@ main() {
   base_url="$(download_base_url)"
   download_assets "${base_url}"
   verify_checksum
-  extract_archive_safely
-  release_version="$(read_release_version)"
+  release_version="$(read_archive_version)"
+  [[ "${release_version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([._-][A-Za-z0-9.-]+)?$ ]] || \
+    fail "Release VERSION 格式无效。"
+  if [[ -n "${REQUESTED_VERSION}" && "${release_version}" != "${REQUESTED_VERSION}" ]]; then
+    fail "请求 ${REQUESTED_VERSION}，但 Release 内容为 ${release_version}。"
+  fi
   verify_sigstore_signature "${release_version}"
+  extract_archive_safely
+  [[ "$(read_release_version)" == "${release_version}" ]] || \
+    fail "Release 归档中的 VERSION 不一致。"
   ensure_managed_runtime
   launcher="$(install_release "${release_version}" | tail -n 1)"
 

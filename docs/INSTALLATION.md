@@ -35,6 +35,9 @@ export PATH="$HOME/.local/bin:$PATH"
 
 普通用户安装绝不提权。控制端需要 Python 3.12–3.14（含 `venv`）、Git、curl 和 OpenSSL。
 安装器在自有目录创建 `ansible-core==2.21.4` 隔离 runtime，不修改系统 Python；重复安装复用已经自检的 runtime。
+`--system` 模式要求已有 runtime 及其解释器链接指向 root 持有、不可由组/其他用户写入的路径；
+若 macOS 的 Python 位于普通用户可修改的 Homebrew 前缀，系统安装会安全失败，请改用 `--user`
+或先由管理员提供可信的系统 Python。不要为通过检查而放宽目录权限。
 Ubuntu 22.04 / Python 3.10 可作为远程受管目标，但不支持本机或 WSL 控制端模式。Linux 控制端
 只支持 x86_64/aarch64 的 Ubuntu 24.04；macOS 控制端支持 x86_64/arm64。WSL 初始化只支持
 Ubuntu 24.04 + WSL2，WSL1 会在任何 apt 或系统配置前被拒绝。user-only 的可选系统依赖安装
@@ -45,13 +48,12 @@ Ubuntu 24.04 + WSL2，WSL1 会在任何 apt 或系统配置前被拒绝。user-o
 
 安装器不会下载完成后立即解压到正式目录，而是按以下顺序处理：
 
-1. 下载压缩包、SHA256 文件和 Sigstore bundle。
-2. 验证压缩包 SHA256。
-3. 在权限为 `0700` 的临时目录中检查 tar 路径并解包。
-4. 核对包内 `VERSION` 与请求的版本。
-5. 下载或复用固定版本 Cosign，并用安装器内置 SHA256 校验 Cosign 本身。
-6. 验证 Release 的 OIDC issuer、仓库、workflow、tag ref 和触发事件。
-7. 创建或复用隔离 Ansible runtime，校验并启用签名包内的固定版本 Ansible collections；全部成功后才原子切换 `current`。历史 Release
+1. 下载压缩包、SHA256 文件和 Sigstore bundle；单个下载文件上限为 512 MiB。
+2. 验证压缩包 SHA256，仅流式读取归档内的 `VERSION`，核对请求版本，不解包。
+3. 下载或复用固定版本 Cosign，并用安装器内置 SHA256 校验 Cosign 本身。
+4. 验证 Release 的 OIDC issuer、仓库、workflow、tag ref 和触发事件。
+5. 验签成功后，才在权限为 `0700` 的临时目录中检查 tar 路径并解包；归档最多 20,000 个条目、解压后常规文件总大小最多 1 GiB，并再次核对 `VERSION`。
+6. 创建或复用隔离 Ansible runtime，校验并启用签名包内的固定版本 Ansible collections；全部成功后才原子切换 `current`。历史 Release
    不含内置 collections 时才显式回退到 Ansible Galaxy 兼容安装。
 
 任何一步失败，当前已安装版本都不会切换。Cosign 验证需要访问 Sigstore 信任根和透明日志服务；受限网络应显式放行，不要通过删除验证逻辑绕过。
@@ -206,6 +208,7 @@ HOME 模式只给 warning，可选 apt 安装仍限 Ubuntu 22.04/24.04。
 ## 安全边界
 
 - 临时下载目录权限为 `0700`，资产文件为 `0600`。
+- 系统安装会先检查安装目录及已有 `runtime`、`tools` 的所有权和可写权限；遇到非 root 持有或组/其他用户可写的路径会拒绝执行其中的程序。普通用户模式不受此限制。
 - 系统安装的 `current` 与 launcher 符号链接会保持普通用户可遍历；即使安装器由 `sudo` 在 macOS 执行，
   非 root 用户也能解析 Release 根目录并读取正确版本。
 - 安装器拒绝绝对路径、`..`、额外顶层目录、符号链接和设备文件，避免 tar 路径穿越。

@@ -128,6 +128,10 @@ import tarfile
 import sys
 
 with tarfile.open(sys.argv[1], "w:gz") as archive:
+    version = b"v0.4.0\n"
+    version_member = tarfile.TarInfo("devops-toolkit/VERSION")
+    version_member.size = len(version)
+    archive.addfile(version_member, io.BytesIO(version))
     data = b"escape"
     member = tarfile.TarInfo("../escape")
     member.size = len(data)
@@ -136,6 +140,8 @@ PY
   printf '%s  devops-toolkit.tar.gz\n' \
     "$(sha256_file "${output_dir}/devops-toolkit.tar.gz")" \
     >"${output_dir}/devops-toolkit.tar.gz.sha256"
+  printf '{"fixture":"unsafe"}\n' \
+    >"${output_dir}/devops-toolkit.tar.gz.sigstore.json"
 }
 
 MOCK_BIN="${TMP_DIR}/mock-bin"
@@ -157,6 +163,15 @@ cat >"${TMP_DIR}/fake-cosign" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"${DEVOPS_TOOLKIT_TEST_COSIGN_LOG}"
+if [[ -n "${DEVOPS_TOOLKIT_TEST_ASSERT_PREEXTRACT:-}" ]]; then
+  for argument in "$@"; do
+    if [[ "${argument}" == */devops-toolkit.tar.gz ]]; then
+      [[ ! -e "${argument%/*}/extracted" ]] || exit 1
+      : >"${DEVOPS_TOOLKIT_TEST_PREEXTRACT_MARKER}"
+      break
+    fi
+  done
+fi
 [[ -z "${DEVOPS_TOOLKIT_TEST_COSIGN_FAIL:-}" ]]
 EOF
 chmod +x "${TMP_DIR}/fake-cosign"
@@ -304,6 +319,8 @@ if DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${UNSAFE_RELEASE}" \
   "${INSTALLER}" --user --no-run >/dev/null 2>&1; then
   fail "危险 tar 路径未被拒绝"
 fi
+grep -F -- 'refs/tags/v0.4.0' "${DEVOPS_TOOLKIT_TEST_COSIGN_LOG}" >/dev/null || \
+  fail "危险 tar 测试未进入验签后的解包路径"
 [[ ! -e "${TMP_DIR}/escape" ]] || fail "危险 tar 写出了目标目录"
 
 # A missing bundle, bad Cosign bootstrap hash, or failed identity must stop before publication.
@@ -324,13 +341,36 @@ fi
 [[ ! -e "${TMP_DIR}/bad-cosign-home/.local/share/devops-toolkit/current" ]] || \
   fail "Cosign 引导校验失败后切换了 current"
 
+PREEXTRACT_MARKER="${TMP_DIR}/signature-before-extraction.marker"
 if HOME="${TMP_DIR}/bad-signature-home" DEVOPS_TOOLKIT_TEST_COSIGN_FAIL=1 \
+  DEVOPS_TOOLKIT_TEST_ASSERT_PREEXTRACT=1 \
+  DEVOPS_TOOLKIT_TEST_PREEXTRACT_MARKER="${PREEXTRACT_MARKER}" \
   DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${RELEASE_V1}" \
   "${INSTALLER}" --user --no-run >/dev/null 2>&1; then
   fail "错误 Sigstore 身份未被拒绝"
 fi
+[[ -e "${PREEXTRACT_MARKER}" ]] || fail "Sigstore 身份验证未在解包前执行"
 [[ ! -e "${TMP_DIR}/bad-signature-home/.local/share/devops-toolkit/current" ]] || \
   fail "Sigstore 验证失败后切换了 current"
+
+# Never execute a pre-existing system runtime from a non-root-owned path.
+UNTRUSTED_RUNTIME_BASE="${TMP_DIR}/untrusted-system-runtime"
+UNTRUSTED_RUNTIME_MARKER="${TMP_DIR}/untrusted-runtime-executed"
+mkdir -p "${UNTRUSTED_RUNTIME_BASE}/runtime/ansible-core-2.21.4/bin"
+printf '%s\n' '2.21.4' >"${UNTRUSTED_RUNTIME_BASE}/runtime/ansible-core-2.21.4/.ready"
+cat >"${UNTRUSTED_RUNTIME_BASE}/runtime/ansible-core-2.21.4/bin/ansible-playbook" <<'EOF'
+#!/usr/bin/env bash
+: >"${DEVOPS_TOOLKIT_TEST_UNTRUSTED_RUNTIME_MARKER}"
+echo 'ansible-playbook [core 2.21.4]'
+EOF
+chmod +x "${UNTRUSTED_RUNTIME_BASE}/runtime/ansible-core-2.21.4/bin/ansible-playbook"
+cp "${MOCK_BIN}/ansible-galaxy" "${UNTRUSTED_RUNTIME_BASE}/runtime/ansible-core-2.21.4/bin/ansible-galaxy"
+if DEVOPS_TOOLKIT_INSTALL_BASE="${UNTRUSTED_RUNTIME_BASE}" \
+  DEVOPS_TOOLKIT_TEST_UNTRUSTED_RUNTIME_MARKER="${UNTRUSTED_RUNTIME_MARKER}" \
+  bash -c 'source "$1"; INSTALL_MODE=system; ensure_managed_runtime' _ "${ROOT_DIR}/install.sh" >/dev/null 2>&1; then
+  fail "不可信系统 runtime 未被拒绝"
+fi
+[[ ! -e "${UNTRUSTED_RUNTIME_MARKER}" ]] || fail "验证权限前执行了不可信系统 runtime"
 
 # A bundled release must install even when Galaxy is unavailable.
 OFFLINE_HOME="${TMP_DIR}/offline-home"
