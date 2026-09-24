@@ -27,7 +27,7 @@
 | --- | --- |
 | `main` ruleset | ID `23913370`，active，`refs/heads/main`，禁止 deletion/non-fast-forward，无 bypass；必需 CI 检查待新矩阵远端运行后配置。 |
 | `v*` tag ruleset | ID `23913374`，active，`refs/tags/v*`，禁止 update/deletion，无 bypass；单维护者仓库当前只有管理员可写，新 tag 创建未另设阻断规则。 |
-| `release` Environment | required reviewer 为 `sunpcm`，`prevent_self_review=false`；仅 `v*` tag 可部署；这是人工暂停点，不是第二人独立复核。 |
+| `release` Environment | required reviewer 为 `sunpcm`，`prevent_self_review=false`、`can_admins_bypass=false`；仅 `v*` tag 可部署；这是不可强制绕过的人工暂停点，不是第二人独立复核。 |
 | Immutable releases | `enabled=true`，不追溯改变历史 Release。 |
 | Actions | `allowed_actions=selected`、`sha_pinning_required=true`；仅 GitHub-owned Action，非 GitHub verified 和自定义 pattern 均关闭。 |
 | Dependabot | vulnerability-alerts 返回 HTTP 204；security updates `enabled=true, paused=false`。 |
@@ -51,3 +51,5 @@ ShellCheck `SC2119/SC2120` 失败；修正调用方式后，`ec06cc4abaa6918c440
 `23913370`：要求 `quality`、`validate (3.12, 2.21.4)`、
 `validate (3.14, 2.21.4)`，启用 strict latest-code policy，保留 deletion/non-fast-forward
 保护且无 bypass。该规则尚未通过真实合并验证，不能把 API 回查等同于实际阻断测试。
+另一次只读回查发现 `release` Environment 起初允许管理员强制绕过；随后通过 API 将
+`can_admins_bypass` 设为 `false` 并再次读回确认。该设置不等于完成了真实 tag 发布审批验收。

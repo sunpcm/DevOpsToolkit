@@ -72,7 +72,7 @@ Environment 仍无保护规则。随后完成并回查的控制面设置、一�
       3.12/3.14 三项必需检查；在草稿 PR 合并前复核规则实际拦截行为。有第二维护者时再要求
       approval 和防自审，避免单人仓库被锁死。
 - [ ] `v*` 已禁止更新/删除；在首次新 tag 发布中验证创建与 Environment 限制均按预期工作。
-- [ ] `release` Environment 已限制 `v*` 并要求 `sunpcm` 审批；在新 Release 中核实审批
+- [ ] `release` Environment 已限制 `v*`、要求 `sunpcm` 审批且禁止管理员强制绕过；在新 Release 中核实审批
       真正阻止发布，并由审批人核对当次同 SHA VM 报告原件与 SHA256。
 - [ ] 已启用 immutable releases、官方 Action allowlist/完整 SHA pin、Dependabot alerts/
       security updates；在新 Release/PR 中验证不会误阻 CI，非标准 YAML/Shell 依赖审计仍人工维护。

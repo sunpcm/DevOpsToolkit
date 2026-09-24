@@ -61,6 +61,7 @@ Release 包含三个固定名称资产：
 
 - Required reviewers：至少一名可信维护者；审批前执行[发布流程](RELEASING.md)中的一次性 VM 验收。
 - Prevent self-review：有第二名维护者时开启；单人仓库开启后会无法自行发布。
+- 禁止管理员强制绕过保护规则（`can_admins_bypass=false`）。
 - Deployment branches and tags：只允许受保护的 `v*` tags。
 
 Release workflow 已引用该 Environment。Environment 不需要配置 Cosign 私钥或 Secret。
