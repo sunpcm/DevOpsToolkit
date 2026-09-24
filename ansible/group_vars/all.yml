@@ -38,7 +38,7 @@ uv_release_base_url_default: "https://github.com/astral-sh/uv/releases/download/
 uv_release_base_url: >-
   {{ lookup('ansible.builtin.env', 'DEVOPS_TOOLKIT_UV_RELEASE_BASE_URL')
      | default(uv_release_base_url_default, true) }}
-goenv_version: "3.1.4"
+goenv_version: 66571a3851c83e1341dce284aba907964c3d6a48
 
 # Docker's Ubuntu APT signing key, fetched from the official URL below.
 # Update this digest deliberately when Docker rotates the key.

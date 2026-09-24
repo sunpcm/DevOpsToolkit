@@ -80,7 +80,7 @@ uv_artifacts:
 uv_release_base_url_default: "https://github.com/astral-sh/uv/releases/download/{{ uv_version }}"
 nvm_version: bab86d5de571015b63fd8fc30b47bbe072a1290e
 node_version: "24.11.1"
-goenv_version: "3.1.4"
+goenv_version: 66571a3851c83e1341dce284aba907964c3d6a48  # upstream 3.1.4
 go_version: "1.22.1"
 ```
 

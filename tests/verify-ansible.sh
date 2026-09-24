@@ -314,8 +314,12 @@ fi
 if ! grep -Eq '^ohmyzsh_version:[[:space:]]+[0-9a-f]{40}$' \
   "${ROOT_DIR}/ansible/group_vars/all.yml" || \
    ! grep -Eq '^linuxbrew_version:[[:space:]]+[0-9a-f]{40}$' \
+  "${ROOT_DIR}/ansible/group_vars/all.yml" || \
+   ! grep -Eq '^goenv_version:[[:space:]]+[0-9a-f]{40}$' \
+  "${ROOT_DIR}/ansible/group_vars/all.yml" || \
+   ! grep -Eq '^nvm_version:[[:space:]]+[0-9a-f]{40}$' \
   "${ROOT_DIR}/ansible/group_vars/all.yml"; then
-  echo "错误：Oh My Zsh 或 Linuxbrew 没有固定到不可变提交。" >&2
+  echo "错误：Oh My Zsh、Linuxbrew、goenv 或 NVM 没有固定到不可变提交。" >&2
   exit 1
 fi
 

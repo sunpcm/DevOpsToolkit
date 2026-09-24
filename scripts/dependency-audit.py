@@ -71,6 +71,8 @@ def build_report(root: Path) -> tuple[str, list[str]]:
         errors.append("release.yml COSIGN_VERSION does not match install.sh")
     if not COMMIT_RE.fullmatch(values["NVM"]):
         errors.append("nvm_version is not an immutable 40-character commit")
+    if not COMMIT_RE.fullmatch(values["goenv"]):
+        errors.append("goenv_version is not an immutable 40-character commit")
 
     collection_rows: list[str] = []
     for entry in sorted(collections, key=lambda item: item["name"]):
@@ -146,7 +148,7 @@ def build_report(root: Path) -> tuple[str, list[str]]:
 | Cosign | `{cosign}` | https://github.com/sigstore/cosign/releases |
 | uv | `{values['uv']}` | https://github.com/astral-sh/uv/releases |
 | NVM | `{values['NVM']}` | https://github.com/nvm-sh/nvm/commits/master/ |
-| goenv | `{values['goenv']}` | https://github.com/go-nv/goenv/releases |
+| goenv | `{values['goenv']}` | https://github.com/go-nv/goenv/commit/{values['goenv']} |
 | Go | `{values['Go']}` | https://go.dev/dl/ |
 | Node LTS | `{values['Node LTS']}` | https://nodejs.org/en/about/previous-releases |
 
