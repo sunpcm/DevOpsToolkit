@@ -16,10 +16,20 @@
   `release` Environment 无保护规则，Release 未启用 immutable，Actions 未强制 SHA pin，
   Dependabot alerts/security updates 未启用；后续须重新认证并复核，不能将旧快照当成现状。
 - 静态验证通过不等于真实 VM、升级回滚、SSH 登录切换或 ACME 证书续期已经完成验收。
+- 2026-09-24 起暂缓 `AcmeConfig/` 的真实 CA/DNS 与独立仓库工作：它不在主线 Release 包中，
+  其真实 CA 门槛不阻塞主线开发与发布，已有静态检查仍保留；但在自身真实环境验收完成前
+  不得用于生产或宣称生产就绪。
+
+## 当前执行顺序
+
+1. P0-2：GitHub 发布控制面；待 `gh` 重新认证后先只读复核，再按获准范围落实设置。
+2. P0-3：独立复核控制端基线并取得同 SHA 远端 Validate/正式 Release 证据。
+3. P1/P2：继续可独立验收的运行安全、回归、升级回滚与文档工作。
+4. 暂缓范围：P0-1 ACME 真实签发与续期、P2 ACME 独立仓库迁移；不以静态或自签证据替代其上线门槛。
 
 ## P0：安全与发布阻塞项
 
-### P0-1：先隔离并重构 `AcmeConfig/`
+### P0-1：`AcmeConfig/`（暂缓，不是主线 Release 阻塞项）
 
 已完成的本地实现、静态检查与 Ubuntu 24.04 一次性 VM 证据见
 [`archive/progress/2026-09-22-acme-p0-1-vm.md`](archive/progress/2026-09-22-acme-p0-1-vm.md)。
@@ -32,7 +42,8 @@ DNS Token 的 argv 与失败输出泄漏修复、本地回归及 Ubuntu 22.04 `r
 当前/轮替日志健康检查、logrotate 身份修复、一次性 VM 实测及剩余门槛见
 [`archive/progress/2026-09-24-acme-p0-1-log-mode-vm.md`](archive/progress/2026-09-24-acme-p0-1-log-mode-vm.md)。
 这不是生产验收：既有部署 VM 仅使用自签证书模拟部署，本轮只证明离线客户端日志与
-轮替权限；均未通过真实 CA 签发。
+轮替权限；均未通过真实 CA 签发。以下条目保留为 ACME 独立上线前的硬门槛，
+按当前执行顺序暂不继续投入。
 
 - [ ] 以受控测试域名完成真正的 ACME 首次签发、DNS/webroot 挑战和模拟续期；验证 hook
       仅在证书真实更新后 reload 对应活动服务，且支持多个消费者。
@@ -154,7 +165,7 @@ latest/固定版本、签名校验、重复安装、普通用户入口及原子�
 - [ ] 在真实 WSL2 Ubuntu 24.04 上验收安装器与 Playbook 的平台预检、首次及重复运行；
       本地 WSL1/非支持平台拒绝矩阵已实现，但模拟内核标记不替代真实 WSL2 启动证据。
 - [ ] 在新签名 Release 中验证安装器、向导和 Playbook 的 `--capabilities-json` 协议；本地实现与包测试不能证明远端资产已更新。
-- [ ] 在 P0-1 真实环境门槛通过后，将 `AcmeConfig/` 迁入受保护的独立仓库与签名 Release，迁移主线 CI/README 引用；不把证书生命周期塞进主线 Ansible role。
+- [ ] 暂缓：在 P0-1 真实环境门槛通过后，将 `AcmeConfig/` 迁入受保护的独立仓库与签名 Release，迁移主线 CI/README 引用；不把证书生命周期塞进主线 Ansible role。
 
 `AcmeConfig/` 维护边界已评估，迁移尚未执行，故上项仍开放。决策及验收顺序见
 [`docs/ACME_BOUNDARY.md`](docs/ACME_BOUNDARY.md)。
