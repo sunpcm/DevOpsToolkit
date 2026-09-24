@@ -493,6 +493,15 @@ raise SystemExit(0 if actual == expected else 1)
 PY
 }
 
+allows_legacy_galaxy_fallback() {
+  # Only these already-published, signed Releases predate bundled collections.
+  # A future tag without a bundle must fail closed, even if its VERSION is valid.
+  case "$1" in
+    v0.1.2|v0.1.3|v0.1.4|v0.1.5|v0.1.7) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 system_release_tree_valid() {
   local release_root="$1"
   python3 - "${release_root}" <<'PY'
@@ -591,15 +600,22 @@ install_release() {
     fi
   fi
 
-  if [[ -f "${collection_root}/.collections-ready" ]]; then
-    info "Ansible collections 已就绪，跳过安装"
-  elif [[ -f "${collection_root}/collections/.bundled-collections" ]]; then
+  local bundle_marker="${collection_root}/collections/.bundled-collections"
+  if [[ -f "${bundle_marker}" ]]; then
     if ! bundled_collections_valid \
       "${collection_root}/collections" \
       "${collection_root}/ansible/collections.lock.json"; then
       [[ "${collection_root}" != "${staging_dir}" ]] || rm -rf "${staging_dir}"
       fail "Release 内置 Ansible collections 不完整，current 未切换。"
     fi
+  elif ! allows_legacy_galaxy_fallback "${release_version}"; then
+    [[ "${collection_root}" != "${staging_dir}" ]] || rm -rf "${staging_dir}"
+    fail "版本 ${release_version} 缺少内置 Ansible collections 标记，拒绝回退到 Galaxy。"
+  fi
+
+  if [[ -f "${collection_root}/.collections-ready" ]]; then
+    info "Ansible collections 已就绪，跳过安装"
+  elif [[ -f "${bundle_marker}" ]]; then
     info "使用 Release 内置 Ansible collections"
     printf '%s\n' "${verified_sha}" >"${collection_root}/.collections-ready"
   else

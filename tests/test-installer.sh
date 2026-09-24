@@ -196,13 +196,15 @@ mkdir -p "${HOME}"
 RELEASE_V1="${TMP_DIR}/release-v1"
 RELEASE_V2="${TMP_DIR}/release-v2"
 RELEASE_LEGACY="${TMP_DIR}/release-legacy"
+RELEASE_MISSING_BUNDLE="${TMP_DIR}/release-missing-bundle"
 RELEASE_INVALID_BUNDLE="${TMP_DIR}/release-invalid-bundle"
 RELEASE_INVALID_MARKER="${TMP_DIR}/release-invalid-marker"
 RELEASE_INVALID_LOCK="${TMP_DIR}/release-invalid-lock"
 RELEASE_WORLD_WRITABLE="${TMP_DIR}/release-world-writable"
 make_release v0.1.0 "${RELEASE_V1}"
 make_release v0.2.0 "${RELEASE_V2}"
-make_release v0.0.9 "${RELEASE_LEGACY}" legacy
+make_release v0.1.7 "${RELEASE_LEGACY}" legacy
+make_release v0.1.8 "${RELEASE_MISSING_BUNDLE}" legacy
 make_release v0.3.0 "${RELEASE_INVALID_BUNDLE}" invalid-bundle
 make_release v0.3.1 "${RELEASE_INVALID_MARKER}" invalid-marker
 make_release v0.3.2 "${RELEASE_INVALID_LOCK}" invalid-lock
@@ -373,21 +375,34 @@ LEGACY_HOME="${TMP_DIR}/legacy-home"
 mkdir -p "${LEGACY_HOME}"
 galaxy_before="$(wc -l <"${DEVOPS_TOOLKIT_TEST_GALAXY_LOG}" | tr -d ' ')"
 HOME="${LEGACY_HOME}" DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${RELEASE_LEGACY}" \
-  "${INSTALLER}" --user --no-run --version v0.0.9 >/dev/null
+  "${INSTALLER}" --user --no-run --version v0.1.7 >/dev/null
 galaxy_after="$(wc -l <"${DEVOPS_TOOLKIT_TEST_GALAXY_LOG}" | tr -d ' ')"
 [[ "$((galaxy_after - galaxy_before))" == "1" ]] || \
   fail "旧版 Release 没有调用 Galaxy 兼容安装"
+
+# A new signed release cannot silently lose its bundle and fetch from Galaxy.
+MISSING_BUNDLE_HOME="${TMP_DIR}/missing-bundle-home"
+mkdir -p "${MISSING_BUNDLE_HOME}"
+galaxy_before="$(wc -l <"${DEVOPS_TOOLKIT_TEST_GALAXY_LOG}" | tr -d ' ')"
+if HOME="${MISSING_BUNDLE_HOME}" DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${RELEASE_MISSING_BUNDLE}" \
+  "${INSTALLER}" --user --no-run --version v0.1.8 >/dev/null 2>&1; then
+  fail "新版 Release 缺少 bundle 标记时未被拒绝"
+fi
+galaxy_after="$(wc -l <"${DEVOPS_TOOLKIT_TEST_GALAXY_LOG}" | tr -d ' ')"
+[[ "${galaxy_after}" == "${galaxy_before}" ]] || fail "新版 Release 缺标记时调用了 Galaxy"
+[[ ! -e "${MISSING_BUNDLE_HOME}/.local/share/devops-toolkit/current" ]] || \
+  fail "新版 Release 缺标记时切换了 current"
 
 # A legacy collection failure must not publish or activate a partial version.
 FAILED_HOME="${TMP_DIR}/failed-home"
 mkdir -p "${FAILED_HOME}"
 if HOME="${FAILED_HOME}" DEVOPS_TOOLKIT_TEST_GALAXY_FAIL=1 \
   DEVOPS_TOOLKIT_DOWNLOAD_BASE="file://${RELEASE_LEGACY}" \
-  "${INSTALLER}" --user --no-run --version v0.0.9 >/dev/null 2>&1; then
+  "${INSTALLER}" --user --no-run --version v0.1.7 >/dev/null 2>&1; then
   fail "collection 安装失败未传递错误"
 fi
 [[ ! -e "${FAILED_HOME}/.local/share/devops-toolkit/current" ]] || fail "失败安装切换了 current"
-[[ ! -e "${FAILED_HOME}/.local/share/devops-toolkit/releases/v0.0.9" ]] || fail "失败安装发布了不完整版本"
+[[ ! -e "${FAILED_HOME}/.local/share/devops-toolkit/releases/v0.1.7" ]] || fail "失败安装发布了不完整版本"
 
 # Non-TTY execution installs but never starts the wizard.
 NON_TTY_HOME="${TMP_DIR}/non-tty-home"

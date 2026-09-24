@@ -89,6 +89,9 @@ Environment 仍无保护规则。随后完成并回查的控制面设置、一�
 [`archive/progress/2026-09-24-p0-3-current-branch-local-review.md`](archive/progress/2026-09-24-p0-3-current-branch-local-review.md)。
 已固定 Python 3.12–3.14 / core 2.21.4、隔离 venv、22.04 目标边界及三项 collections，
 并更新 README、安装/交互文档和 CI 定义。当前是已推送但未合并的草稿 PR 分支。
+安装器对未来版本缺失 collection bundle 的 Galaxy 回退已改为拒绝；仅五个已发布的
+旧版本保留精确兼容名单。证据见
+[`archive/progress/2026-09-24-bundle-fallback-allowlist.md`](archive/progress/2026-09-24-bundle-fallback-allowlist.md)。
 
 - [ ] 文档修订前 `c07c986` 的精确 push 检查与 PR 模拟合并检查中 quality、Python
       3.12/3.14 均已通过；合并前仍须独立复核 PR 内容，并在最终合并 SHA 上重新确认门禁结果。
