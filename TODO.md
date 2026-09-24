@@ -140,8 +140,9 @@ SSH finalize 在 UFW 更新失败时的新端口保活与恢复证据见
 PR 编排测试、双版本本地 VM smoke、报告及失败清理代码已有本地证据；以下验收项在
 真实 PR、受保护 Environment 与新 Release 实际运行前保持开放。
 
-- [ ] 草稿 PR #2 已在同一 SHA 上取得 Python 3.12/3.14 Validate 成功结果；合并前继续
-      核对最终 SHA，避免后续提交使先前结果失效。
+- [ ] 草稿 PR #2 已取得 Python 3.12/3.14 Validate 成功结果；push 检查精确候选提交，
+      PR 检查默认检验候选与 `main` 的合并结果。合并前继续核对最终候选 SHA，避免后续
+      提交使先前结果失效。
 - [ ] 每次发布前在隔离主机针对候选 SHA 运行一次性 Ubuntu 22.04/24.04 VM，覆盖首次收敛、
       二次 `changed=0`、SSH/UFW/Docker/Nginx 与故障恢复；保留 8 天内的报告原件和 SHA256。
 - [ ] 核验报告准确记录镜像、来源 SHA、Ansible 版本、结果和清理状态；失败时实例仍清理，

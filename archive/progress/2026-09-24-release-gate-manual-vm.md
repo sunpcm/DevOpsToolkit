@@ -46,6 +46,9 @@ ShellCheck `SC2119/SC2120` 失败；修正调用方式后，`ec06cc4abaa6918c440
 [PR Validate](https://github.com/sunpcm/DevOpsToolkit/actions/runs/35946597109) 均成功，
 包括 quality、Python 3.12/3.14 + core 2.21.4。修复后本地完整
 `./tests/verify-ansible.sh` 与全部活跃 Shell 脚本的 ShellCheck 亦通过。
+这里的 push workflow 检验精确分支提交；GitHub 的 `pull_request` 默认 checkout
+`refs/pull/2/merge`，检验的是该候选与 `main` 的模拟合并提交，不应误称两次运行都
+checkout 了相同的 commit SHA。
 
 确认真实 check 名称及来源 GitHub Actions App ID `15368` 后，更新 `main` ruleset
 `23913370`：要求 `quality`、`validate (3.12, 2.21.4)`、
