@@ -222,6 +222,7 @@ grep -F 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02' \
   "${WORKFLOW}" >/dev/null
 grep -F 'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093' \
   "${WORKFLOW}" >/dev/null
+grep -F 'retention-days: 8' "${WORKFLOW}" >/dev/null
 grep -F 'DEVOPS_TOOLKIT_COLLECTIONS_SOURCE:' "${WORKFLOW}" >/dev/null
 grep -F 'DEVOPS_TOOLKIT_COLLECTION_ARTIFACTS:' "${WORKFLOW}" >/dev/null
 grep -F 'ansible-galaxy collection download' "${WORKFLOW}" >/dev/null

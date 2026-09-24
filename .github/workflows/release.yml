@@ -76,7 +76,8 @@ jobs:
           name: release-collections-${{ github.sha }}
           path: ${{ runner.temp }}/release-inputs
           if-no-files-found: error
-          retention-days: 1
+          # Match the manual VM report's eight-day validity window.
+          retention-days: 8
 
       - name: Show manual VM approval checklist
         run: |
