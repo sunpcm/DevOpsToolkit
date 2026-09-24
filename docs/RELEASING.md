@@ -24,24 +24,32 @@ git status --short                 # 应为空
 `release.yml` 会在同一 tag SHA 上调用完整 `env-check.yml`，quality 与 Ansible/Python 矩阵任一失败都会
 阻止发布；另一个 push 事件触发的 Validate 运行不能替代这条同 SHA 门禁。
 
-推 tag 前还必须为将要发布的精确 commit 取得 8 天内的真实 VM 报告。合并候选提交后，在带
-`self-hosted,multipass` 标签的专用可信 runner 上手工触发（或等待同 SHA 的每周任务）：
+推 tag 前还必须在隔离测试主机上，为将要发布的精确 commit 手工运行一次性 VM 验收。
+该主机须事先具备 Multipass、SSH、Python 3.12–3.14、ansible-core 2.21.4 和已锁定的
+collections；新增安装需事先获得机主同意。切到干净的候选提交后执行：
 
 ```bash
-RELEASE_SHA="$(git rev-parse origin/main)"
-gh workflow run vm-smoke.yml --ref main
-gh run watch "$(gh run list --workflow='VM smoke' --commit "${RELEASE_SHA}" \
-  --limit 1 --json databaseId --jq '.[0].databaseId')"
+RELEASE_SHA="$(git rev-parse HEAD)"
+test -z "$(git status --porcelain)" || exit 1
+test "${RELEASE_SHA}" = "$(git rev-parse origin/main)" || exit 1
+REPORT_FILE="$(mktemp "${TMPDIR:-/tmp}/devops-toolkit-vm-report.XXXXXX")"
+./tests/multipass-smoke.sh run --with-faults --report "${REPORT_FILE}"
+python3 scripts/verify-vm-evidence.py verify-report \
+  --report "${REPORT_FILE}" --sha "${RELEASE_SHA}"
+shasum -a 256 "${REPORT_FILE}"
 ```
 
-必须确认报告为 `result=passed`、`source_sha=${RELEASE_SHA}`、`source_dirty=false`、
-`test_faults=1` 和 `cleanup_status=passed`。没有安全可用的 Multipass runner 时不得用容器或 syntax
-check 代替；先在隔离主机手工运行 `tests/multipass-smoke.sh ... --report` 审核环境，再接入专用 runner。
-远端 Release gate 没有同 SHA artifact 时仍会 fail closed。
+保留原始报告及其 SHA256 到受控发布记录，不要提交含敏感信息的运行日志。检查报告中的
+`result=passed`、`source_sha=${RELEASE_SHA}`、`source_dirty=false`、`test_faults=1`、
+`cleanup_status=passed`，并确认清理后不存在遗留测试实例。报告必须在 8 天内；如果候选提交
+改变、报告过期、环境不同或失败，重新跑验收。没有安全可用的一次性 VM 时停止发布，不能用容器
+或 syntax check 代替。
 
 ## 发布步骤
 
-完成上述同 SHA VM gate 后，只做两件事：打 tag、推 tag。
+完成上述同 SHA VM 验收后，打 tag、推 tag，并在 GitHub 的 `release` Environment 待审批阶段
+再次核对报告原件、报告 SHA256、来源 SHA 与 tag SHA。只有证据一致且同 SHA CI 通过，审批人
+才批准；不能为了解除等待而直接批准。单维护者自审只是人工暂停点，不是独立第二人复核。
 
 ```bash
 # 版本号遵循 vMAJOR.MINOR.PATCH；v0.1.8 仅是当前示例，使用前确认未被占用。
@@ -61,8 +69,9 @@ git push origin "${VERSION}"
 git tag -s "${VERSION}" origin/main -m "DevOpsToolkit ${VERSION}"
 ```
 
-推送后工作流会：先验证同 SHA 的近期 VM smoke artifact → 下载并按 lock SHA256 验证固定 collection 归档 → 从归档安装并运行 `verify-ansible.sh` →
-将原始归档和已验证 collections 传给全新 release runner → 构建固定名产物 → Cosign 用 GitHub OIDC 签名 → 自校验 Sigstore 身份与打包版本 →
+推送后工作流会：下载并按 lock SHA256 验证固定 collection 归档 → 从归档安装并运行 `verify-ansible.sh` →
+将原始归档和已验证 collections 传给全新 release runner → 等待受保护 Environment 的人工审批 →
+构建固定名产物 → Cosign 用 GitHub OIDC 签名 → 自校验 Sigstore 身份与打包版本 →
 创建 Release 并上传三个资产。release runner 本身不会从 PyPI 或 Ansible Galaxy 安装依赖。
 
 ## 发布后验证

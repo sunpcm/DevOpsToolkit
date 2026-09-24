@@ -225,9 +225,13 @@ grep -F 'actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093' \
 grep -F 'DEVOPS_TOOLKIT_COLLECTIONS_SOURCE:' "${WORKFLOW}" >/dev/null
 grep -F 'DEVOPS_TOOLKIT_COLLECTION_ARTIFACTS:' "${WORKFLOW}" >/dev/null
 grep -F 'ansible-galaxy collection download' "${WORKFLOW}" >/dev/null
-grep -F 'needs: [quality, vm-evidence]' "${WORKFLOW}" >/dev/null
-grep -F "head_sha=\${GITHUB_SHA}" "${WORKFLOW}" >/dev/null
-grep -F 'scripts/verify-vm-evidence.py verify-report' "${WORKFLOW}" >/dev/null
+grep -F 'needs: quality' "${WORKFLOW}" >/dev/null
+grep -F 'needs: validate' "${WORKFLOW}" >/dev/null
+grep -F 'environment: release' "${WORKFLOW}" >/dev/null
+if grep -Eq 'vm-evidence|vm-smoke.yml|self-hosted' "${WORKFLOW}"; then
+  echo "错误：Release workflow 仍依赖自托管 VM runner。" >&2
+  exit 1
+fi
 if grep -F 'DEVOPS_TOOLKIT_TEST_COLLECTION_LOCK' "${WORKFLOW}"; then
   echo "错误：Release workflow 启用了仅供测试使用的 lock 覆盖。" >&2
   exit 1

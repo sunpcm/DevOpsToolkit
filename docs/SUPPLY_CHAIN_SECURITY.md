@@ -20,8 +20,9 @@ Release 包含三个固定名称资产：
 2. 在无发布权限的 job 中下载固定版本 Ansible collection 原始归档，按
    `ansible/collections.lock.json` 校验文件名、SHA256 和内部 manifest，再从这些已校验归档安装依赖；
    原始归档和安装目录一起保存为仅保留一天的 workflow artifact。
-3. 验证通过后，在全新 runner 上重新 checkout 同一 tag，只恢复上一步验证过的 collections；有发布权限的
-   构建 job 不运行 PyPI 或 Ansible Galaxy 安装。
+3. 验证通过后，等待受保护 `release` Environment 人工审批；审批人核对当次一次性 VM 报告
+   原件、SHA256、来源 SHA 与同 SHA CI。通过后在全新 runner 上重新 checkout 同一 tag，
+   只恢复上一步验证过的 collections；有发布权限的构建 job 不运行 PyPI 或 Ansible Galaxy 安装。
 4. 构建脚本再次核对原始归档 SHA256、`requirements.yml`、安装后 manifest、精确版本和完整集合，
    再把 lock、collections 与绑定 lock 摘要的 marker 写入最终 tarball；签名覆盖整个产物。
 5. 下载固定版本 Cosign，使用仓库内固定的 SHA256 校验二进制。
@@ -56,15 +57,16 @@ Release 包含三个固定名称资产：
 
 `Settings` → `Environments` → `New environment` → 输入 `release`
 
-建议设置：
+必须设置：
 
-- Required reviewers：至少一名可信维护者。
+- Required reviewers：至少一名可信维护者；审批前执行[发布流程](RELEASING.md)中的一次性 VM 验收。
 - Prevent self-review：有第二名维护者时开启；单人仓库开启后会无法自行发布。
 - Deployment branches and tags：只允许受保护的 `v*` tags。
 
 Release workflow 已引用该 Environment。Environment 不需要配置 Cosign 私钥或 Secret。
 
-必须在推送首个 `v*` tag 前完成这一步，否则发布 job 可能等待审批或因 Environment 策略不完整而无法发布。
+必须在推送新 `v*` tag 前完成这一步；仅创建同名空 Environment 不构成保护。单维护者
+自审是可执行的人工暂停点，不提供独立第二人复核；有第二名维护者时开启防自审。
 
 ### 3. 保护 `main`
 

@@ -14,39 +14,6 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  vm-evidence:
-    runs-on: ubuntu-24.04
-    permissions:
-      actions: read
-      contents: read
-    steps:
-      - name: Checkout release commit for evidence verification
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-
-      - name: Require recent VM smoke for this exact commit
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          runs_file="${RUNNER_TEMP}/vm-smoke-runs.json"
-          runs_url="repos/${GITHUB_REPOSITORY}/actions/workflows/vm-smoke.yml/runs"
-          runs_url="${runs_url}?head_sha=${GITHUB_SHA}&status=success&per_page=20"
-          gh api "${runs_url}" >"${runs_file}"
-          run_id="$(python3 scripts/verify-vm-evidence.py select-run \
-            --runs "${runs_file}" --sha "${GITHUB_SHA}" --max-age-days 8)"
-          test -n "${run_id}" || {
-            echo "错误：当前 commit 没有 8 天内成功的 VM smoke 证据。" >&2
-            exit 1
-          }
-          mkdir "${RUNNER_TEMP}/vm-evidence"
-          gh run download "${run_id}" \
-            --repo "${GITHUB_REPOSITORY}" \
-            --name "vm-smoke-${GITHUB_SHA}" \
-            --dir "${RUNNER_TEMP}/vm-evidence"
-          report="${RUNNER_TEMP}/vm-evidence/vm-smoke-report.txt"
-          python3 scripts/verify-vm-evidence.py verify-report \
-            --report "${report}" --sha "${GITHUB_SHA}"
-          cat "${report}" >>"${GITHUB_STEP_SUMMARY}"
-
   quality:
     # Reuse the exact Validate quality + Ansible matrix at this tag's SHA.
     # A separate push-triggered Validate run is not a release gate.
@@ -55,7 +22,7 @@ jobs:
       contents: read
 
   validate:
-    needs: [quality, vm-evidence]
+    needs: quality
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout tag
@@ -111,9 +78,21 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      - name: Show manual VM approval checklist
+        run: |
+          {
+            echo "## 发布审批前必须人工核对"
+            echo "- 来源 SHA：\`${GITHUB_SHA}\`；tag：\`${GITHUB_REF_NAME}\`。"
+            echo "- 核对这次发布的隔离 VM 报告原件及 SHA256，不接受历史报告或口头确认。"
+            echo "- 报告须在 8 天内、同 SHA、22.04/24.04、故障测试和清理均通过。"
+            echo "- 缺少证据或不一致时，拒绝 release Environment 审批。"
+          } >>"${GITHUB_STEP_SUMMARY}"
+
   release:
     needs: validate
     runs-on: ubuntu-24.04
+    # The protected environment is the mandatory human gate after same-SHA CI.
+    # Reviewers must check the one-time VM report before approving this job.
     environment: release
     permissions:
       contents: write

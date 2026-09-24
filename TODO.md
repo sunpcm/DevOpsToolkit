@@ -22,7 +22,7 @@
 
 ## 当前执行顺序
 
-1. P0-2：GitHub 发布控制面；待 `gh` 重新认证后先只读复核，再按获准范围落实设置。
+1. P0-2：GitHub 发布控制面；`gh` 已由用户重新认证，先只读复核再小步落实设置。
 2. P0-3：独立复核控制端基线并取得同 SHA 远端 Validate/正式 Release 证据。
 3. P1/P2：继续可独立验收的运行安全、回归、升级回滚与文档工作。
 4. 暂缓范围：P0-1 ACME 真实签发与续期、P2 ACME 独立仓库迁移；不以静态或自签证据替代其上线门槛。
@@ -61,18 +61,20 @@ DNS Token 的 argv 与失败输出泄漏修复、本地回归及 Ubuntu 22.04 `r
 [`archive/progress/2026-09-23-github-p0-2-readonly-audit.md`](archive/progress/2026-09-23-github-p0-2-readonly-audit.md)。
 首次审计时，规则集、release 环境、immutable releases、Actions 限制及 Dependabot 均未启用；
 本地 workflow 代码不等于远端设置生效。
-同日后续无凭据复核再次看到 rulesets 为空；其余设置因本机 `gh` 凭据失效、API 返回
-401 未能重新验证，不能把首次审计结果当成持续有效的现状。
+2026-09-24 用户重新认证后，当前会话在沙箱外只读确认 rulesets 仍为空、`release`
+Environment 仍无保护规则。随后完成并回查的控制面设置、一次性 VM 方案与剩余边界见
+[`archive/progress/2026-09-24-release-gate-manual-vm.md`](archive/progress/2026-09-24-release-gate-manual-vm.md)。
 同一 tag SHA 的完整质量门禁、`origin/main` 祖先校验、Release 来源 SHA 记录已在
 `.github/workflows/release.yml` 实现；固定安装器 commit 与 SHA256 的示例见
 [`docs/SUPPLY_CHAIN_SECURITY.md`](docs/SUPPLY_CHAIN_SECURITY.md)。这些实现仍须随新版本在远端实际验收。
 
-- [ ] 为 `main` 建立 branch ruleset：禁止 force push/deletion，要求 Validate 必需检查；有第二维护者时再要求 approval 和防自审。
-- [ ] 为 `v*` 建立 tag ruleset：限制创建者，禁止更新和删除已发布 tag。
-- [ ] 为 `release` Environment 配置允许的 tag、审批或等价发布约束；不能继续保持空保护规则。
-- [ ] 启用 immutable releases。已有非 immutable Release 保留历史状态；后续使用新版本号发布，不复用旧 tag。
-- [ ] 将 Actions 限制为 GitHub 官方和显式审核的 Action，并在仓库设置中强制完整 commit SHA pin。
-- [ ] 启用 Dependabot alerts/security updates；另行使用 Renovate regex manager 或自有脚本维护非标准 YAML/Shell 版本与 SHA256。
+- [ ] `main` 已禁止 force push/deletion；新 Validate 矩阵在远端跑通后再配置必需检查。
+      有第二维护者时再要求 approval 和防自审，避免单人仓库被锁死。
+- [ ] `v*` 已禁止更新/删除；在首次新 tag 发布中验证创建与 Environment 限制均按预期工作。
+- [ ] `release` Environment 已限制 `v*` 并要求 `sunpcm` 审批；在新 Release 中核实审批
+      真正阻止发布，并由审批人核对当次同 SHA VM 报告原件与 SHA256。
+- [ ] 已启用 immutable releases、官方 Action allowlist/完整 SHA pin、Dependabot alerts/
+      security updates；在新 Release/PR 中验证不会误阻 CI，非标准 YAML/Shell 依赖审计仍人工维护。
 - [ ] 在新版本的真实 Release 中确认同 SHA 质量门禁、main 祖先检查、Source commit 记录及固定 commit 安装入口按预期生效；本地 workflow 和示例不能代替远端执行。
 
 验收证据：GitHub API 显示 rulesets、Environment protection、immutable 和 Actions 限制均已生效；创建测试 tag 时只有受保护路径可发布；
@@ -123,8 +125,9 @@ Shell 关闭但语言工具开启、Oh My Zsh 约束及 user-only 依赖例外�
 
 ### P1-4：自动化真实环境回归
 
-本地代码提交 `b41a1e6` 已增加 PR 阶段编排测试、专用 Multipass runner workflow、机器可读报告、
-失败清理与 Release 同 SHA 报告门禁。早期网络失败与自动清理见
+本地代码提交 `b41a1e6` 曾增加 PR 阶段编排测试、专用 Multipass runner workflow、机器可读报告、
+失败清理与 Release 同 SHA 报告门禁；用户现已选择改为每次发布前手工一次性 VM 验收加受保护
+Environment 审批，不再维护每周自托管 runner。早期网络失败与自动清理见
 [`archive/progress/2026-09-23-vm-p1-4-first-run.md`](archive/progress/2026-09-23-vm-p1-4-first-run.md)；
 从干净提交 `f40192f` 经一次性 VM 代理完成的 22.04/24.04 首次配置、二次 `changed=0`、
 SSH/UFW/Docker/Nginx 和故障恢复见
@@ -133,19 +136,20 @@ SSH/UFW/Docker/Nginx 和故障恢复见
 [`archive/progress/2026-09-23-ssh-p1-1-final-vm.md`](archive/progress/2026-09-23-ssh-p1-1-final-vm.md)。
 SSH finalize 在 UFW 更新失败时的新端口保活与恢复证据见
 [`archive/progress/2026-09-23-ssh-p1-1-guard-final.md`](archive/progress/2026-09-23-ssh-p1-1-guard-final.md)。
-PR 编排测试、双版本本地 VM smoke、专用 runner workflow、报告及失败清理代码均已有
-本地证据；以下验收项在远端 runner、PR 与 Release gate 实际运行前保持开放。
+PR 编排测试、双版本本地 VM smoke、报告及失败清理代码已有本地证据；以下验收项在
+真实 PR、受保护 Environment 与新 Release 实际运行前保持开放。
 
 - [ ] 在真实 PR 的同一 SHA 上取得 Python 3.12/3.14 Validate 结果，确认 role/向导组合测试随 PR
       自动运行，而不只依赖本地静态检查。
-- [ ] 接入可信的专用 `self-hosted,multipass` runner，在每周计划任务及发布前实际运行
-      Ubuntu 22.04/24.04 首次收敛、二次 `changed=0`、SSH/UFW/Docker/Nginx 和故障恢复。
-- [ ] 核验远端报告准确记录镜像、来源 SHA、Ansible 版本、结果和清理状态；注入失败时报告仍上传、
-      测试实例仍清理，且缺少近期同 SHA 成功报告会阻止 Release。
-- [ ] 在 runner 未就绪时保留明确的手工真实 VM release gate；不得以容器 syntax check
-      或本地历史报告冒充远端 systemd/UFW/SSH E2E。
+- [ ] 每次发布前在隔离主机针对候选 SHA 运行一次性 Ubuntu 22.04/24.04 VM，覆盖首次收敛、
+      二次 `changed=0`、SSH/UFW/Docker/Nginx 与故障恢复；保留 8 天内的报告原件和 SHA256。
+- [ ] 核验报告准确记录镜像、来源 SHA、Ansible 版本、结果和清理状态；失败时实例仍清理，
+      报告失败或缺失时审批人拒绝 Release。不能用容器 syntax check 或历史报告替代。
+- [ ] 在新 Release 实际验证同 SHA CI 通过后进入受保护审批，审批人核对报告原件、摘要、
+      tag SHA 与候选 SHA 后才批准；单人自审不是独立复核。
 
-验收证据：计划任务和 release gate 都能产出可追溯报告；实例无论成功或失败都会安全清理，失败阻止发布。
+验收证据：每次发布保存可追溯的本地报告和审批记录；实例无论成功或失败都会安全清理，
+证据缺失或失败时不得批准发布。GitHub 无法自动证明本地报告真实性，此门槛依赖人工执行。
 
 ### P1-5：完成真实升级与回滚闭环
 

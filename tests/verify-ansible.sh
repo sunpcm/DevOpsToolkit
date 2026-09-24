@@ -92,27 +92,18 @@ fi
 
 release_workflow="${ROOT_DIR}/.github/workflows/release.yml"
 if ! grep -Fq 'uses: ./.github/workflows/env-check.yml' "${release_workflow}" || \
-   ! grep -Fq 'needs: [quality, vm-evidence]' "${release_workflow}" || \
+   ! grep -Fq 'needs: quality' "${release_workflow}" || \
+   ! grep -Fq 'needs: validate' "${release_workflow}" || \
+   ! grep -Fq 'environment: release' "${release_workflow}" || \
    ! grep -Fq "git merge-base --is-ancestor \"\${GITHUB_SHA}\" refs/remotes/origin/main" \
      "${release_workflow}" || \
    ! grep -Fq -- "--notes \"Source commit: \${GITHUB_SHA}\"" "${release_workflow}"; then
   echo "错误：Release 未对同一 SHA 执行完整质量门禁、main 祖先检查或记录来源 SHA。" >&2
   exit 1
 fi
-vm_smoke_workflow="${ROOT_DIR}/.github/workflows/vm-smoke.yml"
-if ! grep -Fq 'runs-on: [self-hosted, multipass]' "${vm_smoke_workflow}" || \
-   ! grep -Fq 'cron: "23 4 * * 6"' "${vm_smoke_workflow}" || \
-   ! grep -Fq -- "--with-faults --report \"\${REPORT_FILE}\"" "${vm_smoke_workflow}" || \
-   ! grep -Fq 'if: always()' "${vm_smoke_workflow}" || \
-   ! grep -Fq "name: vm-smoke-\${{ github.sha }}" "${vm_smoke_workflow}"; then
-  echo "错误：真实 VM workflow 缺少专用 runner、计划任务、故障测试、清理或报告。" >&2
-  exit 1
-fi
-if ! grep -Fq 'actions: read' "${release_workflow}" || \
-   ! grep -Fq 'Checkout release commit for evidence verification' "${release_workflow}" || \
-   ! grep -Fq "head_sha=\${GITHUB_SHA}" "${release_workflow}" || \
-   ! grep -Fq 'scripts/verify-vm-evidence.py verify-report' "${release_workflow}"; then
-  echo "错误：Release 没有强制要求同 SHA、近期且已清理的 VM smoke 证据。" >&2
+if [[ -e "${ROOT_DIR}/.github/workflows/vm-smoke.yml" ]] || \
+   grep -Eq 'vm-evidence|vm-smoke.yml|self-hosted' "${release_workflow}"; then
+  echo "错误：Release 仍依赖每周自托管 VM runner。" >&2
   exit 1
 fi
 if grep -Fq -- '--break-system-packages' "${ROOT_DIR}/install.sh" || \

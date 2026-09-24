@@ -134,18 +134,12 @@ multipass list
 
 `cleanup` 会拒绝任何不符合临时命名规则的实例。
 
-## CI 与 Release 门禁
+## 一次性发布前 VM 验收
 
 GitHub-hosted 容器不能可靠提供 Multipass 所需的硬件虚拟化，不能用容器、syntax check 或 mocked systemd
-代替 SSH/UFW/Docker E2E。`.github/workflows/vm-smoke.yml` 因此只在带 `self-hosted` 和 `multipass`
-标签的专用可信 runner 上运行：每周六及手工触发，串行执行 Ubuntu 22.04/24.04、二次 `changed=0`
-和故障恢复，并在 `always()` 路径复核清理、上传只含元数据的报告。
-
-runner 必须是隔离的测试主机，预装 Multipass、SSH 和 Python 3.12–3.14，允许创建/删除严格命名的
-临时 VM；不得与生产工作负载、长期 Multipass 实例或不可信 PR 共用。workflow 会自行创建隔离的
-ansible-core 2.21.4 runtime，并按 collection lock 校验依赖。
-
-Release workflow 只接受同一 commit SHA、8 天内成功、`test_faults=1` 且
-`cleanup_status=passed` 的 VM smoke artifact。没有安全可用 runner 或没有这份证据时 Release 会
-fail closed；维护者必须先在隔离主机手工执行上述报告命令、审阅结果，并完成/接入专用 runner，不能
-用静态检查替代后直接发布。
+代替 SSH/UFW/Docker E2E。本仓库不再运行每周自托管 runner；每次发布前在隔离主机手工运行
+Ubuntu 22.04/24.04、二次 `changed=0` 与故障恢复，保存不含凭据的原始报告及 SHA256。
+`scripts/verify-vm-evidence.py` 检查报告的同 SHA、8 天内、通过、故障覆盖和清理结果；
+`release` Environment 的审批人再核对原件、SHA256、tag SHA 和同 SHA CI 后批准。
+这是一道人为门槛，GitHub 无法自动证明本地报告的真实性；审批缺席或证据不一致时必须拒绝发布。
+完整命令见[发布流程](RELEASING.md)。
