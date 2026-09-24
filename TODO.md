@@ -82,6 +82,8 @@ DNS Token 的 argv 与失败输出泄漏修复、本地回归及 Ubuntu 22.04 `r
 
 本地实现提交与真实 VM 证据见
 [`archive/progress/2026-09-22-ansible-p0-3-runtime.md`](archive/progress/2026-09-22-ansible-p0-3-runtime.md)。
+当前分支的锁定产物、完整本地门禁及临时构建复核见
+[`archive/progress/2026-09-24-p0-3-current-branch-local-review.md`](archive/progress/2026-09-24-p0-3-current-branch-local-review.md)。
 已固定 Python 3.12–3.14 / core 2.21.4、隔离 venv、22.04 目标边界及三项 collections，
 并更新 README、安装/交互文档和 CI 定义。当前仍是未发布的本地分支。
 
