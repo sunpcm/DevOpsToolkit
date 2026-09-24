@@ -176,8 +176,10 @@ sudo systemctl start acme-renew.service
 记录域名、owner、mode、时间和错误类型，不要输出 `/etc/acme/dns-config` 或私钥内容。
 
 健康检查会验证：账户组边界、目录与文件权限、上游来源 marker、systemd unit、证书
-PEM、符号链接和队列状态。失败项返回非零；缺少可选 DNS 配置、待处理或失败 marker
-属于警告。
+PEM、符号链接、队列状态，以及 `config/`、`logs/` 中当前/轮替 `*.log*` 的 owner、
+`0600` 模式和单硬链接边界。
+日志轮替显式使用 `su acme acme`，匹配 `config/` 的属主与写入边界。
+失败项返回非零；缺少可选 DNS 配置、待处理或失败 marker 属于警告。
 
 ## 安全卸载与回滚
 
@@ -218,6 +220,8 @@ shellcheck AcmeConfig/*.sh AcmeConfig/bin/*
 `AcmeConfig/tests/vm-smoke.sh` 是具有写入和测试服务创建行为的隔离 VM 用例，必须先
 在一次性 VM 上安装 `AcmeConfig/tests/throwaway-vm-marker.txt` 到
 `/etc/devops-toolkit-acme-test-vm`；不得在真实主机运行。
+`AcmeConfig/tests/vm-logrotate-smoke.sh` 使用同一标记，仅在 `config/` 下创建临时
+合成日志并使用独立状态文件，验证两次轮替、压缩及权限；不触碰真实日志。
 
 这些检查不能替代真实 VM 验收。临时 VM 至少要覆盖初始化、webroot/DNS 测试证书、
 强制续期、部署后 reload、staging/queue 攻击用例、备份卸载和恢复。生产启用还需要

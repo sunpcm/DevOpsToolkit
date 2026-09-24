@@ -1,6 +1,6 @@
 # DevOpsToolkit TODO
 
-> 更新日期：2026-09-23
+> 更新日期：2026-09-24
 >
 > 原则：这里只保留尚未完成、能够独立验收的工作。完成项及历史证据移入
 > [`archive/progress/`](archive/progress/)，不要让历史记录掩盖当前优先级。
@@ -29,8 +29,10 @@ DNS Token 的 argv 与失败输出泄漏修复、本地回归及 Ubuntu 22.04 `r
 [`archive/progress/2026-09-23-acme-p0-1-secret-argv.md`](archive/progress/2026-09-23-acme-p0-1-secret-argv.md)。
 交互式 acme.sh 子进程固定 `umask 0077` 的本地补强与剩余日志门槛见
 [`archive/progress/2026-09-23-acme-p0-1-log-umask.md`](archive/progress/2026-09-23-acme-p0-1-log-umask.md)。
-这不是生产验收：既有部署 VM 仅使用自签证书模拟部署，新检查只验证环境传递，
-均未通过真实 CA 签发。
+当前/轮替日志健康检查、logrotate 身份修复、一次性 VM 实测及剩余门槛见
+[`archive/progress/2026-09-24-acme-p0-1-log-mode-vm.md`](archive/progress/2026-09-24-acme-p0-1-log-mode-vm.md)。
+这不是生产验收：既有部署 VM 仅使用自签证书模拟部署，本轮只证明离线客户端日志与
+轮替权限；均未通过真实 CA 签发。
 
 - [ ] 以受控测试域名完成真正的 ACME 首次签发、DNS/webroot 挑战和模拟续期；验证 hook
       仅在证书真实更新后 reload 对应活动服务，且支持多个消费者。
@@ -84,9 +86,11 @@ DNS Token 的 argv 与失败输出泄漏修复、本地回归及 Ubuntu 22.04 `r
 
 ### P1-2：修正用户组件开关和依赖闭环
 
-本地实现提交 `c22645e`，静态门禁与 16 组开关矩阵见
+本地实现提交 `c22645e` 已完成下面各项代码改动；静态门禁与 16 组开关矩阵见
 [`archive/progress/2026-09-22-user-profile-p1-2.md`](archive/progress/2026-09-22-user-profile-p1-2.md)。
-干净 Ubuntu HOME 的两次收敛和新登录 Shell 验证尚未完成，以下条目继续保留为开放验收门槛。
+已拆分基础 Shell/Oh My Zsh，环境 loader 不再依赖 Shell 开关；向导约束、
+user-only 依赖重检、缺失共享 brew 的“警告并跳过”语义及对应本地测试均已实现。
+干净 Ubuntu HOME 的完整两次收敛和新登录 Shell 验证尚未完成，以下只保留开放验收门槛。
 Ubuntu 24.04 对“仅请求缺失的共享 brew”、关闭 loader、缺少 zsh 时的 fail-closed
 进行了部分真实 HOME 验证；结果与网络边界见
 [`archive/progress/2026-09-23-user-profile-p1-2-vm-partial.md`](archive/progress/2026-09-23-user-profile-p1-2-vm-partial.md)。
@@ -95,25 +99,14 @@ Ubuntu 24.04 对“仅请求缺失的共享 brew”、关闭 loader、缺少 zsh
 Shell 关闭但语言工具开启、Oh My Zsh 约束及 user-only 依赖例外的向导链路测试见
 [`archive/progress/2026-09-23-user-profile-p1-2-wizard-paths.md`](archive/progress/2026-09-23-user-profile-p1-2-wizard-paths.md)。
 
-- [ ] 拆分“管理基础 Shell 环境”与“安装 Oh My Zsh”；Node、Go、uv、Linuxbrew 环境加载不得隐式依赖 `configure_shell=true`。
-- [ ] 向导对不兼容组合给出约束或明确说明，并为全部关键开关组合增加测试。
-- [ ] user-only 按启用组件检查 `curl`/`wget` 等实际下载依赖；白名单安装后重新检查命令，不能直接假设 apt 成功等于依赖可用。
-- [ ] 明确 `configure_homebrew_environment=true` 但共享 brew 不存在时是跳过、警告还是失败，并保持幂等。
-- [ ] 为远程已有账户、仅密钥新账户、Shell 关闭但语言工具开启等路径增加向导单元测试。
+- [ ] 在 Ubuntu 22.04/24.04 的全新 HOME 覆盖基础 Shell/Oh My Zsh 开关、仅 uv、仅 Node、仅 Go、
+      缺失及存在的共享 brew、全部语言工具开启等关键组合；各执行两次，第二次 `changed=0`。
+- [ ] 用新登录 Bash/Zsh 验证所选工具可发现、未选 loader 不出现；完成因网络超时尚未证明的
+      uv 下载路径及 Node/Go/Oh My Zsh 真实安装验证。
+- [ ] 在一次性 VM 注入白名单 apt 返回成功但命令仍缺失的情形，证明依赖重检阻止继续修改 HOME；
+      安装测试依赖前须按用户要求取得明确同意。
 
 验收证据：每种受支持组合在干净 HOME 中执行两次，第二次 `changed=0`；新登录 Shell 能找到所选工具，未选工具不会被意外加载或删除。
-
-### P1-3：补齐第三方依赖完整性锁定
-
-- [x] 为 `ansible.posix`、`community.general` 等 collection 保存下载产物 SHA256；构建前验证 tarball，不只读取可被伪造的 `MANIFEST.json` 版本。
-- [x] 建立单一 lock manifest，生成或校验 `requirements.yml`、Release marker、安装器检查和测试夹具，删除多处手工重复版本。
-- [x] 明确 apt、Docker、Homebrew formula 属于滚动更新还是可复现安装；文档不得把“Git source 固定”表述成整个系统 bit-for-bit 可复现。
-- [x] 建立月度依赖审计：Ansible、collections、Cosign、uv、NVM、goenv、Go、Node LTS、Actions；更新必须走 PR、校验值复核和 VM smoke。
-
-验收证据：篡改 collection tarball、marker、manifest 或 checksum 任一项都会在发布前失败；依赖审计能生成只读报告，不自动合并高风险更新。
-
-本地实现提交 `306b1d4`；官方归档 SHA256、离线安装复核、篡改矩阵、完整静态门禁及未执行的
-远端边界见 [`archive/progress/2026-09-22-supply-chain-p1-3.md`](archive/progress/2026-09-22-supply-chain-p1-3.md)。
 
 ### P1-4：自动化真实环境回归
 
@@ -127,12 +120,17 @@ SSH/UFW/Docker/Nginx 和故障恢复见
 [`archive/progress/2026-09-23-ssh-p1-1-final-vm.md`](archive/progress/2026-09-23-ssh-p1-1-final-vm.md)。
 SSH finalize 在 UFW 更新失败时的新端口保活与恢复证据见
 [`archive/progress/2026-09-23-ssh-p1-1-guard-final.md`](archive/progress/2026-09-23-ssh-p1-1-guard-final.md)。
-以下验收项在远端 runner、PR 与 Release gate 实际运行前保持开放。
+PR 编排测试、双版本本地 VM smoke、专用 runner workflow、报告及失败清理代码均已有
+本地证据；以下验收项在远端 runner、PR 与 Release gate 实际运行前保持开放。
 
-- [ ] PR 阶段增加可快速运行的 role/向导组合测试；不得只测试少量辅助函数。
-- [ ] 每周或发布前在一次性 VM 运行 `tests/multipass-smoke.sh`：首次收敛、二次 `changed=0`、SSH/UFW、Docker/Nginx 和故障恢复。
-- [ ] 保持 Ubuntu 版本、Ansible 版本和测试实例严格隔离；测试报告记录镜像、SHA、结果和清理状态。
-- [ ] 在没有安全可用 VM runner 时，明确保留手工 release gate，不能用容器 syntax check 冒充 systemd/UFW/SSH E2E。
+- [ ] 在真实 PR 的同一 SHA 上取得 Python 3.12/3.14 Validate 结果，确认 role/向导组合测试随 PR
+      自动运行，而不只依赖本地静态检查。
+- [ ] 接入可信的专用 `self-hosted,multipass` runner，在每周计划任务及发布前实际运行
+      Ubuntu 22.04/24.04 首次收敛、二次 `changed=0`、SSH/UFW/Docker/Nginx 和故障恢复。
+- [ ] 核验远端报告准确记录镜像、来源 SHA、Ansible 版本、结果和清理状态；注入失败时报告仍上传、
+      测试实例仍清理，且缺少近期同 SHA 成功报告会阻止 Release。
+- [ ] 在 runner 未就绪时保留明确的手工真实 VM release gate；不得以容器 syntax check
+      或本地历史报告冒充远端 systemd/UFW/SSH E2E。
 
 验收证据：计划任务和 release gate 都能产出可追溯报告；实例无论成功或失败都会安全清理，失败阻止发布。
 
@@ -153,7 +151,8 @@ latest/固定版本、签名校验、重复安装、普通用户入口及原子�
 
 ## P2：维护性与文档一致性
 
-- [ ] 严格区分 WSL1/WSL2，并在任何 apt/system 变更前验证受支持的发行版、版本和架构。
+- [ ] 在真实 WSL2 Ubuntu 24.04 上验收安装器与 Playbook 的平台预检、首次及重复运行；
+      本地 WSL1/非支持平台拒绝矩阵已实现，但模拟内核标记不替代真实 WSL2 启动证据。
 - [ ] 在新签名 Release 中验证安装器、向导和 Playbook 的 `--capabilities-json` 协议；本地实现与包测试不能证明远端资产已更新。
 - [ ] 在 P0-1 真实环境门槛通过后，将 `AcmeConfig/` 迁入受保护的独立仓库与签名 Release，迁移主线 CI/README 引用；不把证书生命周期塞进主线 Ansible role。
 

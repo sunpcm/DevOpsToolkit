@@ -45,6 +45,8 @@ bash -n \
   "${ROOT_DIR}/AcmeConfig/acme-check.sh" \
   "${ROOT_DIR}/AcmeConfig/acme-cleanup.sh" \
   "${ROOT_DIR}/AcmeConfig/tests/vm-smoke.sh" \
+  "${ROOT_DIR}/AcmeConfig/tests/vm-logrotate-smoke.sh" \
+  "${ROOT_DIR}/AcmeConfig/tests/test-log-permissions.sh" \
   "${ROOT_DIR}/AcmeConfig/bin/acme-add" \
   "${ROOT_DIR}/AcmeConfig/bin/acme-list" \
   "${ROOT_DIR}/AcmeConfig/bin/acme-revoke"
@@ -70,6 +72,7 @@ python3 "${ROOT_DIR}/tests/test-user-profile.py"
 python3 "${ROOT_DIR}/tests/test-orchestration.py"
 python3 "${ROOT_DIR}/tests/test-vm-evidence.py"
 python3 "${ROOT_DIR}/AcmeConfig/tests/test_acme_manager.py"
+bash "${ROOT_DIR}/AcmeConfig/tests/test-log-permissions.sh"
 "${ROOT_DIR}/bin/devops-toolkit" --help >/dev/null
 [[ "$("${ROOT_DIR}/bin/devops-toolkit" --version)" == "development" ]]
 # 主推入口是 bash -c "$(curl ... install.sh)"，此时 BASH_SOURCE 为空；
@@ -173,6 +176,8 @@ if command -v shellcheck >/dev/null 2>&1; then
     "${ROOT_DIR}/AcmeConfig/acme-check.sh" \
     "${ROOT_DIR}/AcmeConfig/acme-cleanup.sh" \
     "${ROOT_DIR}/AcmeConfig/tests/vm-smoke.sh" \
+    "${ROOT_DIR}/AcmeConfig/tests/vm-logrotate-smoke.sh" \
+    "${ROOT_DIR}/AcmeConfig/tests/test-log-permissions.sh" \
     "${ROOT_DIR}/AcmeConfig/bin/acme-add" \
     "${ROOT_DIR}/AcmeConfig/bin/acme-list" \
     "${ROOT_DIR}/AcmeConfig/bin/acme-revoke"
@@ -180,6 +185,10 @@ fi
 
 acme_init="${ROOT_DIR}/AcmeConfig/acme-init.sh"
 acme_manager="${ROOT_DIR}/AcmeConfig/libexec/acme-manager"
+if ! grep -Fq '    su acme acme' "${ROOT_DIR}/AcmeConfig/logrotate/acme"; then
+  echo "错误：ACME 日志在 acme 可写目录中轮替，logrotate 必须以 acme 身份运行。" >&2
+  exit 1
+fi
 if grep -Fq 'get.acme.sh' "${acme_init}" || \
    ! grep -Fq 'ACME_SH_COMMIT="807da6498377ee5e0cf43a78091f46f12dc59a89"' "${acme_init}" || \
    ! grep -Fq 'ACME_SH_ARCHIVE_SHA256="ddbe1bcbd1a44a2623a2af167ebdc678669e6e2eb396742f2d1d28e02dc14220"' "${acme_init}"; then

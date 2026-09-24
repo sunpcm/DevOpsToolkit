@@ -117,6 +117,7 @@ check_filesystem() {
   check_path "${ACME_BASE}" dir root:root 755
   check_path "${ACME_BASE}/home" dir acme:acme 700
   check_path "${ACME_BASE}/config" dir acme:acme 700
+  check_path "${ACME_BASE}/logs" dir acme:acme 700
   check_path "${ACME_BASE}/staging" dir acme:acme 700
   check_path "${ACME_BASE}/deploy-queue" dir acme:acme 700
   check_path "${ACME_BASE}/deploy-failed" dir root:root 700
@@ -134,6 +135,28 @@ check_filesystem() {
   else
     warn "未配置 /etc/acme/dns-config；仅使用 webroot 时可忽略。"
   fi
+}
+
+check_client_logs() {
+  local config_dir="${1:-${ACME_BASE}/config}"
+  local expected_owner="${2:-acme:acme}"
+  local log_file links count=0
+  printf '\n== ACME 日志权限 ==\n'
+  if [[ ! -d "${config_dir}" || -L "${config_dir}" ]]; then
+    fail_check "ACME 日志目录缺失或类型不安全：${config_dir}"
+    return
+  fi
+  for log_file in "${config_dir}"/*.log*; do
+    [[ -e "${log_file}" || -L "${log_file}" ]] || continue
+    count=$((count + 1))
+    check_path "${log_file}" file "${expected_owner}" 600
+    [[ -f "${log_file}" && ! -L "${log_file}" ]] || continue
+    links="$(stat -c '%h' "${log_file}")"
+    if [[ "${links}" != 1 ]]; then
+      fail_check "ACME 日志硬链接数量不安全：${log_file}"
+    fi
+  done
+  printf '已检查 %s 个当前或轮替 ACME 日志文件。\n' "${count}"
 }
 
 check_source_pin() {
@@ -303,6 +326,8 @@ main() {
   }
   check_account_boundaries
   check_filesystem
+  check_client_logs "${ACME_BASE}/config"
+  check_client_logs "${ACME_BASE}/logs"
   check_source_pin
   check_systemd
   check_certificate_material
@@ -312,4 +337,6 @@ main() {
   ((FAILURES == 0))
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
