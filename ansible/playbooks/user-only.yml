@@ -45,23 +45,19 @@
           {{
             (['git'] if ((configure_git | bool) or (configure_shell | bool)
               or (install_oh_my_zsh | bool)
-              or (configure_node | bool) or (configure_go | bool)) else []) +
+              or (configure_node | bool)) else []) +
             (['zsh'] if (configure_shell | bool) else []) +
-            (['curl', 'bash'] if ((configure_node | bool)
-              or (configure_go | bool)) else []) +
-            (['cc', 'make'] if (configure_go | bool) else []) +
-            (['tar'] if (configure_uv | bool) else [])
+            (['curl', 'bash'] if (configure_node | bool) else []) +
+            (['tar'] if ((configure_uv | bool) or (configure_go | bool)) else [])
           }}
         user_only_dependency_allowlist: >-
           {{
             (['git'] if ((configure_git | bool) or (configure_shell | bool)
               or (install_oh_my_zsh | bool)
-              or (configure_node | bool) or (configure_go | bool)) else []) +
+              or (configure_node | bool)) else []) +
             (['zsh'] if (configure_shell | bool) else []) +
-            (['curl', 'bash'] if ((configure_node | bool)
-              or (configure_go | bool)) else []) +
-            (['build-essential'] if (configure_go | bool) else []) +
-            (['tar'] if (configure_uv | bool) else [])
+            (['curl', 'bash'] if (configure_node | bool) else []) +
+            (['tar'] if ((configure_uv | bool) or (configure_go | bool)) else [])
           }}
 
     - name: Check required user-profile commands

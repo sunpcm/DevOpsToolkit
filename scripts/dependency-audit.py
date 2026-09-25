@@ -52,6 +52,7 @@ def build_report(root: Path) -> tuple[str, list[str]]:
         "uv": yaml_scalar(variables, "uv_version"),
         "NVM": yaml_scalar(variables, "nvm_version"),
         "goenv": yaml_scalar(variables, "goenv_version"),
+        "goenv source": yaml_scalar(variables, "goenv_source_commit"),
         "Go": yaml_scalar(variables, "go_version"),
         "Node LTS": yaml_scalar(variables, "node_version"),
     }
@@ -71,8 +72,8 @@ def build_report(root: Path) -> tuple[str, list[str]]:
         errors.append("release.yml COSIGN_VERSION does not match install.sh")
     if not COMMIT_RE.fullmatch(values["NVM"]):
         errors.append("nvm_version is not an immutable 40-character commit")
-    if not COMMIT_RE.fullmatch(values["goenv"]):
-        errors.append("goenv_version is not an immutable 40-character commit")
+    if not COMMIT_RE.fullmatch(values["goenv source"]):
+        errors.append("goenv_source_commit is not an immutable 40-character commit")
 
     collection_rows: list[str] = []
     for entry in sorted(collections, key=lambda item: item["name"]):
@@ -107,9 +108,12 @@ def build_report(root: Path) -> tuple[str, list[str]]:
         errors.append("release.yml Cosign linux-amd64 checksum does not match install.sh")
 
     uv_rows: list[str] = []
+    uv_artifact_block = variables.split("uv_artifacts:\n", 1)[1].split(
+        "\nuv_release_base_url_default:", 1
+    )[0]
     for architecture, archive, digest in re.findall(
         r"^  (x86_64|aarch64):\n    archive: (\S+)\n    sha256: ([0-9a-f]+)$",
-        variables,
+        uv_artifact_block,
         re.MULTILINE,
     ):
         if not SHA256_RE.fullmatch(digest):
@@ -117,6 +121,24 @@ def build_report(root: Path) -> tuple[str, list[str]]:
         uv_rows.append(f"| `{architecture}` | `{archive}` | `{digest}` |")
     if len(uv_rows) != 2:
         errors.append("uv must pin x86_64 and aarch64 artifacts")
+
+    goenv_rows: list[str] = []
+    goenv_artifact_block = variables.split("goenv_artifacts:\n", 1)[1].split(
+        "\ngoenv_release_base_url_default:", 1
+    )[0]
+    for architecture, archive, digest in re.findall(
+        r"^  (x86_64|aarch64):\n    archive: (\S+)\n    sha256: ([0-9a-f]+)$",
+        goenv_artifact_block,
+        re.MULTILINE,
+    ):
+        if not SHA256_RE.fullmatch(digest):
+            errors.append(f"goenv {architecture} has an invalid SHA256")
+        platform = "amd64" if architecture == "x86_64" else "arm64"
+        if archive != f"goenv_{values['goenv']}_linux_{platform}.tar.gz":
+            errors.append(f"goenv {architecture} archive does not match version")
+        goenv_rows.append(f"| `{architecture}` | `{archive}` | `{digest}` |")
+    if len(goenv_rows) != 2:
+        errors.append("goenv must pin x86_64 and aarch64 artifacts")
 
     action_rows: list[str] = []
     for workflow in sorted((root / ".github/workflows").glob("*.yml")):
@@ -148,7 +170,7 @@ def build_report(root: Path) -> tuple[str, list[str]]:
 | Cosign | `{cosign}` | https://github.com/sigstore/cosign/releases |
 | uv | `{values['uv']}` | https://github.com/astral-sh/uv/releases |
 | NVM | `{values['NVM']}` | https://github.com/nvm-sh/nvm/commits/master/ |
-| goenv | `{values['goenv']}` | https://github.com/go-nv/goenv/commit/{values['goenv']} |
+| goenv | `{values['goenv']}` (source `{values['goenv source']}`) | https://github.com/go-nv/goenv/releases/tag/{values['goenv']} |
 | Go | `{values['Go']}` | https://go.dev/dl/ |
 | Node LTS | `{values['Node LTS']}` | https://nodejs.org/en/about/previous-releases |
 
@@ -169,6 +191,12 @@ def build_report(root: Path) -> tuple[str, list[str]]:
 | 架构 | 归档 | SHA256 |
 |---|---|---|
 {chr(10).join(uv_rows)}
+
+## goenv 归档校验值
+
+| 架构 | 归档 | SHA256 |
+|---|---|---|
+{chr(10).join(goenv_rows)}
 
 ## GitHub Actions
 

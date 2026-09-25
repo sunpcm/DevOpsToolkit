@@ -16,8 +16,9 @@ export NVM_DIR="$HOME/.nvm"
 
 {% if configure_go | bool %}
 export GOENV_ROOT="$HOME/.local/share/devops-toolkit/goenv"
-export PATH="$GOENV_ROOT/bin:$PATH"
-if command -v goenv >/dev/null 2>&1; then
-  eval "$(goenv init -)"
+export PATH="$HOME/.local/share/devops-toolkit/goenv-bin:$PATH"
+if [ -x "$HOME/.local/share/devops-toolkit/goenv-bin/goenv" ]; then
+  eval "$("$HOME/.local/share/devops-toolkit/goenv-bin/goenv" init -)"
+  export PATH="$HOME/.local/share/devops-toolkit/goenv-bin:$PATH"
 fi
 {% endif %}

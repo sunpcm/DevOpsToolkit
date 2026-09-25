@@ -461,32 +461,164 @@
     mode: "0700"
   when: configure_go | bool
 
-- name: Check the installed goenv revision
+- name: Ensure the goenv data root exists without replacing legacy content
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.file:
+    path: "{{ profile_target_home }}/.local/share/devops-toolkit/goenv"
+    state: directory
+    mode: "0700"
+  when: configure_go | bool
+
+- name: Inspect existing goenv default-tools policy
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.stat:
+    path: "{{ profile_target_home }}/.local/share/devops-toolkit/goenv/default-tools.yaml"
+  register: goenv_default_tools
+  when: configure_go | bool
+
+- name: Read existing goenv default-tools policy without changing it
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.slurp:
+    src: "{{ profile_target_home }}/.local/share/devops-toolkit/goenv/default-tools.yaml"
+  register: goenv_existing_default_tools
+  when:
+    - configure_go | bool
+    - goenv_default_tools.stat.exists
+
+- name: Decode existing goenv default-tools policy
+  ansible.builtin.set_fact:
+    goenv_default_tools_config: >-
+      {{ goenv_existing_default_tools.content | b64decode | from_yaml }}
+  when:
+    - configure_go | bool
+    - goenv_default_tools.stat.exists
+
+- name: Reject implicit unpinned goenv tool installation
+  ansible.builtin.assert:
+    that:
+      - goenv_default_tools_config is mapping
+      - >-
+        not (goenv_default_tools_config.enabled | default(false) | bool)
+        or (goenv_allow_default_tools | bool)
+    fail_msg: >-
+      Existing goenv default-tools.yaml enables additional tools. Disable it,
+      or explicitly set goenv_allow_default_tools=true to permit additional
+      user-selected (possibly unpinned) downloads during Go installation.
+  when:
+    - configure_go | bool
+    - goenv_default_tools.stat.exists
+
+- name: Disable upstream unpinned default tools for a new goenv HOME
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.copy:
+    content: "enabled: false\n"
+    dest: "{{ profile_target_home }}/.local/share/devops-toolkit/goenv/default-tools.yaml"
+    force: false
+    mode: "0600"
+  when:
+    - configure_go | bool
+    - not goenv_default_tools.stat.exists
+
+- name: Explain preserved custom goenv default-tools policy
+  ansible.builtin.debug:
+    msg: >-
+      Existing goenv default-tools.yaml is preserved. Additional tools are
+      permitted only with goenv_allow_default_tools=true.
+  when:
+    - configure_go | bool
+    - goenv_default_tools.stat.exists
+
+- name: Check the installed goenv binary version
   become: "{{ profile_use_become }}"
   become_user: "{{ profile_target_user }}"
   ansible.builtin.command:
     argv:
-      - git
-      - -C
-      - "{{ profile_target_home }}/.local/share/devops-toolkit/goenv"
-      - rev-parse
-      - HEAD
-  register: goenv_revision
+      - "{{ profile_target_home }}/.local/share/devops-toolkit/goenv-bin/goenv"
+      - --version
+  register: user_goenv
   changed_when: false
   failed_when: false
   when: configure_go | bool
 
-- name: Install the pinned goenv source in the target HOME
-  become: "{{ profile_use_become }}"
-  become_user: "{{ profile_target_user }}"
-  ansible.builtin.git:
-    repo: https://github.com/go-nv/goenv.git
-    dest: "{{ profile_target_home }}/.local/share/devops-toolkit/goenv"
-    version: "{{ goenv_version }}"
-    update: true
+- name: Validate the goenv release artifact for this architecture
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['architecture'] in goenv_artifacts
+      - goenv_artifacts[ansible_facts['architecture']].archive | length > 0
+      - goenv_artifacts[ansible_facts['architecture']].sha256 is match('^[0-9a-f]{64}$')
+      - goenv_release_base_url | string is match('^https://\\S+$')
+    fail_msg: >-
+      goenv {{ goenv_version }} needs a pinned, checksummed artifact for
+      {{ ansible_facts['architecture'] }} and an HTTPS release base URL.
   when:
     - configure_go | bool
-    - goenv_revision.rc != 0 or (goenv_revision.stdout | trim) != goenv_version
+    - user_goenv.rc != 0 or goenv_version not in (user_goenv.stdout | default(''))
+
+- name: Install the pinned goenv v3 binary in the target HOME
+  when:
+    - configure_go | bool
+    - user_goenv.rc != 0 or goenv_version not in (user_goenv.stdout | default(''))
+  block:
+    - name: Create a temporary goenv extraction directory
+      become: "{{ profile_use_become }}"
+      become_user: "{{ profile_target_user }}"
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: devops-toolkit-goenv-
+      register: goenv_temp_dir
+
+    - name: Download the pinned goenv release archive
+      become: "{{ profile_use_become }}"
+      become_user: "{{ profile_target_user }}"
+      ansible.builtin.get_url:
+        url: >-
+          {{ goenv_release_base_url | regex_replace('/+$', '')
+             }}/{{ goenv_artifacts[ansible_facts['architecture']].archive }}
+        dest: "{{ goenv_temp_dir.path }}/goenv.tar.gz"
+        checksum: "sha256:{{ goenv_artifacts[ansible_facts['architecture']].sha256 }}"
+        mode: "0600"
+        timeout: 60
+      register: goenv_archive_download
+      retries: 3
+      delay: 5
+      until: goenv_archive_download is succeeded
+
+    - name: Extract the verified goenv release archive
+      become: "{{ profile_use_become }}"
+      become_user: "{{ profile_target_user }}"
+      ansible.builtin.unarchive:
+        src: "{{ goenv_temp_dir.path }}/goenv.tar.gz"
+        dest: "{{ goenv_temp_dir.path }}"
+        remote_src: true
+
+    - name: Ensure the managed goenv binary directory exists
+      become: "{{ profile_use_become }}"
+      become_user: "{{ profile_target_user }}"
+      ansible.builtin.file:
+        path: "{{ profile_target_home }}/.local/share/devops-toolkit/goenv-bin"
+        state: directory
+        mode: "0755"
+
+    - name: Install the verified goenv binary
+      become: "{{ profile_use_become }}"
+      become_user: "{{ profile_target_user }}"
+      ansible.builtin.copy:
+        src: "{{ goenv_temp_dir.path }}/goenv"
+        dest: "{{ profile_target_home }}/.local/share/devops-toolkit/goenv-bin/goenv"
+        remote_src: true
+        mode: "0755"
+  always:
+    - name: Remove the temporary goenv extraction directory
+      become: "{{ profile_use_become }}"
+      become_user: "{{ profile_target_user }}"
+      ansible.builtin.file:
+        path: "{{ goenv_temp_dir.path }}"
+        state: absent
+      when: goenv_temp_dir is defined and goenv_temp_dir.path is defined
 
 - name: Check the configured Go runtime
   become: "{{ profile_use_become }}"
@@ -518,9 +650,9 @@
   become_user: "{{ profile_target_user }}"
   ansible.builtin.shell: |
     export GOENV_ROOT={{ (profile_target_home + '/.local/share/devops-toolkit/goenv') | quote }}
-    export PATH="$GOENV_ROOT/bin:$PATH"
-    goenv install -s {{ go_version | quote }}
-    goenv global {{ go_version | quote }}
+    export PATH={{ (profile_target_home + '/.local/share/devops-toolkit/goenv-bin') | quote }}:"$PATH"
+    goenv install {{ go_version | quote }} --yes
+    goenv global {{ go_version | quote }} --yes
   args:
     executable: /bin/bash
   environment:
