@@ -123,5 +123,13 @@ assert "DEVOPSTOOLKIT USER SHELL" in role_tasks
 assert "{{ profile_target_home }}/.profile" in role_tasks
 assert 'content: "enabled: false\\n"' in role_tasks
 assert "force: false" in role_tasks
+assert role_tasks.index("Check the installed goenv binary checksum before executing it") < (
+    role_tasks.index("Check the verified goenv binary version")
+)
+assert role_tasks.index("Refuse to execute an unverified goenv binary") < (
+    role_tasks.index("Check the verified goenv binary version")
+)
+assert "binary_sha256" in role_tasks
+assert "goenv_version not in" not in role_tasks
 
 print("用户环境开关矩阵测试通过。")

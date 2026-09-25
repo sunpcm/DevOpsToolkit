@@ -126,17 +126,22 @@ def build_report(root: Path) -> tuple[str, list[str]]:
     goenv_artifact_block = variables.split("goenv_artifacts:\n", 1)[1].split(
         "\ngoenv_release_base_url_default:", 1
     )[0]
-    for architecture, archive, digest in re.findall(
-        r"^  (x86_64|aarch64):\n    archive: (\S+)\n    sha256: ([0-9a-f]+)$",
+    for architecture, archive, digest, binary_digest in re.findall(
+        r"^  (x86_64|aarch64):\n    archive: (\S+)\n    sha256: ([0-9a-f]+)\n"
+        r"    binary_sha256: ([0-9a-f]+)$",
         goenv_artifact_block,
         re.MULTILINE,
     ):
         if not SHA256_RE.fullmatch(digest):
             errors.append(f"goenv {architecture} has an invalid SHA256")
+        if not SHA256_RE.fullmatch(binary_digest):
+            errors.append(f"goenv {architecture} has an invalid binary SHA256")
         platform = "amd64" if architecture == "x86_64" else "arm64"
         if archive != f"goenv_{values['goenv']}_linux_{platform}.tar.gz":
             errors.append(f"goenv {architecture} archive does not match version")
-        goenv_rows.append(f"| `{architecture}` | `{archive}` | `{digest}` |")
+        goenv_rows.append(
+            f"| `{architecture}` | `{archive}` | `{digest}` | `{binary_digest}` |"
+        )
     if len(goenv_rows) != 2:
         errors.append("goenv must pin x86_64 and aarch64 artifacts")
 
@@ -194,8 +199,8 @@ def build_report(root: Path) -> tuple[str, list[str]]:
 
 ## goenv 归档校验值
 
-| 架构 | 归档 | SHA256 |
-|---|---|---|
+| 架构 | 归档 | 归档 SHA256 | 二进制 SHA256 |
+|---|---|---|---|
 {chr(10).join(goenv_rows)}
 
 ## GitHub Actions

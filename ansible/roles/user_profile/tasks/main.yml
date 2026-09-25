@@ -532,36 +532,35 @@
     - configure_go | bool
     - goenv_default_tools.stat.exists
 
-- name: Check the installed goenv binary version
-  become: "{{ profile_use_become }}"
-  become_user: "{{ profile_target_user }}"
-  ansible.builtin.command:
-    argv:
-      - "{{ profile_target_home }}/.local/share/devops-toolkit/goenv-bin/goenv"
-      - --version
-  register: user_goenv
-  changed_when: false
-  failed_when: false
-  when: configure_go | bool
-
 - name: Validate the goenv release artifact for this architecture
   ansible.builtin.assert:
     that:
       - ansible_facts['architecture'] in goenv_artifacts
       - goenv_artifacts[ansible_facts['architecture']].archive | length > 0
       - goenv_artifacts[ansible_facts['architecture']].sha256 is match('^[0-9a-f]{64}$')
+      - goenv_artifacts[ansible_facts['architecture']].binary_sha256 is match('^[0-9a-f]{64}$')
       - goenv_release_base_url | string is match('^https://\\S+$')
     fail_msg: >-
       goenv {{ goenv_version }} needs a pinned, checksummed artifact for
       {{ ansible_facts['architecture'] }} and an HTTPS release base URL.
-  when:
-    - configure_go | bool
-    - user_goenv.rc != 0 or goenv_version not in (user_goenv.stdout | default(''))
+  when: configure_go | bool
+
+- name: Check the installed goenv binary checksum before executing it
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.stat:
+    path: "{{ profile_target_home }}/.local/share/devops-toolkit/goenv-bin/goenv"
+    checksum_algorithm: sha256
+  register: goenv_installed_binary
+  when: configure_go | bool
 
 - name: Install the pinned goenv v3 binary in the target HOME
   when:
     - configure_go | bool
-    - user_goenv.rc != 0 or goenv_version not in (user_goenv.stdout | default(''))
+    - >-
+      not goenv_installed_binary.stat.exists or
+      (goenv_installed_binary.stat.checksum | default('')) !=
+      goenv_artifacts[ansible_facts['architecture']].binary_sha256
   block:
     - name: Create a temporary goenv extraction directory
       become: "{{ profile_use_become }}"
@@ -619,6 +618,43 @@
         path: "{{ goenv_temp_dir.path }}"
         state: absent
       when: goenv_temp_dir is defined and goenv_temp_dir.path is defined
+
+- name: Verify the installed goenv binary checksum
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.stat:
+    path: "{{ profile_target_home }}/.local/share/devops-toolkit/goenv-bin/goenv"
+    checksum_algorithm: sha256
+  register: goenv_verified_binary
+  when: configure_go | bool
+
+- name: Refuse to execute an unverified goenv binary
+  ansible.builtin.assert:
+    that:
+      - goenv_verified_binary.stat.exists
+      - goenv_verified_binary.stat.isreg
+      - >-
+        goenv_verified_binary.stat.checksum ==
+        goenv_artifacts[ansible_facts['architecture']].binary_sha256
+    fail_msg: "Installed goenv binary failed its pinned SHA256 verification."
+  when: configure_go | bool
+
+- name: Check the verified goenv binary version
+  become: "{{ profile_use_become }}"
+  become_user: "{{ profile_target_user }}"
+  ansible.builtin.command:
+    argv:
+      - "{{ profile_target_home }}/.local/share/devops-toolkit/goenv-bin/goenv"
+      - --version
+  register: user_goenv
+  changed_when: false
+  when: configure_go | bool
+
+- name: Refuse a goenv release artifact with the wrong version
+  ansible.builtin.assert:
+    that: (user_goenv.stdout | trim) == ('goenv ' ~ goenv_version)
+    fail_msg: "Verified goenv binary does not report the pinned goenv version."
+  when: configure_go | bool
 
 - name: Check the configured Go runtime
   become: "{{ profile_use_become }}"

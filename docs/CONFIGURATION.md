@@ -86,15 +86,19 @@ goenv_artifacts:
   x86_64:
     archive: goenv_3.1.4_linux_amd64.tar.gz
     sha256: 6fe050330f1fc14b3cdd84467a76e93245817bb9526629f1ae0e25d0c6d3baab
+    binary_sha256: 5a37b77bc5ba4f8cdb973b46b270f4d69c9ed381aeace7f3a967a461f7ec2f79
   aarch64:
     archive: goenv_3.1.4_linux_arm64.tar.gz
     sha256: 990847f599b36a8bf6f933cbc6fe475220813db0d805741e2a9a785ab1ecd162
-go_version: "1.22.1"
+    binary_sha256: a25cb3515c70c71a0be23539522a7d96009d332a558d82f008f3313eb966b81a
+go_version: "1.27.1"
 ```
 
 goenv v3 使用经 SHA256 校验的官方预编译包，安装到当前用户的
 `~/.local/share/devops-toolkit/goenv-bin`；数据和 Go 版本继续使用
 `~/.local/share/devops-toolkit/goenv`。不会执行上游安装脚本，也不会删除既有 v2 Git checkout。
+每次运行都先核对现有可执行文件的固定 SHA256；不匹配时重新下载已校验归档，
+在摘要与版本都核对通过前不会执行该文件。
 受限网络可通过 `DEVOPS_TOOLKIT_GOENV_RELEASE_BASE_URL` 指向同版本的可信 HTTPS 镜像；
 仓库内固定的架构归档名与 SHA256 仍必须匹配。
 上游 goenv v3 默认会在安装 Go 后获取 `@latest` 开发工具；新的数据目录会写入
