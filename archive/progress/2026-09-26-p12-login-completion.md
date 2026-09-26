@@ -9,7 +9,7 @@
 - Ubuntu 22.04.5，实例 `devops-toolkit-2204-test-20260926130000-2601`：
   Shell 开启／Oh My Zsh 关闭首次 `changed=4`，二次 `changed=0`，均 failed=0；
   新登录 Zsh 的串行 `&&` 断言验证 NVM_DIR／GOENV_ROOT 为空且未安装 Oh My Zsh。
-  Bash 输出成功标记，但早期命令未启用失败传播，不能证明全部负向断言通过，仍需补回。
+  Bash 早期命令未启用失败传播，不能证明全部负向断言；已另行严格补回，见下文。
   仅 uv 和仅 Node 的独立新 HOME 安装成功；Bash/Zsh 能发现所选工具，
   未选 loader 的环境变量没有出现。该实例已清理，数据不可恢复。
 - Ubuntu 24.04.5，实例 `devops-toolkit-2404-test-20260926130000-2601`：
@@ -55,6 +55,19 @@ Shell-only 无工具安装；仅 uv 检查 uv 0.9.18 且 NVM_DIR／GOENV_ROOT �
 各文件内容为对应 `LOGIN_<组件>_PASS`，摘要用于核对原件，不替代重新执行。
 22.04早期 Shell/uv/Node 登录结果来自执行输出，未独立保存登录日志；
 相关首次／重复 Ansible 日志仍保留。本报告明确区分此证据保存边界。
+
+## Shell-only Bash 严格补证
+
+独立复核指出早期22.04 Shell-only Bash 的失败传播缺口后，在新实例
+`devops-toolkit-2204-test-20260926150000-2603` 再执行同一受测 SHA 的
+Shell-only 配置，`ok=23 changed=4 failed=0`。实际系统为 Ubuntu 22.04.5，
+SSH 主机指纹交叉核对；仅安装已授权 zsh 测试依赖，没有下载语言工具。
+新登录 Bash/Zsh 均 source 统一断言脚本：先启用 `set -eu`、进入 HOME，
+对 Oh My Zsh 不存在、NVM_DIR／GOENV_ROOT 为空作显式断言；未选命令若存在
+则显式 `exit 1`。完整执行链以 `&&` 连接，退出0，两份日志均为 `LOGIN_shell_PASS`。
+两份日志 SHA256 均为 `7d2606048c445087221216a4b77b32f18925c73d51e7f317b4319c5e119bb812`。
+确认通过后已清理该精确实例，`multipass list --format json` 为空，数据不可恢复。
+此补证不改变已有两次收敛结论；P1-2剩余TODO仍等待最终独立复核。
 
 这不是正式 Release 的同 SHA 完整 VM 报告，亦不证明 amd64、真实 WSL2
 或复杂旧 Go 配置迁移。历史组合两次收敛报告仍单独保留。
