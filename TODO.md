@@ -1,6 +1,6 @@
 # DevOpsToolkit TODO
 
-> 更新日期：2026-09-26
+> 更新日期：2026-09-27
 >
 > 原则：这里只保留尚未完成、能够独立验收的工作。完成项及历史证据移入
 > [`archive/progress/`](archive/progress/)，不要让历史记录掩盖当前优先级。
@@ -11,13 +11,13 @@
 - 2026-09-24 独立 Review 对 PR #2 的权限、验签前解包和系统 Python 路径提出的问题
   已在后续提交修复；PR #2 已合并，合并提交为 `9d613e8`。PR #4 的 goenv 修复
   已另行独立复核并合并至 `de58ca2`；两次合并均不构成正式发布许可。
-- 最新正式 GitHub Release 仍为 `v0.1.7`；`v0.1.8` 标签已推送，但对应发布流程因 Go 验收失败而取消，尚无该版本的正式签名 Release。
+- 最新正式 GitHub Release 为 `v0.1.9`（来源 `8646625`）；`v0.1.8` 的发布流程曾取消，不复用该标签。
 - 唯一受支持的环境配置实现仍是 `ansible/`，受支持入口是 `bin/` 与 `install.sh`。
 - `AcmeConfig/` 不属于主线 Release，但根 README 仍向用户公开它；在完成下列 P0 安全整改前，不应宣称其为生产级。
 - 2026-09-23 控制面缺口是历史快照。2026-09-24 重新认证并回查后，`main`/`v*`
   ruleset、`release` 审批、immutable releases、Actions SHA pin 与 Dependabot 已启用；
   已有一次 `v0.1.8` 真实 tag 尝试，但 Release 被取消。候选
-  `8646625` 的当次双版本 VM 验收已通过；新版本正式 Release 尚未完成。
+  `8646625` 的当次双版本 VM 验收及 `v0.1.9` 正式发布已通过；包装入口缺陷仍待修复交付。
 - 静态验证通过不等于真实 VM、升级回滚、SSH 登录切换或 ACME 证书续期已经完成验收。
 - 2026-09-24 起暂缓 `AcmeConfig/` 的真实 CA/DNS 与独立仓库工作：它不在主线 Release 包中，
   其真实 CA 门槛不阻塞主线开发与发布，已有静态检查仍保留；但在自身真实环境验收完成前
@@ -29,8 +29,9 @@
    22.04/24.04 一次性 VM 验收已通过，原件及摘要见
    [`archive/progress/2026-09-26-release-vm-8646625.md`](archive/progress/2026-09-26-release-vm-8646625.md)。
    该报告仅允许与精确的 `8646625` tag SHA 配对；若将本证据文档合并后改用新的
-   `main` SHA 作为发布候选，须对新 SHA 重新运行一次性 VM 验收。下一步是另用新版本
-   进行受保护审批、正式签名 Release 与安装/回滚验收。
+   `main` SHA 作为发布候选，须对新 SHA 重新运行一次性 VM 验收。`v0.1.9` 已完成签名发布；
+   Ubuntu 普通用户升级/回滚执行记录已整理，但独立原始日志证据不足，门槛保持开放。
+   下一步是复核并合并 PR #11 的包装入口修复，另行验收交付并归档完整日志。
    `v0.1.8` 旧标签不可复用；未经新的发布授权不打 tag。
 2. P1/P2：并行推进不依赖正式 Release 的可靠性回归与文档工作。
 3. 暂缓范围：P0-1 ACME 真实签发与续期、P2 ACME 独立仓库迁移；不以静态或自签证据替代其上线门槛。
@@ -82,13 +83,23 @@ Environment 仍无保护规则。随后完成并回查的控制面设置、一�
 - [ ] 首次新 tag 发布时验证 `v*` 更新/删除保护、仅 `v*` 可进入 `release` Environment、
       审批确实阻止发布且管理员不能强制绕过；审批人核对当次同 SHA VM 报告原件与 SHA256。
 - [ ] 在新版本的真实 Release 中确认同 SHA 质量门禁、main 祖先检查、Source commit 记录及固定 commit 安装入口按预期生效；本地 workflow 和示例不能代替远端执行。
-- [ ] 验证新 Release 资产不可替换、三个固定资产及签名/安装/回滚通过；当前
-      immutable、官方 Action allowlist/完整 SHA pin、Dependabot 仅有设置和 PR CI 证据。
+- [ ] 验证新 Release 资产不可替换及安装/回滚完整证据；已有真实 `v0.1.9` Release、
+      三个固定资产、签名与能力协议证据。资产不可替换和标签保护的破坏性负例未测试；
+      安装/回滚原始日志尚不足。不能把控制面设置和 CI 通过扩大为所有负例已验收。
 
 验收证据：GitHub API 显示 rulesets、Environment protection、immutable 和 Actions 限制均已生效；创建测试 tag 时只有受保护路径可发布；
 新 Release 无法替换 tag 或资产，三个资产及 attestation/签名验证通过。
 
 ### P0-3：迁移到受支持的 Ansible 控制端基线
+
+2026-09-26 的 `v0.1.9` 正式构建与签名已核验；Ubuntu 普通用户升级/回滚执行记录已整理，
+但独立原始日志证据不足，门槛保持开放，见
+[`archive/progress/2026-09-27-v019-release-install.md`](archive/progress/2026-09-27-v019-release-install.md)。
+同时发现 `current/bin/*` 的 Ansible 包装器未解析物理路径；PR #11 已修复且 CI 通过，
+但尚未合并或进入正式资产，因此该运行时交付门槛暂不关闭。
+
+- [ ] 完成 PR #11 的合并和后续交付验证；经 `current` 调用包装器必须使用隔离 runtime，
+      runtime 缺失/标记不符时必须拒绝，不能回退系统 Ansible。
 
 本地实现提交与真实 VM 证据见
 [`archive/progress/2026-09-22-ansible-p0-3-runtime.md`](archive/progress/2026-09-22-ansible-p0-3-runtime.md)。
@@ -202,7 +213,8 @@ latest/固定版本、签名校验、重复安装、普通用户入口及原子�
 
 - [ ] 在真实 WSL2 Ubuntu 24.04 上验收安装器与 Playbook 的平台预检、首次及重复运行；
       本地 WSL1/非支持平台拒绝矩阵已实现，但模拟内核标记不替代真实 WSL2 启动证据。
-- [ ] 在新签名 Release 中验证安装器、向导和 Playbook 的 `--capabilities-json` 协议；本地实现与包测试不能证明远端资产已更新。
+- `v0.1.9` 正式资产的安装器、向导和 Playbook 能力协议已实际验证，见
+  [`archive/progress/2026-09-27-v019-release-install.md`](archive/progress/2026-09-27-v019-release-install.md)。
 - [ ] 暂缓：在 P0-1 真实环境门槛通过后，将 `AcmeConfig/` 迁入受保护的独立仓库与签名 Release，迁移主线 CI/README 引用；不把证书生命周期塞进主线 Ansible role。
 
 `AcmeConfig/` 维护边界已评估，迁移尚未执行，故上项仍开放。决策及验收顺序见
