@@ -31,8 +31,19 @@
    该报告仅允许与精确的 `8646625` tag SHA 配对；若将本证据文档合并后改用新的
    `main` SHA 作为发布候选，须对新 SHA 重新运行一次性 VM 验收。`v0.1.9` 已完成签名发布；
    Ubuntu 普通用户升级/回滚执行记录已整理，但独立原始日志证据不足，门槛保持开放。
-   下一步是复核并合并 PR #11 的包装入口修复，另行验收交付并归档完整日志。
-   `v0.1.8` 旧标签不可复用；未经新的发布授权不打 tag。
+   PR #10/#11 已合并，已验收的主线合并提交为 `571a5fef119055470d33ff478c0f69ba0524b1c5`，
+   合并后的 Validate（quality、Python 3.12/3.14）已通过。下一步是对新的候选 SHA
+   重新验收包装入口修复、完成交付并归档完整日志；旧 SHA 的 VM 报告不能复用。
+   `v0.1.8` 旧标签不可复用。用户已授权在验收与独立复核通过后对精确 SHA
+   `571a5fef119055470d33ff478c0f69ba0524b1c5` 创建并推送 `v0.1.10`；标签已按授权推送。
+   首轮新候选验收因控制端漂移到 2.21.2 中止，实例已清理，不作为通过证据。
+   用户随后授权安装临时 runtime，隔离环境已安装 core 2.21.4（含 PyYAML），
+   该 SHA 的完整 `verify-ansible.sh` 与双版本 VM 验收已重新通过（均退出码 0），
+   两版主路径和故障恢复后二次零变更，最终报告校验通过且实例已清理；
+   独立复核已 APPROVED，最终报告原件已归档；发布流程仍须通过受保护审批，
+   正式资产安装/回滚门槛保持开放。阶段记录见
+   [`archive/progress/2026-09-27-post-merge-readiness.md`](archive/progress/2026-09-27-post-merge-readiness.md)。
+   本文档草稿合并后将产生新 SHA；该新 SHA 不得复用 `571a5fe` 的 VM 报告。
 2. P1/P2：并行推进不依赖正式 Release 的可靠性回归与文档工作。
 3. 暂缓范围：P0-1 ACME 真实签发与续期、P2 ACME 独立仓库迁移；不以静态或自签证据替代其上线门槛。
 
@@ -96,9 +107,11 @@ Environment 仍无保护规则。随后完成并回查的控制面设置、一�
 但独立原始日志证据不足，门槛保持开放，见
 [`archive/progress/2026-09-27-v019-release-install.md`](archive/progress/2026-09-27-v019-release-install.md)。
 同时发现 `current/bin/*` 的 Ansible 包装器未解析物理路径；PR #11 已修复且 CI 通过，
-但尚未合并或进入正式资产，因此该运行时交付门槛暂不关闭。
+已合并为 `571a5fef119055470d33ff478c0f69ba0524b1c5`，但尚未进入正式资产，
+因此该运行时交付门槛暂不关闭。合并后主线检查见
+[Validate 36260854347](https://github.com/sunpcm/DevOpsToolkit/actions/runs/36260854347)。
 
-- [ ] 完成 PR #11 的合并和后续交付验证；经 `current` 调用包装器必须使用隔离 runtime，
+- [ ] 完成已合并 PR #11 的后续交付验证；经 `current` 调用包装器必须使用隔离 runtime，
       runtime 缺失/标记不符时必须拒绝，不能回退系统 Ansible。
 
 本地实现提交与真实 VM 证据见
@@ -229,7 +242,9 @@ latest/固定版本、签名校验、重复安装、普通用户入口及原子�
 [`archive/progress/2026-09-23-capabilities-p2-local.md`](archive/progress/2026-09-23-capabilities-p2-local.md)。
 只读 doctor 的本地实现、修复和双版本一次性 VM 验收见
 [`archive/progress/2026-09-23-doctor-p2-vm.md`](archive/progress/2026-09-23-doctor-p2-vm.md)；
-正式签名 Release 尚未包含它，该门槛仍随 P0-3/P1-4 开放。
+`v0.1.9` 已包含 doctor，普通用户执行记录见
+[`archive/progress/2026-09-27-v019-release-install.md`](archive/progress/2026-09-27-v019-release-install.md)；
+这不关闭包装入口修复、完整安装/回滚日志或新候选同 SHA VM 验收门槛。
 
 ## 完成规则
 
