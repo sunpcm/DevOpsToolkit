@@ -120,7 +120,7 @@ try:
     module_globals["prompt_version"] = record_version
     module_globals["prompt"] = reject_git_prompt
     selected_modules = wizard["collect_user_modules"](
-        {"node_version": "24.11.1", "go_version": "1.22.1"}
+        {"node_version": "24.11.1", "go_version": "1.27.1"}
     )
     disabled_modules = {
         **chosen_modules,
@@ -141,9 +141,9 @@ assert selected_modules == {
     **chosen_modules,
     "install_oh_my_zsh": False,
     "node_version": "24.11.1",
-    "go_version": "1.22.1",
+    "go_version": "1.27.1",
 }
-assert version_prompts == [("Node.js", "24.11.1"), ("Go", "1.22.1")]
+assert version_prompts == [("Node.js", "24.11.1"), ("Go", "1.27.1")]
 assert selected_disabled == disabled_modules
 
 user_only_globals = wizard["collect_user_only"].__globals__
