@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import runpy
+import shutil
 import stat
 import subprocess
 import tempfile
@@ -267,6 +268,68 @@ def test_platform_guards_before_system_changes() -> None:
             check(marker_guard, {"stdout": marker}, succeeds)
 
 
+def test_user_only_rechecks_after_reported_dependency_install() -> None:
+    """A successful apt result must not mask a still-missing command."""
+    playbook = yaml.safe_load(
+        (ROOT_DIR / "ansible/playbooks/user-only.yml").read_text(encoding="utf-8")
+    )[0]
+    pre_tasks = playbook["pre_tasks"]
+    first = next(
+        index for index, task in enumerate(pre_tasks)
+        if task["name"] == "Check required user-profile commands"
+    )
+    assert pre_tasks[-1]["name"] == "Stop strict user-only mode when dependencies are missing"
+    assert playbook["roles"][0]["role"] == "user_profile"
+
+    missing_command = "devops_toolkit_missing_recheck_fixture"
+    assert shutil.which(missing_command) is None
+    isolated_tasks = []
+    for task in pre_tasks[first:]:
+        if task["name"] == "Install only whitelisted user-profile dependencies":
+            simulated = {key: value for key, value in task.items() if key != "become"}
+            simulated.pop("ansible.builtin.apt")
+            simulated["ansible.builtin.debug"] = {"msg": "simulated apt success"}
+            isolated_tasks.append(simulated)
+        else:
+            isolated_tasks.append(task)
+
+    with tempfile.TemporaryDirectory(prefix="devops-toolkit-recheck-") as directory:
+        temporary = Path(directory)
+        test_playbook = temporary / "recheck.yml"
+        test_playbook.write_text(
+            yaml.safe_dump(
+                [{
+                    "hosts": "localhost",
+                    "gather_facts": False,
+                    "vars": {
+                        "user_only_required_commands": [missing_command],
+                        "user_only_dependency_allowlist": ["simulated-package"],
+                        "user_only_allow_system_dependencies": True,
+                    },
+                    "tasks": isolated_tasks,
+                }],
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+        environment = os.environ.copy()
+        environment["ANSIBLE_CONFIG"] = str(ROOT_DIR / "ansible/ansible.cfg")
+        environment["ANSIBLE_LOCAL_TEMP"] = str(temporary / "ansible-local")
+        result = subprocess.run(
+            ["ansible-playbook", "-i", "localhost,", "-c", "local", str(test_playbook)],
+            env=environment,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        output = result.stdout + result.stderr
+        assert result.returncode != 0, output
+        assert "simulated apt success" in output, output
+        assert "Missing commands after dependency convergence" in output, output
+        assert missing_command in output, output
+        assert "user_profile" not in output, output
+
+
 def test_finalize_rejects_unverified_connection_before_guard_write() -> None:
     playbook = yaml.safe_load(
         (ROOT_DIR / "ansible/playbooks/ubuntu-ssh-finalize.yml").read_text(encoding="utf-8")
@@ -286,5 +349,6 @@ def test_finalize_rejects_unverified_connection_before_guard_write() -> None:
 test_wizard_executes_prepare_and_finalize()
 test_playbook_role_matrix()
 test_platform_guards_before_system_changes()
+test_user_only_rechecks_after_reported_dependency_install()
 test_finalize_rejects_unverified_connection_before_guard_write()
 print("向导编排与 Playbook/role 组合测试通过。")
