@@ -16,7 +16,8 @@
 - `AcmeConfig/` 不属于主线 Release，但根 README 仍向用户公开它；在完成下列 P0 安全整改前，不应宣称其为生产级。
 - 2026-09-23 控制面缺口是历史快照。2026-09-24 重新认证并回查后，`main`/`v*`
   ruleset、`release` 审批、immutable releases、Actions SHA pin 与 Dependabot 已启用；
-  已有一次 `v0.1.8` 真实 tag 尝试，但 Release 被取消；每次发布的同 SHA 一次性 VM 验收与正式 Release 尚未完成。
+  已有一次 `v0.1.8` 真实 tag 尝试，但 Release 被取消。候选
+  `8646625` 的当次双版本 VM 验收已通过；新版本正式 Release 尚未完成。
 - 静态验证通过不等于真实 VM、升级回滚、SSH 登录切换或 ACME 证书续期已经完成验收。
 - 2026-09-24 起暂缓 `AcmeConfig/` 的真实 CA/DNS 与独立仓库工作：它不在主线 Release 包中，
   其真实 CA 门槛不阻塞主线开发与发布，已有静态检查仍保留；但在自身真实环境验收完成前
@@ -24,9 +25,12 @@
 
 ## 当前执行顺序
 
-1. P0-2/P0-3：PR #4 的 goenv 修复已重新独立 Review 且 CI 全绿，已授权合并至 `main@de58ca2`；
-   确认最终 `main` 提交的必需检查，再另用新版本执行同 SHA 一次性 VM 验收、
-   受保护审批、正式签名 Release 与安装/回滚验收。
+1. P0-2/P0-3：发布候选代码提交 `8646625` 的 Validate 与同 SHA Ubuntu
+   22.04/24.04 一次性 VM 验收已通过，原件及摘要见
+   [`archive/progress/2026-09-26-release-vm-8646625.md`](archive/progress/2026-09-26-release-vm-8646625.md)。
+   该报告仅允许与精确的 `8646625` tag SHA 配对；若将本证据文档合并后改用新的
+   `main` SHA 作为发布候选，须对新 SHA 重新运行一次性 VM 验收。下一步是另用新版本
+   进行受保护审批、正式签名 Release 与安装/回滚验收。
    `v0.1.8` 旧标签不可复用；未经新的发布授权不打 tag。
 2. P1/P2：并行推进不依赖正式 Release 的可靠性回归与文档工作。
 3. 暂缓范围：P0-1 ACME 真实签发与续期、P2 ACME 独立仓库迁移；不以静态或自签证据替代其上线门槛。
@@ -164,6 +168,10 @@ PR 编排测试、双版本本地 VM smoke、报告及失败清理代码已有�
 2026-09-24 补强了运行时实际 Ubuntu 版本断言及报告中同一次测试的双实例校验；
 本地证据见 [`archive/progress/2026-09-24-vm-report-image-proof.md`](archive/progress/2026-09-24-vm-report-image-proof.md)。
 它防止单实例/错版本报告被当作双版本证据，但不能替代候选 SHA 的当次真实 VM 验收。
+候选 `8646625` 已于 2026-09-26 完成当次 22.04/24.04 真实 VM 验收、故障注入及清理，
+报告原件、SHA256 与复核边界见
+[`archive/progress/2026-09-26-release-vm-8646625.md`](archive/progress/2026-09-26-release-vm-8646625.md)。
+以下仍是每次发布都必须重新执行的门槛，不能因本次通过而删除。
 
 - [ ] 每次发布前在隔离主机针对候选 SHA 运行一次性 Ubuntu 22.04/24.04 VM，覆盖首次收敛、
       二次 `changed=0`、SSH/UFW/Docker/Nginx 与故障恢复；保留 8 天内的报告原件和 SHA256。
