@@ -58,9 +58,15 @@ shasum -a 256 "${REPORT_FILE}"
 禁止管理员强制绕过。单维护者自审只是人工暂停点，不是独立第二人复核；GitHub 无法自动
 证明本地 VM 报告的真实性。
 
+审批前还要检查 `.github/workflows/release.yml` 中已验证 collections 中间产物的
+`retention-days`。当前 `main@de58ca2` 仍为 1 天，短于 VM 报告的 8 天有效期；
+若等待审批导致中间产物过期，不要绕过门禁或手工创建 Release，应保留失败现场，
+修复工作流后按新候选 SHA 重做同 SHA VM 验收，并使用未占用的新版本号。
+
 ```bash
-# 版本号遵循 vMAJOR.MINOR.PATCH；v0.1.8 仅是当前示例，使用前确认未被占用。
-VERSION=v0.1.8
+# 版本号遵循 vMAJOR.MINOR.PATCH；v0.1.8 已使用且发布取消，不可复用。
+# v0.1.9 仅是示例，打标签前仍须明确授权并确认未被占用。
+VERSION=v0.1.9
 git fetch --tags origin || exit 1
 if git show-ref --verify --quiet "refs/tags/${VERSION}"; then
   echo "版本号已经使用：${VERSION}" >&2
@@ -70,7 +76,8 @@ git tag -a "${VERSION}" origin/main -m "DevOpsToolkit ${VERSION}"
 git push origin "${VERSION}"
 ```
 
-推荐用签名 tag（需先配置 GPG/SSH signing key）：
+若已配置 GPG/SSH signing key，可把上面 `git tag -a` 那一行替换为签名 tag，
+其他检查与推送步骤保持不变；两种创建方式只能选一种，不能在已有同名 tag 上再执行：
 
 ```bash
 git tag -s "${VERSION}" origin/main -m "DevOpsToolkit ${VERSION}"
