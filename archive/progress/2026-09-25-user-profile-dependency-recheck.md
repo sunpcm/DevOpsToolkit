@@ -24,4 +24,12 @@ ANSIBLE_COLLECTIONS_PATH=<已校验的锁定 collections 路径> \
 两条命令均退出 0，完整门禁最终输出“统一 Ansible 入口静态验证通过”。
 这只证明回归保护与任务顺序；它不能证明真正 apt 包安装、Ubuntu 22.04/24.04
 干净 HOME 的两次收敛、登录 Shell 或语言工具下载。TODO 中的 P1-2 一次性 VM
-验收仍开放，待取得临时 VM 内安装依赖的明确授权后执行。
+验收仍开放；临时 VM 内安装依赖已获授权，但此报告不包含真实 apt 故障注入证据。
+
+## 2026-09-26 主分支兼容性复验
+
+已正常合并 `main@de58ca2e0d707f56f5720ec639f5a056739dc979`，
+复验代码基线为 `eac267cbc0b024ad3b7938bc2edd838284863be7`。
+使用已有 ansible-core 2.21.4 隔离运行时和锁定 collections 执行
+`./tests/verify-ansible.sh`，退出 0，最终输出“统一 Ansible 入口静态验证通过”。
+此次复验覆盖与已合并 goenv 修复的兼容性，不扩大上述真实 VM 验收边界。
