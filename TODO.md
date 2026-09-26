@@ -137,10 +137,12 @@ Ubuntu 24.04 对“仅请求缺失的共享 brew”、关闭 loader、缺少 zsh
 Shell 关闭但语言工具开启、Oh My Zsh 约束及 user-only 依赖例外的向导链路测试见
 [`archive/progress/2026-09-23-user-profile-p1-2-wizard-paths.md`](archive/progress/2026-09-23-user-profile-p1-2-wizard-paths.md)。
 
-- [ ] 在 Ubuntu 22.04/24.04 的全新 HOME 覆盖基础 Shell/Oh My Zsh 开关、仅 uv、仅 Node、仅 Go、
-      缺失及存在的共享 brew、全部语言工具开启等关键组合；各执行两次，第二次 `changed=0`。
-- [ ] 用新登录 Bash/Zsh 验证所选工具可发现、未选 loader 不出现；完成因网络超时尚未证明的
-      uv 下载路径及 Node/Go/Oh My Zsh 真实安装验证。
+2026-09-26 独立复核结合历史组合收敛与最后的严格登录补证，确认上述 P1-2
+双版本新 HOME 组合、二次零变更、工具下载及选择性 Bash/Zsh 加载门槛已完成。
+最小补证与测试异常修正见
+[`archive/progress/2026-09-26-p12-login-completion.md`](archive/progress/2026-09-26-p12-login-completion.md)。
+此结论限于已验收的 aarch64 组合，不代表正式 Release 同 SHA 完整 VM 验收、
+amd64、真实 WSL2 或复杂旧 Go 配置迁移完成；发布门槛仍在 P0-3/P1-4 保留。
 
 验收证据：每种受支持组合在干净 HOME 中执行两次，第二次 `changed=0`；新登录 Shell 能找到所选工具，未选工具不会被意外加载或删除。
 
