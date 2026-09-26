@@ -120,9 +120,16 @@ ln -s "$(command -v ansible-playbook)" \
   "${TMP_DIR}/installed/runtime/ansible-core-2.21.4/bin/ansible-playbook"
 printf '%s\n' '2.21.4' >"${TMP_DIR}/installed/runtime/ansible-core-2.21.4/.ready"
 ANSIBLE_LOCAL_TEMP="${TMP_DIR}" "${installed_launcher}" --version >/dev/null
+ln -s releases/v0.1.0 "${TMP_DIR}/installed/current"
+ANSIBLE_LOCAL_TEMP="${TMP_DIR}" \
+  "${TMP_DIR}/installed/current/bin/ansible-playbook" --version >/dev/null
 printf '%s\n' 'broken' >"${TMP_DIR}/installed/runtime/ansible-core-2.21.4/.ready"
 if "${installed_launcher}" --version >/dev/null 2>&1; then
   echo "错误：正式安装接受了版本标记不符的隔离 runtime。" >&2
+  exit 1
+fi
+if "${TMP_DIR}/installed/current/bin/ansible-playbook" --version >/dev/null 2>&1; then
+  echo "错误：current 入口接受了版本标记不符的隔离 runtime。" >&2
   exit 1
 fi
 test ! -e "${PACKAGE}/archive"

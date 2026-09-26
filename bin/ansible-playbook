@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Resolve the installed current symlink to the immutable release directory.
+# Otherwise the launcher mistakes a Release for a source checkout and falls
+# back to a system ansible-playbook that may not exist or be trusted.
+ROOT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 if [[ "$(basename "$(dirname "${ROOT_DIR}")")" == releases ]]; then
   RUNTIME="$(dirname "$(dirname "${ROOT_DIR}")")/runtime/ansible-core-2.21.4"
   [[ -f "${RUNTIME}/.ready" && "$(cat "${RUNTIME}/.ready")" == 2.21.4 && \
