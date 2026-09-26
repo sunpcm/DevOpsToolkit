@@ -1,6 +1,6 @@
 # DevOpsToolkit TODO
 
-> 更新日期：2026-09-24
+> 更新日期：2026-09-26
 >
 > 原则：这里只保留尚未完成、能够独立验收的工作。完成项及历史证据移入
 > [`archive/progress/`](archive/progress/)，不要让历史记录掩盖当前优先级。
@@ -8,16 +8,15 @@
 ## 当前基线与边界
 
 - 2026-09-22 review 从干净的 `main@74ef67b` 开始；这是历史审计基线，不是当前开发分支。
-- 2026-09-24 独立 Review 检查草稿 PR #2 的 `018b706` 后给出 CHANGES REQUESTED：
-  系统安装复用已有 runtime 前缺少权限验证，且验签前完整解包存在磁盘耗尽风险。
-  后续复审 `45a1c07` 又指出系统模式在校验路径前执行 `PATH` 中的 Python。
-  本分支已补修复与回归测试；最终 head 仍须重新经过独立复核及 CI 门禁。
-- 最新正式 GitHub Release 仍为 `v0.1.7`；新分支没有正式签名 Release。
+- 2026-09-24 独立 Review 对 PR #2 的权限、验签前解包和系统 Python 路径提出的问题
+  已在后续提交修复；PR #2 已合并，合并提交为 `9d613e8`。这不构成草稿 PR #4
+  新 goenv 修复的 Review 或发布许可。
+- 最新正式 GitHub Release 仍为 `v0.1.7`；`v0.1.8` 标签已推送，但对应发布流程因 Go 验收失败而取消，尚无该版本的正式签名 Release。
 - 唯一受支持的环境配置实现仍是 `ansible/`，受支持入口是 `bin/` 与 `install.sh`。
 - `AcmeConfig/` 不属于主线 Release，但根 README 仍向用户公开它；在完成下列 P0 安全整改前，不应宣称其为生产级。
 - 2026-09-23 控制面缺口是历史快照。2026-09-24 重新认证并回查后，`main`/`v*`
   ruleset、`release` 审批、immutable releases、Actions SHA pin 与 Dependabot 已启用；
-  真实 tag/Release 及每次发布的一次性 VM 验收仍未发生。
+  已有一次 `v0.1.8` 真实 tag 尝试，但 Release 被取消；每次发布的同 SHA 一次性 VM 验收与正式 Release 尚未完成。
 - 静态验证通过不等于真实 VM、升级回滚、SSH 登录切换或 ACME 证书续期已经完成验收。
 - 2026-09-24 起暂缓 `AcmeConfig/` 的真实 CA/DNS 与独立仓库工作：它不在主线 Release 包中，
   其真实 CA 门槛不阻塞主线开发与发布，已有静态检查仍保留；但在自身真实环境验收完成前
@@ -25,8 +24,10 @@
 
 ## 当前执行顺序
 
-1. P0-2/P0-3：独立复核草稿 PR #2；确认最终合并提交的必需检查，再为新版本执行
-   一次性 VM 验收、受保护审批、正式签名 Release 与安装/回滚验收。未经发布授权不打 tag。
+1. P0-2/P0-3：PR #4 的 goenv 修复已重新独立 Review 且 CI 全绿，已授权合并至 `main@de58ca2`；
+   确认最终 `main` 提交的必需检查，再另用新版本执行同 SHA 一次性 VM 验收、
+   受保护审批、正式签名 Release 与安装/回滚验收。
+   `v0.1.8` 旧标签不可复用；未经新的发布授权不打 tag。
 2. P1/P2：并行推进不依赖正式 Release 的可靠性回归与文档工作。
 3. 暂缓范围：P0-1 ACME 真实签发与续期、P2 ACME 独立仓库迁移；不以静态或自签证据替代其上线门槛。
 
@@ -69,10 +70,11 @@ Environment 仍无保护规则。随后完成并回查的控制面设置、一�
 [`archive/progress/2026-09-24-release-gate-manual-vm.md`](archive/progress/2026-09-24-release-gate-manual-vm.md)。
 同一 tag SHA 的完整质量门禁、`origin/main` 祖先校验、Release 来源 SHA 记录已在
 `.github/workflows/release.yml` 实现；固定安装器 commit 与 SHA256 的示例见
-[`docs/SUPPLY_CHAIN_SECURITY.md`](docs/SUPPLY_CHAIN_SECURITY.md)。这些实现仍须随新版本在远端实际验收。
+[`docs/SUPPLY_CHAIN_SECURITY.md`](docs/SUPPLY_CHAIN_SECURITY.md)。PR #2 已合并至 `main@9d613e8`，
+最终 push/PR 的 quality、Python 3.12/3.14 检查均通过；该 SHA 的双版本一次性 VM 报告见
+[`archive/progress/2026-09-24-release-vm-9d613e8.md`](archive/progress/2026-09-24-release-vm-9d613e8.md)。
+这证明合并路径未被必需检查误阻，但新版本 Release 仍须远端实际验收。
 
-- [ ] 对安装安全 Review 修复重新独立复核草稿 PR #2，合并前核对最终 head 的 push/PR 检查；通过真实合并确认
-      `main` 的三项必需检查未误阻正常路径。单维护者阶段不要求第二人 approval。
 - [ ] 首次新 tag 发布时验证 `v*` 更新/删除保护、仅 `v*` 可进入 `release` Environment、
       审批确实阻止发布且管理员不能强制绕过；审批人核对当次同 SHA VM 报告原件与 SHA256。
 - [ ] 在新版本的真实 Release 中确认同 SHA 质量门禁、main 祖先检查、Source commit 记录及固定 commit 安装入口按预期生效；本地 workflow 和示例不能代替远端执行。
@@ -89,13 +91,11 @@ Environment 仍无保护规则。随后完成并回查的控制面设置、一�
 当前分支的锁定产物、完整本地门禁及临时构建复核见
 [`archive/progress/2026-09-24-p0-3-current-branch-local-review.md`](archive/progress/2026-09-24-p0-3-current-branch-local-review.md)。
 已固定 Python 3.12–3.14 / core 2.21.4、隔离 venv、22.04 目标边界及三项 collections，
-并更新 README、安装/交互文档和 CI 定义。当前是已推送但未合并的草稿 PR 分支。
+并更新 README、安装/交互文档和 CI 定义；PR #2 已合并为 `main@9d613e8`。
 安装器对未来版本缺失 collection bundle 的 Galaxy 回退已改为拒绝；仅五个已发布的
 旧版本保留精确兼容名单。证据见
 [`archive/progress/2026-09-24-bundle-fallback-allowlist.md`](archive/progress/2026-09-24-bundle-fallback-allowlist.md)。
 
-- [ ] `018b706` 与 `45a1c07` 的独立 Review 所提安装安全问题已在后续分支修复；合并前须复审修复范围，
-      并在最终 head 与合并 SHA 上重新确认 quality、Python 3.12/3.14 门禁结果。
 - [ ] 新版本发布前重新验证 2.21.4 runtime 与三项 collections 的 Release 构建、签名、安装及回滚门槛；
       不把本地测试 tarball 视为正式 Release。
 
@@ -110,7 +110,19 @@ Environment 仍无保护规则。随后完成并回查的控制面设置、一�
 [`archive/progress/2026-09-22-user-profile-p1-2.md`](archive/progress/2026-09-22-user-profile-p1-2.md)。
 已拆分基础 Shell/Oh My Zsh，环境 loader 不再依赖 Shell 开关；向导约束、
 user-only 依赖重检、缺失共享 brew 的“警告并跳过”语义及对应本地测试均已实现。
-干净 Ubuntu HOME 的完整两次收敛和新登录 Shell 验证尚未完成，以下只保留开放验收门槛。
+干净 Ubuntu HOME 的验收已逐步补齐，以下只保留尚未关闭的门槛。
+2026-09-25 对已推送 `v0.1.8` 的源码提交 `9d613e8` 补做双版本 aarch64 VM：Shell/Oh My Zsh、
+仅 uv、仅 Node、共享 brew 缺失/存在 fixture 均两次收敛且新登录检查通过；仅 Go 在两版系统
+均因上游 goenv v3 不再提供 `bin/goenv` 而失败。草稿 PR #4 pin 的是同一上游提交，不能修复此问题。
+`v0.1.8` Release workflow 已取消，标签仍保留在旧 SHA；修复后应使用新 patch 标签。草稿 PR #4
+在代码提交 `04c7534` 改用按 SHA256 验证的 goenv 3.1.4 官方二进制包，并把默认 Go 升至
+1.27.1；Ubuntu 22.04/24.04 aarch64 的仅 Go 和全组件组合首次成功、二次 `changed=0`，
+Bash/Zsh 新登录、错误二进制不执行及真实 goenv v2 checkout 基本共存均已实测。
+最终草稿 head `9fe579f` 的六项 CI 全绿，重新独立 Review 已给出 APPROVED；
+2026-09-26 已授权合并为 `main@de58ca2`，但这不是正式 Release 验收。amd64 实机、复杂旧配置迁移及 apt 故障注入仍未覆盖。
+旧标签失败证据见 [`archive/progress/2026-09-25-user-profile-p1-2-vm.md`](archive/progress/2026-09-25-user-profile-p1-2-vm.md)；
+修复后的 VM 报告已随 [PR #4](https://github.com/sunpcm/DevOpsToolkit/pull/4) 合并：
+[`archive/progress/2026-09-25-goenv-reviewfix-04c7534.md`](archive/progress/2026-09-25-goenv-reviewfix-04c7534.md)。
 Ubuntu 24.04 对“仅请求缺失的共享 brew”、关闭 loader、缺少 zsh 时的 fail-closed
 进行了部分真实 HOME 验证；结果与网络边界见
 [`archive/progress/2026-09-23-user-profile-p1-2-vm-partial.md`](archive/progress/2026-09-23-user-profile-p1-2-vm-partial.md)。
@@ -141,8 +153,8 @@ SSH/UFW/Docker/Nginx 和故障恢复见
 [`archive/progress/2026-09-23-ssh-p1-1-final-vm.md`](archive/progress/2026-09-23-ssh-p1-1-final-vm.md)。
 SSH finalize 在 UFW 更新失败时的新端口保活与恢复证据见
 [`archive/progress/2026-09-23-ssh-p1-1-guard-final.md`](archive/progress/2026-09-23-ssh-p1-1-guard-final.md)。
-PR 编排测试、双版本本地 VM smoke、报告及失败清理代码已有本地证据；草稿 PR #2
-的 quality 与双 Python 矩阵也已通过。以下只保留最终合并、当次 VM 与新 Release 门槛。
+PR 编排测试、双版本本地 VM smoke、报告及失败清理代码已有本地证据；PR #2
+已合并，quality 与双 Python 矩阵也已通过。以下只保留当次 VM 与新 Release 门槛。
 2026-09-24 补强了运行时实际 Ubuntu 版本断言及报告中同一次测试的双实例校验；
 本地证据见 [`archive/progress/2026-09-24-vm-report-image-proof.md`](archive/progress/2026-09-24-vm-report-image-proof.md)。
 它防止单实例/错版本报告被当作双版本证据，但不能替代候选 SHA 的当次真实 VM 验收。
