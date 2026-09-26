@@ -9,8 +9,8 @@
 
 - 2026-09-22 review 从干净的 `main@74ef67b` 开始；这是历史审计基线，不是当前开发分支。
 - 2026-09-24 独立 Review 对 PR #2 的权限、验签前解包和系统 Python 路径提出的问题
-  已在后续提交修复；PR #2 已合并，合并提交为 `9d613e8`。这不构成草稿 PR #4
-  新 goenv 修复的 Review 或发布许可。
+  已在后续提交修复；PR #2 已合并，合并提交为 `9d613e8`。PR #4 的 goenv 修复
+  已另行独立复核并合并至 `de58ca2`；两次合并均不构成正式发布许可。
 - 最新正式 GitHub Release 仍为 `v0.1.7`；`v0.1.8` 标签已推送，但对应发布流程因 Go 验收失败而取消，尚无该版本的正式签名 Release。
 - 唯一受支持的环境配置实现仍是 `ansible/`，受支持入口是 `bin/` 与 `install.sh`。
 - `AcmeConfig/` 不属于主线 Release，但根 README 仍向用户公开它；在完成下列 P0 安全整改前，不应宣称其为生产级。
@@ -113,7 +113,7 @@ user-only 依赖重检、缺失共享 brew 的“警告并跳过”语义及对�
 干净 Ubuntu HOME 的验收已逐步补齐，以下只保留尚未关闭的门槛。
 2026-09-25 对已推送 `v0.1.8` 的源码提交 `9d613e8` 补做双版本 aarch64 VM：Shell/Oh My Zsh、
 仅 uv、仅 Node、共享 brew 缺失/存在 fixture 均两次收敛且新登录检查通过；仅 Go 在两版系统
-均因上游 goenv v3 不再提供 `bin/goenv` 而失败。草稿 PR #4 pin 的是同一上游提交，不能修复此问题。
+均因上游 goenv v3 不再提供 `bin/goenv` 而失败。PR #4 早期仅 pin 同一上游提交的方案不能修复此问题。
 `v0.1.8` Release workflow 已取消，标签仍保留在旧 SHA；修复后应使用新 patch 标签。草稿 PR #4
 在代码提交 `04c7534` 改用按 SHA256 验证的 goenv 3.1.4 官方二进制包，并把默认 Go 升至
 1.27.1；Ubuntu 22.04/24.04 aarch64 的仅 Go 和全组件组合首次成功、二次 `changed=0`，
@@ -123,6 +123,9 @@ Bash/Zsh 新登录、错误二进制不执行及真实 goenv v2 checkout 基本�
 旧标签失败证据见 [`archive/progress/2026-09-25-user-profile-p1-2-vm.md`](archive/progress/2026-09-25-user-profile-p1-2-vm.md)；
 修复后的 VM 报告已随 [PR #4](https://github.com/sunpcm/DevOpsToolkit/pull/4) 合并：
 [`archive/progress/2026-09-25-goenv-reviewfix-04c7534.md`](archive/progress/2026-09-25-goenv-reviewfix-04c7534.md)。
+依赖安装报告成功但命令仍缺失的本地回归已在草稿 [PR #5](https://github.com/sunpcm/DevOpsToolkit/pull/5)
+实现，并在包含 `main@de58ca2` 的代码基线 `eac267c` 完整验证通过；该测试替换 apt 为 debug，
+不能替代下列一次性 VM 的真实 apt 故障注入门槛。
 Ubuntu 24.04 对“仅请求缺失的共享 brew”、关闭 loader、缺少 zsh 时的 fail-closed
 进行了部分真实 HOME 验证；结果与网络边界见
 [`archive/progress/2026-09-23-user-profile-p1-2-vm-partial.md`](archive/progress/2026-09-23-user-profile-p1-2-vm-partial.md)。
