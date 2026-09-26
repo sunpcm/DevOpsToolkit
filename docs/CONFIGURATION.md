@@ -81,8 +81,30 @@ uv_release_base_url_default: "https://github.com/astral-sh/uv/releases/download/
 nvm_version: bab86d5de571015b63fd8fc30b47bbe072a1290e
 node_version: "24.11.1"
 goenv_version: "3.1.4"
-go_version: "1.22.1"
+goenv_source_commit: 66571a3851c83e1341dce284aba907964c3d6a48
+goenv_artifacts:
+  x86_64:
+    archive: goenv_3.1.4_linux_amd64.tar.gz
+    sha256: 6fe050330f1fc14b3cdd84467a76e93245817bb9526629f1ae0e25d0c6d3baab
+    binary_sha256: 5a37b77bc5ba4f8cdb973b46b270f4d69c9ed381aeace7f3a967a461f7ec2f79
+  aarch64:
+    archive: goenv_3.1.4_linux_arm64.tar.gz
+    sha256: 990847f599b36a8bf6f933cbc6fe475220813db0d805741e2a9a785ab1ecd162
+    binary_sha256: a25cb3515c70c71a0be23539522a7d96009d332a558d82f008f3313eb966b81a
+go_version: "1.27.1"
 ```
+
+goenv v3 使用经 SHA256 校验的官方预编译包，安装到当前用户的
+`~/.local/share/devops-toolkit/goenv-bin`；数据和 Go 版本继续使用
+`~/.local/share/devops-toolkit/goenv`。不会执行上游安装脚本，也不会删除既有 v2 Git checkout。
+每次运行都先核对现有可执行文件的固定 SHA256；不匹配时重新下载已校验归档，
+在摘要与版本都核对通过前不会执行该文件。
+受限网络可通过 `DEVOPS_TOOLKIT_GOENV_RELEASE_BASE_URL` 指向同版本的可信 HTTPS 镜像；
+仓库内固定的架构归档名与 SHA256 仍必须匹配。
+上游 goenv v3 默认会在安装 Go 后获取 `@latest` 开发工具；新的数据目录会写入
+`default-tools.yaml` 关闭该隐式行为。若该文件已存在，保留用户配置并提示，
+不擅自覆盖用户选择；已启用额外工具时默认拒绝安装，只有明确设置
+`goenv_allow_default_tools=true` 才允许这些可能未固定版本的下载。
 
 受限网络可以通过控制端环境变量覆盖 uv 的版本目录，所有入口都会继承该值：
 
@@ -260,13 +282,13 @@ ansible-galaxy collection install -r ansible/requirements.yml
 
 处理：配置其中一种凭据，或先由管理员创建该用户。
 
-### user-only 提示缺少 cc、make、curl、git 或 zsh
+### user-only 提示缺少 tar、curl、git 或 zsh
 
 推荐让管理员安装：
 
 ```bash
 sudo apt update
-sudo apt install -y build-essential curl git zsh
+sudo apt install -y tar curl git zsh
 ```
 
 不要为了绕过检查而启用全局 sudo。

@@ -1,0 +1,2 @@
+# Preserve the byte-for-byte output of the goenv verification run.
+archive/progress/2026-09-25-goenv-verify-ansible.report -text whitespace=cr-at-eol

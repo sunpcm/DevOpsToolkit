@@ -61,7 +61,7 @@ for flags in itertools.product((False, True), repeat=len(tokens)):
         nvm.parent.mkdir(parents=True)
         nvm.write_text("NVM_MATRIX_LOADED=1\n", encoding="utf-8")
 
-        goenv = home / ".local/share/devops-toolkit/goenv/bin/goenv"
+        goenv = home / ".local/share/devops-toolkit/goenv-bin/goenv"
         goenv.parent.mkdir(parents=True)
         goenv.write_text(
             "#!/bin/sh\n"
@@ -110,8 +110,10 @@ tasks = (ROOT_DIR / "ansible" / "playbooks" / "user-only.yml").read_text(
 assert tasks.index("Install only whitelisted user-profile dependencies") < tasks.index(
     "Recheck required commands after the optional dependency installation"
 )
-for command in ("curl", "bash", "tar", "cc", "make"):
+for command in ("curl", "bash", "tar"):
     assert command in tasks
+assert "build-essential" not in tasks
+assert "(['tar'] if ((configure_uv | bool) or (configure_go | bool)) else [])" in tasks
 
 role_tasks = (
     ROOT_DIR / "ansible" / "roles" / "user_profile" / "tasks" / "main.yml"
@@ -119,5 +121,15 @@ role_tasks = (
 assert "DEVOPSTOOLKIT USER ENVIRONMENT" in role_tasks
 assert "DEVOPSTOOLKIT USER SHELL" in role_tasks
 assert "{{ profile_target_home }}/.profile" in role_tasks
+assert 'content: "enabled: false\\n"' in role_tasks
+assert "force: false" in role_tasks
+assert role_tasks.index("Check the installed goenv binary checksum before executing it") < (
+    role_tasks.index("Check the verified goenv binary version")
+)
+assert role_tasks.index("Refuse to execute an unverified goenv binary") < (
+    role_tasks.index("Check the verified goenv binary version")
+)
+assert "binary_sha256" in role_tasks
+assert "goenv_version not in" not in role_tasks
 
 print("用户环境开关矩阵测试通过。")
