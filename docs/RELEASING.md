@@ -49,6 +49,8 @@ shasum -a 256 "${REPORT_FILE}"
 `cleanup_status=passed`，并确认清理后不存在遗留测试实例。报告必须在 8 天内；如果候选提交
 改变、报告过期、环境不同或失败，重新跑验收。没有安全可用的一次性 VM 时停止发布，不能用容器
 或 syntax check 代替。
+工作流保存的已验证 collections 中间产物也保留 8 天，以覆盖人工审批窗口；审批前仍须分别核对
+VM 报告和中间产物未过期，不能因其中一项尚在有效期内就忽略另一项。
 
 ## 发布步骤
 
@@ -59,7 +61,8 @@ shasum -a 256 "${REPORT_FILE}"
 证明本地 VM 报告的真实性。
 
 审批前还要检查 `.github/workflows/release.yml` 中已验证 collections 中间产物的
-`retention-days`。当前 `main@de58ca2` 仍为 1 天，短于 VM 报告的 8 天有效期；
+`retention-days`。历史 `main@de58ca2` 为 1 天，短于 VM 报告的 8 天有效期；
+本修复改为 8 天，但它不延长 VM 报告有效期，也不恢复已经过期的中间产物。
 若等待审批导致中间产物过期，不要绕过门禁或手工创建 Release，应保留失败现场，
 修复工作流后按新候选 SHA 重做同 SHA VM 验收，并使用未占用的新版本号。
 
