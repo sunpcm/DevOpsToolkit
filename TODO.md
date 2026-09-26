@@ -123,9 +123,12 @@ Bash/Zsh 新登录、错误二进制不执行及真实 goenv v2 checkout 基本�
 旧标签失败证据见 [`archive/progress/2026-09-25-user-profile-p1-2-vm.md`](archive/progress/2026-09-25-user-profile-p1-2-vm.md)；
 修复后的 VM 报告已随 [PR #4](https://github.com/sunpcm/DevOpsToolkit/pull/4) 合并：
 [`archive/progress/2026-09-25-goenv-reviewfix-04c7534.md`](archive/progress/2026-09-25-goenv-reviewfix-04c7534.md)。
-依赖安装报告成功但命令仍缺失的本地回归已在草稿 [PR #5](https://github.com/sunpcm/DevOpsToolkit/pull/5)
-实现，并在包含 `main@de58ca2` 的代码基线 `eac267c` 完整验证通过；该测试替换 apt 为 debug，
-不能替代下列一次性 VM 的真实 apt 故障注入门槛。
+依赖安装报告成功但命令仍缺失的本地回归已随 [PR #5](https://github.com/sunpcm/DevOpsToolkit/pull/5)
+合并至 `main@ff6d3d4`。2026-09-26 在该干净 SHA 的 Ubuntu 22.04 aarch64
+一次性 VM 执行未经替换的真实 apt 任务：包已安装但 zsh 命令缺失时，最终重检断言
+失败并阻止进入用户配置 role，HOME 普通文件内容未变；实例已清理。
+证据见 [`archive/progress/2026-09-26-real-apt-recheck-vm.md`](archive/progress/2026-09-26-real-apt-recheck-vm.md)。
+此负例不构成 Ubuntu 24.04 或正式 Release 的完整同 SHA 验收。
 Ubuntu 24.04 对“仅请求缺失的共享 brew”、关闭 loader、缺少 zsh 时的 fail-closed
 进行了部分真实 HOME 验证；结果与网络边界见
 [`archive/progress/2026-09-23-user-profile-p1-2-vm-partial.md`](archive/progress/2026-09-23-user-profile-p1-2-vm-partial.md)。
@@ -138,8 +141,6 @@ Shell 关闭但语言工具开启、Oh My Zsh 约束及 user-only 依赖例外�
       缺失及存在的共享 brew、全部语言工具开启等关键组合；各执行两次，第二次 `changed=0`。
 - [ ] 用新登录 Bash/Zsh 验证所选工具可发现、未选 loader 不出现；完成因网络超时尚未证明的
       uv 下载路径及 Node/Go/Oh My Zsh 真实安装验证。
-- [ ] 在一次性 VM 注入白名单 apt 返回成功但命令仍缺失的情形，证明依赖重检阻止继续修改 HOME；
-      安装测试依赖前须按用户要求取得明确同意。
 
 验收证据：每种受支持组合在干净 HOME 中执行两次，第二次 `changed=0`；新登录 Shell 能找到所选工具，未选工具不会被意外加载或删除。
 
