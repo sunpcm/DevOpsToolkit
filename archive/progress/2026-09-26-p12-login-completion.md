@@ -8,7 +8,8 @@
 
 - Ubuntu 22.04.5，实例 `devops-toolkit-2204-test-20260926130000-2601`：
   Shell 开启／Oh My Zsh 关闭首次 `changed=4`，二次 `changed=0`，均 failed=0；
-  新登录 Bash/Zsh 未设置 NVM_DIR／GOENV_ROOT，未安装 Oh My Zsh。
+  新登录 Zsh 的串行 `&&` 断言验证 NVM_DIR／GOENV_ROOT 为空且未安装 Oh My Zsh。
+  Bash 输出成功标记，但早期命令未启用失败传播，不能证明全部负向断言通过，仍需补回。
   仅 uv 和仅 Node 的独立新 HOME 安装成功；Bash/Zsh 能发现所选工具，
   未选 loader 的环境变量没有出现。该实例已清理，数据不可恢复。
 - Ubuntu 24.04.5，实例 `devops-toolkit-2404-test-20260926130000-2601`：
