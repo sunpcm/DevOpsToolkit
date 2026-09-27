@@ -1,0 +1,20 @@
+uid=1000(ubuntu) gid=1000(ubuntu) groups=1000(ubuntu),4(adm),24(cdrom),27(sudo),30(dip),104(lxd)
+lo               DOWN           
+network_isolation=confirmed
+==> 复用隔离的 ansible-core==2.21.4 runtime
+==> 复用隔离的 ansible-core==2.21.4 runtime
+ansible-playbook [core 2.21.4]
+  config file = None
+  configured module search path = ['/home/ubuntu/.ansible/plugins/modules', '/usr/share/ansible/plugins/modules']
+  ansible python module location = /home/ubuntu/.local/share/devops-toolkit/runtime/ansible-core-2.21.4/lib/python3.12/site-packages/ansible
+  ansible collection location = /home/ubuntu/.ansible/collections:/usr/share/ansible/collections
+  executable location = /home/ubuntu/.local/share/devops-toolkit/runtime/ansible-core-2.21.4/bin/ansible-playbook
+  python version = 3.12.3 (main, Aug 31 2026, 10:18:26) [GCC 13.3.0] (/home/ubuntu/.local/share/devops-toolkit/runtime/ansible-core-2.21.4/bin/python)
+  jinja version = 3.1.6
+  pyyaml version = 6.0.3 (with libyaml v0.2.5)
+[WARNING]: Could not match supplied host pattern, ignoring: user_only
+
+playbook: /home/ubuntu/.local/share/devops-toolkit/current/ansible/playbooks/user-only.yml
+v0.1.10
+offline_runtime_reuse=passed
+offline_exit_code=0

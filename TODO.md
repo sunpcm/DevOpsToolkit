@@ -135,7 +135,9 @@ PR #11 已进入 v0.1.10 正式资产，经 current 调用隔离 runtime、缺�
 [`archive/progress/2026-09-27-v010-release-install.md`](archive/progress/2026-09-27-v010-release-install.md)。
 以后每次发布的同 SHA 门槛仍在 P1-4 保留，macOS 系统安装与 WSL2 门槛仍分别开放。
 
-- [ ] 补齐断网条件下已安装 runtime 的复用证据；联网重复安装不能替代离线测试。
+Ubuntu 24.04 aarch64 已安装 runtime 的断网复用已通过独立复核，原始脚本与输出见
+[`archive/progress/2026-09-27-v010-offline-runtime.md`](archive/progress/2026-09-27-v010-offline-runtime.md)。
+这不证明完整安装器可以离线下载/安装，也不证明其他控制端平台。
 - [ ] 补齐尚缺的受支持架构/控制端真实证据，不能以 aarch64 代表 amd64 实机；
       macOS 系统安装与 WSL2 仍按 P1-5/P2 门槛执行。
 - [ ] 完成已独立复核的 VM 启动前版本防护和阶段文档交付；本地提交不等于主线已更新。
