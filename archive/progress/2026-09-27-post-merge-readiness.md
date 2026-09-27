@@ -3,7 +3,8 @@
 ## 当前状态
 
 `571a5fef119055470d33ff478c0f69ba0524b1c5` 的静态门禁、双版本 VM 与独立复核
-均已通过；`v0.1.10` 已授权推送，Release 流程正在运行，安装/回滚门槛仍开放。
+均已通过；`v0.1.10` 已授权推送并经用户批准 release 审批后正式发布，Ubuntu 普通用户
+安装/升级/回滚及 current 入口交付已独立复核通过；其他平台与保护负例仍开放。
 临时 runtime 安装已获授权并完成。本文下列各阶段段落按时间顺序保留当时快照，
 其中“尚未”“待授权”“运行中”描述的是该阶段当时状态，不代表当前状态。
 
@@ -118,3 +119,24 @@ Ubuntu 24.04 和最终清理未完成，不能将部分结果记为双版本验�
 的发布前证据，不关闭正式资产安装/回滚门槛。
 随后按用户授权创建 annotated tag `v0.1.10` 并通过临时 HTTPS 凭据助手推送成功，
 未修改全局 Git 认证设置。尚待发布 workflow 和受保护审批，不代表 Release 已完成。
+
+2026-09-27 用户明确表示已批准 release；只读核查
+[Release run 36262562013](https://github.com/sunpcm/DevOpsToolkit/actions/runs/36262562013)
+全部五项任务成功，正式 Release 非 draft、非 prerelease，发布时间 2026-09-27T11:54:39Z，
+正文 Source commit 与精确候选 SHA 一致。三个正式资产已生成，正在独立下载校验。
+这些结果不关闭正式资产安装/回滚或其他平台验收门槛。
+
+正式资产已独立下载，三项 SHA256 与 GitHub digest 一致：
+
+- tar.gz：`87bf4ed567f27fa38830f112c4562c22f1a9716e1d3fba1fd99832eed36cca96`
+- sha256：`665a28f46dc1085186ed54ed63ac3e50dd9dd739e67da60d4e0d6fc1e02d280e`
+- sigstore.json：`69be405136a8c516408ff342eff5f198d391e5927429dd1e33c48b7a815e17d7`
+
+校验文件检查退出码 0，发布日志 Verify Sigstore identity 显示 Verified OK。
+独立安装测试 VM `devops-toolkit-v010-install-test-20260927` 已启动，
+Ubuntu 24.04.5 aarch64、无挂载/快照，VM 内 python3-venv 前置依赖安装退出码 0。
+从精确候选源码传入安装器，传输前后 SHA256 均为
+`4cc4af56e1a6e828e5386f35488b7e89065b5182a0772951face51cea356101a`。
+验收脚本通过 bash syntax/ShellCheck，开始以普通用户执行正式升级/回滚；
+脚本和完整日志位于 `/private/tmp/devopstoolkit-v010-runtime.ZoSPMq/`，
+当前未完成，VM 尚未清理，不作为通过证据。

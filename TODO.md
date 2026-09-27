@@ -11,7 +11,7 @@
 - 2026-09-24 独立 Review 对 PR #2 的权限、验签前解包和系统 Python 路径提出的问题
   已在后续提交修复；PR #2 已合并，合并提交为 `9d613e8`。PR #4 的 goenv 修复
   已另行独立复核并合并至 `de58ca2`；两次合并均不构成正式发布许可。
-- 最新正式 GitHub Release 为 `v0.1.9`（来源 `8646625`）；`v0.1.8` 的发布流程曾取消，不复用该标签。
+- 最新正式 GitHub Release 为 `v0.1.10`（来源 `571a5fe`）；`v0.1.8` 的发布流程曾取消，不复用该标签。
 - 唯一受支持的环境配置实现仍是 `ansible/`，受支持入口是 `bin/` 与 `install.sh`。
 - `AcmeConfig/` 不属于主线 Release，但根 README 仍向用户公开它；在完成下列 P0 安全整改前，不应宣称其为生产级。
 - 2026-09-23 控制面缺口是历史快照。2026-09-24 重新认证并回查后，`main`/`v*`
@@ -30,7 +30,7 @@
    [`archive/progress/2026-09-26-release-vm-8646625.md`](archive/progress/2026-09-26-release-vm-8646625.md)。
    该报告仅允许与精确的 `8646625` tag SHA 配对；若将本证据文档合并后改用新的
    `main` SHA 作为发布候选，须对新 SHA 重新运行一次性 VM 验收。`v0.1.9` 已完成签名发布；
-   Ubuntu 普通用户升级/回滚执行记录已整理，但独立原始日志证据不足，门槛保持开放。
+   v0.1.9 的安装摘要缺少原始日志；该缺口已由下述 v0.1.10 完整交付原件补齐。
    PR #10/#11 已合并，已验收的主线合并提交为 `571a5fef119055470d33ff478c0f69ba0524b1c5`，
    合并后的 Validate（quality、Python 3.12/3.14）已通过。下一步是对新的候选 SHA
    重新验收包装入口修复、完成交付并归档完整日志；旧 SHA 的 VM 报告不能复用。
@@ -40,10 +40,15 @@
    用户随后授权安装临时 runtime，隔离环境已安装 core 2.21.4（含 PyYAML），
    该 SHA 的完整 `verify-ansible.sh` 与双版本 VM 验收已重新通过（均退出码 0），
    两版主路径和故障恢复后二次零变更，最终报告校验通过且实例已清理；
-   独立复核已 APPROVED，最终报告原件已归档；发布流程仍须通过受保护审批，
-   正式资产安装/回滚门槛保持开放。阶段记录见
+   独立复核已 APPROVED，最终报告原件已归档；用户已批准受保护审批，`v0.1.10`
+   正式发布流程全绿，Release 来源为上述精确 SHA；正在核验正式资产，
+   Ubuntu 普通用户正式资产安装/升级/回滚与 PR #11 入口交付已独立复核通过。阶段记录见
    [`archive/progress/2026-09-27-post-merge-readiness.md`](archive/progress/2026-09-27-post-merge-readiness.md)。
    本文档草稿合并后将产生新 SHA；该新 SHA 不得复用 `571a5fe` 的 VM 报告。
+   已启动独立 Ubuntu 24.04.5 aarch64 一次性 VM 的正式 `v0.1.9 → v0.1.10`
+   安装、重复安装、回滚/前滚及 current/runtime 缺失负例验收已完成，实例已清理；
+   完整日志、脚本及复核边界见
+   [`archive/progress/2026-09-27-v010-release-install.md`](archive/progress/2026-09-27-v010-release-install.md)。
 2. P1/P2：并行推进不依赖正式 Release 的可靠性回归与文档工作。
 3. 暂缓范围：P0-1 ACME 真实签发与续期、P2 ACME 独立仓库迁移；不以静态或自签证据替代其上线门槛。
 
@@ -93,26 +98,28 @@ Environment 仍无保护规则。随后完成并回查的控制面设置、一�
 
 - [ ] 首次新 tag 发布时验证 `v*` 更新/删除保护、仅 `v*` 可进入 `release` Environment、
       审批确实阻止发布且管理员不能强制绕过；审批人核对当次同 SHA VM 报告原件与 SHA256。
-- [ ] 在新版本的真实 Release 中确认同 SHA 质量门禁、main 祖先检查、Source commit 记录及固定 commit 安装入口按预期生效；本地 workflow 和示例不能代替远端执行。
-- [ ] 验证新 Release 资产不可替换及安装/回滚完整证据；已有真实 `v0.1.9` Release、
-      三个固定资产、签名与能力协议证据。资产不可替换和标签保护的破坏性负例未测试；
-      安装/回滚原始日志尚不足。不能把控制面设置和 CI 通过扩大为所有负例已验收。
+- [ ] 验证新 Release 资产不可替换；资产不可替换和标签保护的破坏性负例未测试，
+      必须先取得隔离测试目标与操作授权，不修改真实 v0.1.10 资产。
+
+v0.1.10 的同 SHA 质量门禁、main 祖先检查、Source commit 和固定来源安装入口已实际执行；
+安装/回滚完整原件及独立复核见
+[`archive/progress/2026-09-27-v010-release-install.md`](archive/progress/2026-09-27-v010-release-install.md)。
+不能把这些正向证据扩大为所有保护负例已验收。
 
 验收证据：GitHub API 显示 rulesets、Environment protection、immutable 和 Actions 限制均已生效；创建测试 tag 时只有受保护路径可发布；
 新 Release 无法替换 tag 或资产，三个资产及 attestation/签名验证通过。
 
 ### P0-3：迁移到受支持的 Ansible 控制端基线
 
-2026-09-26 的 `v0.1.9` 正式构建与签名已核验；Ubuntu 普通用户升级/回滚执行记录已整理，
-但独立原始日志证据不足，门槛保持开放，见
+历史 v0.1.9 的安装记录缺少完整原件，见
 [`archive/progress/2026-09-27-v019-release-install.md`](archive/progress/2026-09-27-v019-release-install.md)。
-同时发现 `current/bin/*` 的 Ansible 包装器未解析物理路径；PR #11 已修复且 CI 通过，
-已合并为 `571a5fef119055470d33ff478c0f69ba0524b1c5`，但尚未进入正式资产，
-因此该运行时交付门槛暂不关闭。合并后主线检查见
+该版本发现的 `current/bin/*` 物理路径缺陷已由 PR #11 修复，并以
+`571a5fef119055470d33ff478c0f69ba0524b1c5` 进入正式 v0.1.10。
+合并后主线检查见
 [Validate 36260854347](https://github.com/sunpcm/DevOpsToolkit/actions/runs/36260854347)。
 
-- [ ] 完成已合并 PR #11 的后续交付验证；经 `current` 调用包装器必须使用隔离 runtime，
-      runtime 缺失/标记不符时必须拒绝，不能回退系统 Ansible。
+PR #11 已进入 v0.1.10 正式资产，经 current 调用隔离 runtime、缺失标记拒绝及恢复
+已在真实 VM 验证，独立复核 APPROVED；标记值不符仍为静态负例覆盖，未扩大为 VM 实测。
 
 本地实现提交与真实 VM 证据见
 [`archive/progress/2026-09-22-ansible-p0-3-runtime.md`](archive/progress/2026-09-22-ansible-p0-3-runtime.md)。
@@ -124,8 +131,14 @@ Environment 仍无保护规则。随后完成并回查的控制面设置、一�
 旧版本保留精确兼容名单。证据见
 [`archive/progress/2026-09-24-bundle-fallback-allowlist.md`](archive/progress/2026-09-24-bundle-fallback-allowlist.md)。
 
-- [ ] 新版本发布前重新验证 2.21.4 runtime 与三项 collections 的 Release 构建、签名、安装及回滚门槛；
-      不把本地测试 tarball 视为正式 Release。
+本次正式 v0.1.10 构建、签名、普通用户安装及回滚已通过；完整原件见
+[`archive/progress/2026-09-27-v010-release-install.md`](archive/progress/2026-09-27-v010-release-install.md)。
+以后每次发布的同 SHA 门槛仍在 P1-4 保留，macOS 系统安装与 WSL2 门槛仍分别开放。
+
+- [ ] 补齐断网条件下已安装 runtime 的复用证据；联网重复安装不能替代离线测试。
+- [ ] 补齐尚缺的受支持架构/控制端真实证据，不能以 aarch64 代表 amd64 实机；
+      macOS 系统安装与 WSL2 仍按 P1-5/P2 门槛执行。
+- [ ] 完成已独立复核的 VM 启动前版本防护和阶段文档交付；本地提交不等于主线已更新。
 
 验收证据：全新控制端不修改系统 Python，能够离线复用已安装 runtime；支持矩阵全部通过 `verify-ansible.sh` 和真实 VM smoke；
 重复安装 runtime 不产生变化，旧 runtime 的迁移/回滚路径有记录。

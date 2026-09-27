@@ -1,0 +1,107 @@
+uid=1000(ubuntu) gid=1000(ubuntu) groups=1000(ubuntu),4(adm),24(cdrom),27(sudo),30(dip),104(lxd)
+Python 3.12.3
+4cc4af56e1a6e828e5386f35488b7e89065b5182a0772951face51cea356101a  /home/ubuntu/devops-toolkit-install.sh
+==> 下载 DevOpsToolkit Release
+==> SHA256 校验通过
+==> 验证 Sigstore 签名与 GitHub Actions 身份
+Verified OK
+==> Sigstore 身份验证通过
+Collecting ansible-core==2.21.4
+  Downloading ansible_core-2.21.4-py3-none-any.whl.metadata (7.8 kB)
+Collecting jinja2>=3.1.0 (from ansible-core==2.21.4)
+  Downloading jinja2-3.1.6-py3-none-any.whl.metadata (2.9 kB)
+Collecting PyYAML>=5.1 (from ansible-core==2.21.4)
+  Downloading pyyaml-6.0.3-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl.metadata (2.4 kB)
+Collecting cryptography (from ansible-core==2.21.4)
+  Downloading cryptography-50.0.1-cp311-abi3-manylinux_2_34_aarch64.whl.metadata (4.3 kB)
+Collecting packaging (from ansible-core==2.21.4)
+  Downloading packaging-26.3-py3-none-any.whl.metadata (3.5 kB)
+Collecting resolvelib<2.0.0,>=0.8.0 (from ansible-core==2.21.4)
+  Downloading resolvelib-1.2.1-py3-none-any.whl.metadata (3.7 kB)
+Collecting MarkupSafe>=2.0 (from jinja2>=3.1.0->ansible-core==2.21.4)
+  Downloading markupsafe-3.0.3-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl.metadata (2.7 kB)
+Collecting cffi>=2.0.0 (from cryptography->ansible-core==2.21.4)
+  Downloading cffi-2.1.1-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl.metadata (2.5 kB)
+Collecting pycparser (from cffi>=2.0.0->cryptography->ansible-core==2.21.4)
+  Downloading pycparser-3.0-py3-none-any.whl.metadata (8.2 kB)
+Downloading ansible_core-2.21.4-py3-none-any.whl (2.5 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.5/2.5 MB 1.7 MB/s eta 0:00:00
+Downloading jinja2-3.1.6-py3-none-any.whl (134 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 134.9/134.9 kB 7.1 MB/s eta 0:00:00
+Downloading pyyaml-6.0.3-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl (775 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 775.1/775.1 kB 14.4 MB/s eta 0:00:00
+Downloading resolvelib-1.2.1-py3-none-any.whl (18 kB)
+Downloading cryptography-50.0.1-cp311-abi3-manylinux_2_34_aarch64.whl (4.7 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 4.7/4.7 MB 945.4 kB/s eta 0:00:00
+Downloading packaging-26.3-py3-none-any.whl (129 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 130.0/130.0 kB 239.5 kB/s eta 0:00:00
+Downloading cffi-2.1.1-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl (222 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 222.4/222.4 kB 263.6 kB/s eta 0:00:00
+Downloading markupsafe-3.0.3-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl (24 kB)
+Downloading pycparser-3.0-py3-none-any.whl (48 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 48.2/48.2 kB 236.1 kB/s eta 0:00:00
+Installing collected packages: resolvelib, PyYAML, pycparser, packaging, MarkupSafe, jinja2, cffi, cryptography, ansible-core
+Successfully installed MarkupSafe-3.0.3 PyYAML-6.0.3 ansible-core-2.21.4 cffi-2.1.1 cryptography-50.0.1 jinja2-3.1.6 packaging-26.3 pycparser-3.0 resolvelib-1.2.1
+==> 隔离 runtime 已就绪：/home/ubuntu/.local/share/devops-toolkit/runtime/ansible-core-2.21.4
+==> DevOpsToolkit v0.1.9 已安装：/home/ubuntu/.local/bin/devops-toolkit
+提示：请将 /home/ubuntu/.local/bin 加入 PATH。
+stage=install-v0.1.9 exit_code=0
+v0.1.9
+==> 下载 DevOpsToolkit Release
+==> SHA256 校验通过
+==> 验证 Sigstore 签名与 GitHub Actions 身份
+Verified OK
+==> Sigstore 身份验证通过
+==> 复用隔离的 ansible-core==2.21.4 runtime
+==> DevOpsToolkit v0.1.10 已安装：/home/ubuntu/.local/bin/devops-toolkit
+提示：请将 /home/ubuntu/.local/bin 加入 PATH。
+stage=install-v0.1.10 exit_code=0
+v0.1.10
+==> 下载 DevOpsToolkit Release
+==> SHA256 校验通过
+==> 验证 Sigstore 签名与 GitHub Actions 身份
+Verified OK
+==> Sigstore 身份验证通过
+==> 复用隔离的 ansible-core==2.21.4 runtime
+==> DevOpsToolkit v0.1.10 已安装：/home/ubuntu/.local/bin/devops-toolkit
+提示：请将 /home/ubuntu/.local/bin 加入 PATH。
+stage=install-v0.1.10 exit_code=0
+v0.1.10
+ansible-playbook [core 2.21.4]
+  config file = None
+  configured module search path = ['/home/ubuntu/.ansible/plugins/modules', '/usr/share/ansible/plugins/modules']
+  ansible python module location = /home/ubuntu/.local/share/devops-toolkit/runtime/ansible-core-2.21.4/lib/python3.12/site-packages/ansible
+  ansible collection location = /home/ubuntu/.ansible/collections:/usr/share/ansible/collections
+  executable location = /home/ubuntu/.local/share/devops-toolkit/runtime/ansible-core-2.21.4/bin/ansible-playbook
+  python version = 3.12.3 (main, Aug 31 2026, 10:18:26) [GCC 13.3.0] (/home/ubuntu/.local/share/devops-toolkit/runtime/ansible-core-2.21.4/bin/python)
+  jinja version = 3.1.6
+  pyyaml version = 6.0.3 (with libyaml v0.2.5)
+[WARNING]: Could not match supplied host pattern, ignoring: user_only
+
+playbook: /home/ubuntu/.local/share/devops-toolkit/current/ansible/playbooks/user-only.yml
+{"checks": [{"detail": "ubuntu 24.04 aarch64", "name": "controller_platform", "status": "pass"}, {"detail": "3.12", "name": "controller_python", "status": "pass"}, {"detail": "required_core=2.21.4", "name": "ansible_runtime", "status": "pass"}, {"detail": "3 locked versions present; marker and manifest metadata", "name": "collections", "status": "pass"}, {"detail": "host_key_checking=true; global become=false; ssh available", "name": "ssh_config", "status": "pass"}, {"detail": "free_bytes=12092309504", "name": "controller_disk", "status": "pass"}, {"detail": "managed directories owned by installer account and not group/world writable", "name": "release_permissions", "status": "pass"}, {"detail": "tcp/443 reachable", "name": "controller_network_github.com", "status": "pass"}, {"detail": "tcp/443 reachable", "name": "controller_network_download.docker.com", "status": "pass"}], "result": "pass", "schema": 1}
+v0.1.9
+stage=rollback exit_code=0
+==> 下载 DevOpsToolkit Release
+==> SHA256 校验通过
+==> 验证 Sigstore 签名与 GitHub Actions 身份
+Verified OK
+==> Sigstore 身份验证通过
+==> 复用隔离的 ansible-core==2.21.4 runtime
+==> DevOpsToolkit v0.1.10 已安装：/home/ubuntu/.local/bin/devops-toolkit
+提示：请将 /home/ubuntu/.local/bin 加入 PATH。
+stage=install-v0.1.10 exit_code=0
+v0.1.10
+错误：隔离 Ansible runtime 缺失或不完整；请重新运行可信安装器。
+stage=runtime-negative expected_failure_exit=1
+ansible-playbook [core 2.21.4]
+  config file = None
+  configured module search path = ['/home/ubuntu/.ansible/plugins/modules', '/usr/share/ansible/plugins/modules']
+  ansible python module location = /home/ubuntu/.local/share/devops-toolkit/runtime/ansible-core-2.21.4/lib/python3.12/site-packages/ansible
+  ansible collection location = /home/ubuntu/.ansible/collections:/usr/share/ansible/collections
+  executable location = /home/ubuntu/.local/share/devops-toolkit/runtime/ansible-core-2.21.4/bin/ansible-playbook
+  python version = 3.12.3 (main, Aug 31 2026, 10:18:26) [GCC 13.3.0] (/home/ubuntu/.local/share/devops-toolkit/runtime/ansible-core-2.21.4/bin/python)
+  jinja version = 3.1.6
+  pyyaml version = 6.0.3 (with libyaml v0.2.5)
+acceptance=passed
+final_stage=complete exit_code=0
