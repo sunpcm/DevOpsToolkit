@@ -10,6 +10,15 @@ source "${ROOT_DIR}/tests/multipass-smoke.sh"
 
 ansible-playbook() { printf '%s\n' 'ansible-playbook [core 2.21.4]'; }
 [[ "$(read_ansible_core_version)" == "2.21.4" ]]
+ANSIBLE_CORE_VERSION=2.21.4
+validate_run_ansible_version
+ANSIBLE_CORE_VERSION=2.21.2
+if (validate_run_ansible_version) >"${TMP_DIR}/wrong-version.log" 2>&1; then
+  echo "错误：VM 验收接受了错误的 Ansible 版本。" >&2
+  exit 1
+fi
+grep -q '尚未创建实例' "${TMP_DIR}/wrong-version.log"
+ANSIBLE_CORE_VERSION=2.21.4
 TEST_HOSTS='ports.ubuntu.com=91.189.92.19,download.docker.com=3.169.231.109'
 validate_test_hosts "${TEST_HOSTS}"
 if (validate_test_hosts 'example.com=127.0.0.1') >/dev/null 2>&1; then

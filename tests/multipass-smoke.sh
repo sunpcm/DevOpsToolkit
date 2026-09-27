@@ -58,6 +58,13 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || die "找不到命令：$1"
 }
 
+validate_run_ansible_version() {
+  local expected
+  expected="$(sed -n 's/^readonly ANSIBLE_CORE_VERSION="\([0-9.]*\)"$/\1/p' "${ROOT_DIR}/install.sh")"
+  [[ -n "${expected}" && "${ANSIBLE_CORE_VERSION}" == "${expected}" ]] || \
+    die "VM 验收需要 ansible-core ${expected:-未知}，实际为 ${ANSIBLE_CORE_VERSION}；尚未创建实例。"
+}
+
 validate_test_hosts() {
   local entry host ip seen="," configured="${1:-${TEST_HOSTS}}"
   [[ -n "${configured}" ]] || return 0
@@ -793,6 +800,7 @@ main() {
     exit 0
   fi
 
+  validate_run_ansible_version
   WORK_DIR="$(mktemp -d)"
   trap 'report_exit "$?"' EXIT
   trap 'exit 130' INT
