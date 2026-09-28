@@ -570,5 +570,56 @@ if (
 fi
 [[ ! -e "${GUARD_MARKER}" ]] || fail "平台检查未在依赖安装前运行"
 
+# Unit tests for calculate_sha256 (sha256sum and shasum fallback branches).
+SHA_TEST_FILE="${TMP_DIR}/sha256_sample.txt"
+printf 'test payload' >"${SHA_TEST_FILE}"
+EXPECTED_HASH="813ca5285c28ccee5cab8b10ebda9c908fd6d78ed9dc94cc65ea6cb67a7f13ae"
+
+(
+  source "${ROOT_DIR}/install.sh"
+  res="$(calculate_sha256 "${SHA_TEST_FILE}")"
+  [[ "${res}" == "${EXPECTED_HASH}" ]]
+) || fail "calculate_sha256 默认路径计算失败"
+
+MOCK_SHA256SUM_DIR="${TMP_DIR}/mock-sha256sum"
+mkdir -p "${MOCK_SHA256SUM_DIR}"
+cat >"${MOCK_SHA256SUM_DIR}/sha256sum" <<EOF
+#!/usr/bin/env bash
+printf '%s  %s\n' "${EXPECTED_HASH}" "\$1"
+EOF
+chmod +x "${MOCK_SHA256SUM_DIR}/sha256sum"
+
+(
+  source "${ROOT_DIR}/install.sh"
+  PATH="${MOCK_SHA256SUM_DIR}:${PATH}"
+  res="$(calculate_sha256 "${SHA_TEST_FILE}")"
+  [[ "${res}" == "${EXPECTED_HASH}" ]]
+) || fail "calculate_sha256 sha256sum 分支计算失败"
+
+MOCK_SHASUM_DIR="${TMP_DIR}/mock-shasum"
+mkdir -p "${MOCK_SHASUM_DIR}"
+cat >"${MOCK_SHASUM_DIR}/shasum" <<EOF
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "-a" && "\${2:-}" == "256" ]]; then
+  printf '%s  %s\n' "${EXPECTED_HASH}" "\$3"
+else
+  exit 1
+fi
+EOF
+chmod +x "${MOCK_SHASUM_DIR}/shasum"
+
+(
+  source "${ROOT_DIR}/install.sh"
+  PATH="${MOCK_SHASUM_DIR}:${PATH}"
+  command() {
+    if [[ "${1:-}" == "-v" && "${2:-}" == "sha256sum" ]]; then
+      return 1
+    fi
+    builtin command "$@"
+  }
+  res="$(calculate_sha256 "${SHA_TEST_FILE}")"
+  [[ "${res}" == "${EXPECTED_HASH}" ]]
+) || fail "calculate_sha256 shasum 回退分支计算失败"
+
 "${ROOT_DIR}/install.sh" --help >/dev/null
 echo "安装器测试通过。"
