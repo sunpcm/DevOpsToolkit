@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Focused tests for the interactive launcher without invoking Ansible."""
 
-from __future__ import annotations
-
 import builtins
 import runpy
 import stat
