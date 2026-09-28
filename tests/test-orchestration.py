@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Fast orchestration checks across wizard and playbook/role combinations."""
 
-from __future__ import annotations
-
 import json
 import os
 import runpy
