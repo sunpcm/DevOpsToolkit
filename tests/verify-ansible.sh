@@ -71,6 +71,7 @@ python3 "${ROOT_DIR}/tests/test-doctor.py"
 python3 "${ROOT_DIR}/tests/test-user-profile.py"
 python3 "${ROOT_DIR}/tests/test-orchestration.py"
 python3 "${ROOT_DIR}/tests/test-vm-evidence.py"
+python3 "${ROOT_DIR}/tests/test-verify-collection-lock.py"
 python3 "${ROOT_DIR}/AcmeConfig/tests/test_acme_manager.py"
 bash "${ROOT_DIR}/AcmeConfig/tests/test-log-permissions.sh"
 "${ROOT_DIR}/bin/devops-toolkit" --help >/dev/null
