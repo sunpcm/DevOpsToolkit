@@ -570,5 +570,11 @@ if (
 fi
 [[ ! -e "${GUARD_MARKER}" ]] || fail "平台检查未在依赖安装前运行"
 
+# Unit test for effective_uid function in install.sh
+(
+  source "${ROOT_DIR}/install.sh"
+  [[ "$(effective_uid)" == "${EUID}" ]] || fail "effective_uid 返回值与 EUID 不一致"
+)
+
 "${ROOT_DIR}/install.sh" --help >/dev/null
 echo "安装器测试通过。"
