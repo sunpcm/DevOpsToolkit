@@ -608,15 +608,15 @@ fi
 EOF
 chmod +x "${MOCK_SHASUM_DIR}/shasum"
 
+NO_SHA256SUM_DIR="${TMP_DIR}/no-sha256sum-bin"
+mkdir -p "${NO_SHA256SUM_DIR}"
+ln -s "$(type -P awk)" "${NO_SHA256SUM_DIR}/awk"
+ln -s "$(type -P bash)" "${NO_SHA256SUM_DIR}/bash"
+ln -s "${MOCK_SHASUM_DIR}/shasum" "${NO_SHA256SUM_DIR}/shasum"
+
 (
   source "${ROOT_DIR}/install.sh"
-  PATH="${MOCK_SHASUM_DIR}:${PATH}"
-  command() {
-    if [[ "${1:-}" == "-v" && "${2:-}" == "sha256sum" ]]; then
-      return 1
-    fi
-    builtin command "$@"
-  }
+  PATH="${NO_SHA256SUM_DIR}"
   res="$(calculate_sha256 "${SHA_TEST_FILE}")"
   [[ "${res}" == "${EXPECTED_HASH}" ]]
 ) || fail "calculate_sha256 shasum 回退分支计算失败"
