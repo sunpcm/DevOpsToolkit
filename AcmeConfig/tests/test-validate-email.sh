@@ -5,11 +5,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/../acme-init.sh"
 
-# Mock fail function to prevent process termination if fail is ever invoked
-fail() {
-  return 1
-}
-
 failures=0
 
 test_valid_email() {
