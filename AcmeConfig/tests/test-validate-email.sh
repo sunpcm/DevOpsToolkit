@@ -51,7 +51,7 @@ invalid_emails=(
   "user@domain.123"
   "user name@domain.com"
   "user@domain.com."
-  "user@domain.com\n"
+  $'user@domain.com\n'
 )
 
 printf '== 运行 validate_email 单元测试 ==\n'
