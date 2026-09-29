@@ -47,6 +47,7 @@ bash -n \
   "${ROOT_DIR}/AcmeConfig/tests/vm-smoke.sh" \
   "${ROOT_DIR}/AcmeConfig/tests/vm-logrotate-smoke.sh" \
   "${ROOT_DIR}/AcmeConfig/tests/test-log-permissions.sh" \
+  "${ROOT_DIR}/AcmeConfig/tests/test-validate-email.sh" \
   "${ROOT_DIR}/AcmeConfig/bin/acme-add" \
   "${ROOT_DIR}/AcmeConfig/bin/acme-list" \
   "${ROOT_DIR}/AcmeConfig/bin/acme-revoke"
@@ -71,8 +72,10 @@ python3 "${ROOT_DIR}/tests/test-doctor.py"
 python3 "${ROOT_DIR}/tests/test-user-profile.py"
 python3 "${ROOT_DIR}/tests/test-orchestration.py"
 python3 "${ROOT_DIR}/tests/test-vm-evidence.py"
+python3 "${ROOT_DIR}/tests/test-verify-collection-lock.py"
 python3 "${ROOT_DIR}/AcmeConfig/tests/test_acme_manager.py"
 bash "${ROOT_DIR}/AcmeConfig/tests/test-log-permissions.sh"
+bash "${ROOT_DIR}/AcmeConfig/tests/test-validate-email.sh"
 "${ROOT_DIR}/bin/devops-toolkit" --help >/dev/null
 [[ "$("${ROOT_DIR}/bin/devops-toolkit" --version)" == "development" ]]
 # 主推入口是 bash -c "$(curl ... install.sh)"，此时 BASH_SOURCE 为空；
@@ -169,6 +172,7 @@ if command -v shellcheck >/dev/null 2>&1; then
     "${ROOT_DIR}/AcmeConfig/tests/vm-smoke.sh" \
     "${ROOT_DIR}/AcmeConfig/tests/vm-logrotate-smoke.sh" \
     "${ROOT_DIR}/AcmeConfig/tests/test-log-permissions.sh" \
+    "${ROOT_DIR}/AcmeConfig/tests/test-validate-email.sh" \
     "${ROOT_DIR}/AcmeConfig/bin/acme-add" \
     "${ROOT_DIR}/AcmeConfig/bin/acme-list" \
     "${ROOT_DIR}/AcmeConfig/bin/acme-revoke"

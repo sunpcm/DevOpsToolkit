@@ -53,7 +53,7 @@ jobs:
         run: >-
           ruff check bin/devops-toolkit bin/devops-toolkit-doctor
           tests/test-wizard.py tests/test-capabilities.py tests/test-doctor.py tests/test-user-profile.py
-          tests/test-orchestration.py tests/test-vm-evidence.py
+          tests/test-orchestration.py tests/test-vm-evidence.py tests/test-verify-collection-lock.py
           scripts/verify-collection-lock.py scripts/dependency-audit.py scripts/verify-vm-evidence.py
           AcmeConfig/libexec/acme-manager
           AcmeConfig/tests/test_acme_manager.py

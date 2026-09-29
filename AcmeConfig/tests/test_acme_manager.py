@@ -3,8 +3,6 @@
 
 from __future__ import annotations
 
-import importlib.machinery
-import importlib.util
 import argparse
 import io
 import os
@@ -13,6 +11,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from importlib.machinery import SourceFileLoader
+from importlib.util import module_from_spec, spec_from_loader
 from pathlib import Path
 from unittest import mock
 
@@ -21,11 +21,11 @@ MANAGER_PATH = Path(__file__).parents[1] / "libexec" / "acme-manager"
 
 
 def load_manager():
-    loader = importlib.machinery.SourceFileLoader("acme_manager", str(MANAGER_PATH))
-    spec = importlib.util.spec_from_loader(loader.name, loader)
+    loader = SourceFileLoader("acme_manager", str(MANAGER_PATH))
+    spec = spec_from_loader(loader.name, loader)
     if spec is None:
         raise RuntimeError("无法加载 acme-manager")
-    module = importlib.util.module_from_spec(spec)
+    module = module_from_spec(spec)
     sys.modules[loader.name] = module
     loader.exec_module(module)
     return module

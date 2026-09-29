@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Doctor remains read-only and refuses untrusted SSH targets."""
 
-from __future__ import annotations
-
 import argparse
 import json
 import runpy
