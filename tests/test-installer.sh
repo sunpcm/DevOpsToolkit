@@ -583,9 +583,15 @@ EXPECTED_HASH="813ca5285c28ccee5cab8b10ebda9c908fd6d78ed9dc94cc65ea6cb67a7f13ae"
 
 MOCK_SHA256SUM_DIR="${TMP_DIR}/mock-sha256sum"
 mkdir -p "${MOCK_SHA256SUM_DIR}"
-cat >"${MOCK_SHA256SUM_DIR}/sha256sum" <<EOF
+cat >"${MOCK_SHA256SUM_DIR}/sha256sum" <<'EOF'
 #!/usr/bin/env bash
-printf '%s  %s\n' "${EXPECTED_HASH}" "\$1"
+python3 - "$1" <<'PY'
+import hashlib
+import sys
+
+with open(sys.argv[1], "rb") as source:
+    print(f"{hashlib.file_digest(source, 'sha256').hexdigest()}  {sys.argv[1]}")
+PY
 EOF
 chmod +x "${MOCK_SHA256SUM_DIR}/sha256sum"
 
@@ -598,13 +604,16 @@ chmod +x "${MOCK_SHA256SUM_DIR}/sha256sum"
 
 MOCK_SHASUM_DIR="${TMP_DIR}/mock-shasum"
 mkdir -p "${MOCK_SHASUM_DIR}"
-cat >"${MOCK_SHASUM_DIR}/shasum" <<EOF
+cat >"${MOCK_SHASUM_DIR}/shasum" <<'EOF'
 #!/usr/bin/env bash
-if [[ "\${1:-}" == "-a" && "\${2:-}" == "256" ]]; then
-  printf '%s  %s\n' "${EXPECTED_HASH}" "\$3"
-else
-  exit 1
-fi
+[[ "${1:-}" == "-a" && "${2:-}" == "256" ]] || exit 1
+python3 - "$3" <<'PY'
+import hashlib
+import sys
+
+with open(sys.argv[1], "rb") as source:
+    print(f"{hashlib.file_digest(source, 'sha256').hexdigest()}  {sys.argv[1]}")
+PY
 EOF
 chmod +x "${MOCK_SHASUM_DIR}/shasum"
 
@@ -612,6 +621,7 @@ NO_SHA256SUM_DIR="${TMP_DIR}/no-sha256sum-bin"
 mkdir -p "${NO_SHA256SUM_DIR}"
 ln -s "$(type -P awk)" "${NO_SHA256SUM_DIR}/awk"
 ln -s "$(type -P bash)" "${NO_SHA256SUM_DIR}/bash"
+ln -s "$(type -P python3)" "${NO_SHA256SUM_DIR}/python3"
 ln -s "${MOCK_SHASUM_DIR}/shasum" "${NO_SHA256SUM_DIR}/shasum"
 
 (
