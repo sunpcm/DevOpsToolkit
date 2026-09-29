@@ -631,5 +631,11 @@ ln -s "${MOCK_SHASUM_DIR}/shasum" "${NO_SHA256SUM_DIR}/shasum"
   [[ "${res}" == "${EXPECTED_HASH}" ]]
 ) || fail "calculate_sha256 shasum 回退分支计算失败"
 
+# Unit test for effective_uid function in install.sh
+(
+  source "${ROOT_DIR}/install.sh"
+  [[ "$(effective_uid)" == "${EUID}" ]] || fail "effective_uid 返回值与 EUID 不一致"
+)
+
 "${ROOT_DIR}/install.sh" --help >/dev/null
 echo "安装器测试通过。"
