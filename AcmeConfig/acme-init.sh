@@ -365,4 +365,6 @@ main() {
     "  3. 使用 sudo acme-list 和 systemctl status acme-renew.timer acme-deploy.path 验证状态。"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
