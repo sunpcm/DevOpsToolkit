@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Generate a read-only inventory for the monthly dependency review."""
 
-from __future__ import annotations
-
 import argparse
 import json
 import re
