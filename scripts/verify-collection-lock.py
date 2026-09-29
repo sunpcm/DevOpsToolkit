@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Validate the single-source Ansible collection lock and its artifacts."""
 
-from __future__ import annotations
-
 import argparse
 import hashlib
 import json
