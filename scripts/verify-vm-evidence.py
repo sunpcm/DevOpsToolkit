@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Validate a one-time local VM-smoke report before manual release approval."""
 
-from __future__ import annotations
-
 import argparse
 import re
 from datetime import datetime, timedelta, timezone
