@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """Negative and positive checks for the Release VM-evidence gate."""
 
-from __future__ import annotations
-
 import runpy
 import tempfile
 from datetime import datetime, timedelta, timezone
