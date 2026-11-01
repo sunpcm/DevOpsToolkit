@@ -1,13 +1,14 @@
 # DevOpsToolkit TODO
 
-> 更新日期：2026-09-27
+> 更新日期：2026-11-01
 >
 > 原则：这里只保留尚未完成、能够独立验收的工作。完成项及历史证据移入
 > [`archive/progress/`](archive/progress/)，不要让历史记录掩盖当前优先级。
 
 ## 当前基线与边界
 
-- 2026-09-22 review 从干净的 `main@74ef67b` 开始；这是历史审计基线，不是当前开发分支。
+- 2026-11-01 核对远端主线为 `c3fca9a`；PR #26 已合并后续测试与清理。
+  主线已包含正式 `v0.1.10` 之后的维护提交，不应把主线状态等同于已发布资产。
 - 2026-09-24 独立 Review 对 PR #2 的权限、验签前解包和系统 Python 路径提出的问题
   已在后续提交修复；PR #2 已合并，合并提交为 `9d613e8`。PR #4 的 goenv 修复
   已另行独立复核并合并至 `de58ca2`；两次合并均不构成正式发布许可。
@@ -16,8 +17,8 @@
 - `AcmeConfig/` 不属于主线 Release，但根 README 仍向用户公开它；在完成下列 P0 安全整改前，不应宣称其为生产级。
 - 2026-09-23 控制面缺口是历史快照。2026-09-24 重新认证并回查后，`main`/`v*`
   ruleset、`release` 审批、immutable releases、Actions SHA pin 与 Dependabot 已启用；
-  已有一次 `v0.1.8` 真实 tag 尝试，但 Release 被取消。候选
-  `8646625` 的当次双版本 VM 验收及 `v0.1.9` 正式发布已通过；包装入口缺陷仍待修复交付。
+  `v0.1.8` 发布曾取消；后续 `v0.1.9`、`v0.1.10` 已正式发布。
+  包装入口缺陷已随 PR #11 进入 `v0.1.10`，正式资产安装、升级及回滚证据已归档。
 - 静态验证通过不等于真实 VM、升级回滚、SSH 登录切换或 ACME 证书续期已经完成验收。
 - 2026-09-24 起暂缓 `AcmeConfig/` 的真实 CA/DNS 与独立仓库工作：它不在主线 Release 包中，
   其真实 CA 门槛不阻塞主线开发与发布，已有静态检查仍保留；但在自身真实环境验收完成前
@@ -25,32 +26,21 @@
 
 ## 当前执行顺序
 
-1. P0-2/P0-3：发布候选代码提交 `8646625` 的 Validate 与同 SHA Ubuntu
-   22.04/24.04 一次性 VM 验收已通过，原件及摘要见
-   [`archive/progress/2026-09-26-release-vm-8646625.md`](archive/progress/2026-09-26-release-vm-8646625.md)。
-   该报告仅允许与精确的 `8646625` tag SHA 配对；若将本证据文档合并后改用新的
-   `main` SHA 作为发布候选，须对新 SHA 重新运行一次性 VM 验收。`v0.1.9` 已完成签名发布；
-   v0.1.9 的安装摘要缺少原始日志；该缺口已由下述 v0.1.10 完整交付原件补齐。
-   PR #10/#11 已合并，已验收的主线合并提交为 `571a5fef119055470d33ff478c0f69ba0524b1c5`，
-   合并后的 Validate（quality、Python 3.12/3.14）已通过。下一步是对新的候选 SHA
-   重新验收包装入口修复、完成交付并归档完整日志；旧 SHA 的 VM 报告不能复用。
-   `v0.1.8` 旧标签不可复用。用户已授权在验收与独立复核通过后对精确 SHA
-   `571a5fef119055470d33ff478c0f69ba0524b1c5` 创建并推送 `v0.1.10`；标签已按授权推送。
-   首轮新候选验收因控制端漂移到 2.21.2 中止，实例已清理，不作为通过证据。
-   用户随后授权安装临时 runtime，隔离环境已安装 core 2.21.4（含 PyYAML），
-   该 SHA 的完整 `verify-ansible.sh` 与双版本 VM 验收已重新通过（均退出码 0），
-   两版主路径和故障恢复后二次零变更，最终报告校验通过且实例已清理；
-   独立复核已 APPROVED，最终报告原件已归档；用户已批准受保护审批，`v0.1.10`
-   正式发布流程全绿，Release 来源为上述精确 SHA；正在核验正式资产，
-   Ubuntu 普通用户正式资产安装/升级/回滚与 PR #11 入口交付已独立复核通过。阶段记录见
-   [`archive/progress/2026-09-27-post-merge-readiness.md`](archive/progress/2026-09-27-post-merge-readiness.md)。
-   本文档草稿合并后将产生新 SHA；该新 SHA 不得复用 `571a5fe` 的 VM 报告。
-   已启动独立 Ubuntu 24.04.5 aarch64 一次性 VM 的正式 `v0.1.9 → v0.1.10`
-   安装、重复安装、回滚/前滚及 current/runtime 缺失负例验收已完成，实例已清理；
-   完整日志、脚本及复核边界见
-   [`archive/progress/2026-09-27-v010-release-install.md`](archive/progress/2026-09-27-v010-release-install.md)。
-2. P1/P2：并行推进不依赖正式 Release 的可靠性回归与文档工作。
-3. 暂缓范围：P0-1 ACME 真实签发与续期、P2 ACME 独立仓库迁移；不以静态或自签证据替代其上线门槛。
+1. 优先补齐 amd64、真实 WSL2 Ubuntu 24.04 和 macOS `sudo --system` 的真实环境证据；
+   已有 Ubuntu aarch64 证据不能替代这些平台。复杂旧 Go 配置迁移也仍缺实测。
+2. 在隔离目标与操作另获授权后，验证标签更新/删除、Release 资产替换和审批绕过的拒绝路径；
+   不以真实 `v0.1.10` 资产作破坏性测试。
+3. 下次发布另定候选 SHA，重新执行 P1-4 的同 SHA CI、8 天内双版本 VM 与受保护审批；
+   历史发布授权和 `571a5fe` 的旧报告均不适用于新 SHA，不复用 `v0.1.8` 标签。
+4. 暂缓范围：P0-1 ACME 真实签发与续期、P2 ACME 独立仓库迁移；不以静态或自签证据替代其上线门槛。
+
+`v0.1.10` 已完成正式资产安装、重复安装、升级、回滚/前滚及 current/runtime 缺失负例验收，
+实例已清理；完整日志、脚本及独立复核范围见
+[`archive/progress/2026-09-27-v010-release-install.md`](archive/progress/2026-09-27-v010-release-install.md)。
+已安装 runtime 的断网复用也已通过，见
+[`archive/progress/2026-09-27-v010-offline-runtime.md`](archive/progress/2026-09-27-v010-offline-runtime.md)。
+早期中止和恢复过程保留在
+[`archive/progress/2026-09-27-post-merge-readiness.md`](archive/progress/2026-09-27-post-merge-readiness.md)，不作为当前待办。
 
 ## P0：安全与发布阻塞项
 
@@ -140,7 +130,9 @@ Ubuntu 24.04 aarch64 已安装 runtime 的断网复用已通过独立复核，�
 这不证明完整安装器可以离线下载/安装，也不证明其他控制端平台。
 - [ ] 补齐尚缺的受支持架构/控制端真实证据，不能以 aarch64 代表 amd64 实机；
       macOS 系统安装与 WSL2 仍按 P1-5/P2 门槛执行。
-- [ ] 完成已独立复核的 VM 启动前版本防护和阶段文档交付；本地提交不等于主线已更新。
+
+VM 启动前版本防护及阶段文档已由 `3244f11` 随 PR #12 合并；版本与安装器锁定值不符时，
+会在创建实例前拒绝，不再是未交付项。
 
 验收证据：全新控制端不修改系统 Python，能够离线复用已安装 runtime；支持矩阵全部通过 `verify-ansible.sh` 和真实 VM smoke；
 重复安装 runtime 不产生变化，旧 runtime 的迁移/回滚路径有记录。
@@ -162,7 +154,8 @@ user-only 依赖重检、缺失共享 brew 的“警告并跳过”语义及对�
 1.27.1；Ubuntu 22.04/24.04 aarch64 的仅 Go 和全组件组合首次成功、二次 `changed=0`，
 Bash/Zsh 新登录、错误二进制不执行及真实 goenv v2 checkout 基本共存均已实测。
 最终草稿 head `9fe579f` 的六项 CI 全绿，重新独立 Review 已给出 APPROVED；
-2026-09-26 已授权合并为 `main@de58ca2`，但这不是正式 Release 验收。amd64 实机、复杂旧配置迁移及 apt 故障注入仍未覆盖。
+2026-09-26 已授权合并为 `main@de58ca2`；amd64 实机和复杂旧配置迁移仍未覆盖，
+apt 依赖重检负例的后续补证见下文。
 旧标签失败证据见 [`archive/progress/2026-09-25-user-profile-p1-2-vm.md`](archive/progress/2026-09-25-user-profile-p1-2-vm.md)；
 修复后的 VM 报告已随 [PR #4](https://github.com/sunpcm/DevOpsToolkit/pull/4) 合并：
 [`archive/progress/2026-09-25-goenv-reviewfix-04c7534.md`](archive/progress/2026-09-25-goenv-reviewfix-04c7534.md)。
@@ -186,6 +179,9 @@ Shell 关闭但语言工具开启、Oh My Zsh 约束及 user-only 依赖例外�
 [`archive/progress/2026-09-26-p12-login-completion.md`](archive/progress/2026-09-26-p12-login-completion.md)。
 此结论限于已验收的 aarch64 组合，不代表正式 Release 同 SHA 完整 VM 验收、
 amd64、真实 WSL2 或复杂旧 Go 配置迁移完成；发布门槛仍在 P0-3/P1-4 保留。
+
+- [ ] 补齐 amd64 用户组件组合及复杂旧 Go 配置迁移的真实环境回归。
+- [ ] 补齐 Ubuntu 24.04 的 apt 报告成功但命令缺失负例；现有真实 apt 证据限于 22.04。
 
 验收证据：每种受支持组合在干净 HOME 中执行两次，第二次 `changed=0`；新登录 Shell 能找到所选工具，未选工具不会被意外加载或删除。
 
@@ -259,7 +255,7 @@ latest/固定版本、签名校验、重复安装、普通用户入口及原子�
 [`archive/progress/2026-09-23-doctor-p2-vm.md`](archive/progress/2026-09-23-doctor-p2-vm.md)；
 `v0.1.9` 已包含 doctor，普通用户执行记录见
 [`archive/progress/2026-09-27-v019-release-install.md`](archive/progress/2026-09-27-v019-release-install.md)；
-这不关闭包装入口修复、完整安装/回滚日志或新候选同 SHA VM 验收门槛。
+包装入口和完整安装/回滚日志已由 `v0.1.10` 证据补齐；新候选同 SHA VM 验收门槛仍保留。
 
 ## 完成规则
 
