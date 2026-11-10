@@ -17,9 +17,25 @@ jobs:
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
 
       - name: Generate read-only dependency report
+        id: audit
+        shell: bash
         run: |
-          python3 scripts/dependency-audit.py --output dependency-audit.md
-          cat dependency-audit.md >>"${GITHUB_STEP_SUMMARY}"
+          # 离线固定值一致性检查 + OSV 已知漏洞查询。无论是否发现漏洞、查询是否
+          # 未完成，都保留可读报告，再在后续步骤显式判定失败，避免被误报为「安全」。
+          set +e
+          python3 scripts/dependency-audit.py \
+            --check-security \
+            --output dependency-audit.md
+          audit_exit=$?
+          set -e
+          if [[ -f dependency-audit.md ]]; then
+            cat dependency-audit.md >>"${GITHUB_STEP_SUMMARY}"
+          else
+            echo "::error::依赖审计未能生成报告文件。"
+            audit_exit=1
+          fi
+          echo "audit_exit=${audit_exit}" >>"${GITHUB_OUTPUT}"
+          exit 0
 
       - name: Upload report
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -28,3 +44,9 @@ jobs:
           path: dependency-audit.md
           if-no-files-found: error
           retention-days: 90
+
+      - name: Fail on known vulnerabilities or incomplete check
+        if: steps.audit.outputs.audit_exit != '0'
+        run: |
+          echo "::error::依赖审计发现已知漏洞或查询未完成，请查看报告。"
+          exit 1

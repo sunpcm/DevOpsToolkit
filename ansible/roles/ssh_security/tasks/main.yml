@@ -12,15 +12,16 @@
   failed_when: false
   when: (ssh_transition_connection_port | int) != (ssh_port | int)
 
-- name: Inspect the active ssh.socket definition before accepting its listener
+- name: Inspect the effective ssh.socket listeners before accepting them
   become: true
   ansible.builtin.command:
     argv:
       - systemctl
-      - cat
-      - --no-pager
+      - show
       - ssh.socket
-  register: ssh_prepare_socket_definition
+      - --property=Listen
+      - --value
+  register: ssh_prepare_socket_listenstream
   changed_when: false
   failed_when: false
   when:
@@ -42,20 +43,42 @@
   changed_when: false
   when: (ssh_transition_connection_port | int) != (ssh_port | int)
 
+- name: Resolve listening process executables for the desired SSH port
+  become: true
+  ansible.builtin.command:
+    argv:
+      - python3
+      - -c
+      - |
+        import os, re, subprocess, sys
+        port = sys.argv[1]
+        out = subprocess.check_output(
+            ["ss", "-ltnp", "--no-header", "sport = :" + port], text=True
+        )
+        pids = sorted({p for line in out.splitlines() for p in re.findall(r"pid=(\d+)", line)})
+        for pid in pids:
+            try:
+                exe = os.readlink("/proc/" + pid + "/exe")
+            except OSError:
+                exe = ""
+            print(pid + "=" + exe)
+      - "{{ ssh_port }}"
+  register: ssh_listener_exe_probe
+  changed_when: false
+  failed_when: false
+  when: (ssh_transition_connection_port | int) != (ssh_port | int)
+
 - name: Refuse a desired SSH port owned by another service
   ansible.builtin.assert:
     that:
       - >-
-        (ssh_desired_port_listener.stdout | trim | length == 0)
-        or ('sshd' in ssh_desired_port_listener.stdout)
-        or (
-          ('systemd' in ssh_desired_port_listener.stdout)
-          and ((ssh_prepare_socket_state.stdout | default('') | trim) == 'active')
-          and (
-            ('ListenStream=' ~ (ssh_port | string))
-            in (ssh_prepare_socket_definition.stdout | default(''))
+        (ssh_desired_port_listener.stdout | default(''))
+        | ssh_security_port_is_free_or_owned(
+            ssh_port,
+            ssh_prepare_socket_state.stdout | default(''),
+            ssh_prepare_socket_listenstream.stdout | default(''),
+            ssh_listener_exe_probe.stdout | default('')
           )
-        )
     fail_msg: >-
       Refusing to move SSH to occupied port {{ ssh_port }}. The trusted port
       {{ ssh_transition_connection_port }} and current login remain unchanged.

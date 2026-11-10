@@ -3,6 +3,10 @@ profile: basic
 exclude_paths:
   - archive/
   - ansible/secrets.yml
+  - .verify-dev/
+  - .review/
+  - .venv/
+  - collections/
 mock_roles: []
 
 # 本项目刻意用 profile_* 等跨角色参数由调用方 playbook 传入，并使用 ansible_port 内置变量，

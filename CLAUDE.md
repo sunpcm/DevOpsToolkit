@@ -15,8 +15,14 @@ The README and most docs/prose are in Chinese; keep new user-facing text consist
 ## Common commands
 
 ```bash
-# Full static verification gate (run this before committing any change to ansible/, bin/, scripts/, tests/, install.sh)
-./tests/verify-ansible.sh
+# First-time local setup or dependency refresh (network access, repository-local .verify-dev/)
+./scripts/verify-dev.sh --bootstrap --python /path/to/python3.12-3.14
+
+# Full static verification gate using the pinned isolated environment
+./scripts/verify-dev.sh
+
+# Ansible-only static validation, reusing the same environment
+./scripts/verify-dev.sh --ansible-only
 
 # Ansible syntax check for a single playbook
 ansible-playbook --syntax-check -i 'localhost,' ansible/playbooks/wsl-bootstrap.yml
@@ -26,20 +32,21 @@ python3 tests/test-wizard.py
 ./tests/test-installer.sh
 ./tests/test-release.sh
 
-# Lint (matches CI in .github/workflows/env-check.yml)
-ansible-lint ansible
-yamllint .
-ruff check bin/devops-toolkit tests/test-wizard.py tests/test-user-profile.py tests/test-orchestration.py tests/test-vm-evidence.py tests/test-verify-collection-lock.py scripts/verify-collection-lock.py scripts/dependency-audit.py scripts/verify-vm-evidence.py
-shellcheck install.sh scripts/build-release.sh tests/*.sh bin/*   # skips bin/devops-toolkit (Python)
-
-# Build a release tarball locally (VERSION must match ^v[0-9]+\.[0-9]+\.[0-9]+)
-./scripts/build-release.sh v0.1.5 dist
+# Build a tarball locally only (VERSION must match ^v[0-9]+\.[0-9]+\.[0-9]+)
+# v0.1.11 is a patch-level documentation example; formal release still needs authorization
+# and a fresh remote tag check.
+./scripts/build-release.sh v0.1.11 dist
 
 # End-to-end smoke test against a throwaway VM (needs multipass installed)
 ./tests/multipass-smoke.sh
 ```
 
-CI (`env-check.yml`) runs the lint suite plus `verify-ansible.sh` against **ansible-core 2.21.4** on Python **3.12 and 3.14**. Ubuntu 22.04 remains a remote managed target, not a local control node.
+CI (`env-check.yml`) bootstraps the shared `scripts/verify-dev.sh` environment, runs the full static
+suite on Python 3.12, and runs `--ansible-only` with **ansible-core 2.21.4** on Python **3.12 and
+3.14**. Ubuntu 22.04 remains a remote managed target, not a local control node.
+`requirements-dev.txt` is the shared source for exact Python and Go quality-tool pins; CI passes its
+ansible-core expectation to `verify-dev.sh`, which rejects drift instead of silently using another
+version.
 
 ## Architecture
 
@@ -64,6 +71,10 @@ Role → playbook wiring: `system_base`, `account_create`, `root_profile`, `user
 ### Central configuration: `ansible/group_vars/all.yml`
 
 Single source of truth for every version, package list, and default toggle. **All upstream sources are pinned to immutable revisions** — Oh My Zsh / Linuxbrew / plugins to 40-char commit SHAs, uv to a version + SHA256 per arch. Repeated runs must stay reproducible and must not silently track upstream branches. When bumping a version, update it here deliberately.
+
+Security-driven pin changes in source do not remediate an already published signed Release. Do not
+describe the dependency issue as fixed until the updated pins are present in a validated Release
+artifact and the installation path has been tested.
 
 The wizard reads defaults out of this file (e.g. `project_default_version("node_version")`), so keep the `key: "value"` format greppable.
 

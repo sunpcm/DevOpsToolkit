@@ -67,6 +67,10 @@ config.local.yml
 /debug_*
 __pycache__/
 *.py[cod]
+/.verify-dev/
+/.venv/
+/.ruff_cache/
+/.review/
 
 # 文档临时文件
 # ===================

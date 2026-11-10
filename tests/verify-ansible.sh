@@ -1,6 +1,63 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+scan_project_public_key_candidates() {
+  local repo_root="${1}"
+  # Keep the historical long-key rule and add the standard 51-byte Ed25519
+  # wire form, whose fixed prefix plus 32-byte key encodes as 68 base64 chars.
+  local public_key_pattern='(ssh-(rsa|ed25519)|ecdsa-sha2-[^[:space:]]+|sk-[^[:space:]]+)[[:space:]]+AAAA[A-Za-z0-9+/]{80,}|ssh-ed25519[[:space:]]+AAAAC3NzaC1lZDI1NTE5AAAA[A-Za-z0-9+/]{44}'
+  local candidate_list
+  local relative
+  local path
+  local grep_status
+  local scan_result=0
+
+  if ! command -v git >/dev/null 2>&1; then
+    echo "错误：SSH 公钥候选源扫描需要 Git，但 git 命令不可用。" >&2
+    return 2
+  fi
+  if ! candidate_list="$(mktemp "${TMPDIR:-/tmp}/devops-toolkit-public-key.XXXXXX")"; then
+    echo "错误：无法创建 SSH 公钥候选源清单。" >&2
+    return 2
+  fi
+  if ! git -C "${repo_root}" ls-files -z -c -o --exclude-standard -- . \
+    >"${candidate_list}"; then
+    rm -f "${candidate_list}"
+    echo "错误：无法通过 Git 枚举 SSH 公钥候选源，拒绝静默跳过。" >&2
+    return 2
+  fi
+
+  while IFS= read -r -d '' relative; do
+    case "${relative##*/}" in
+      *.md|verify-ansible.sh)
+        continue
+        ;;
+    esac
+    path="${repo_root}/${relative}"
+    [[ -f "${path}" ]] || continue
+    if grep -HnE -- "${public_key_pattern}" "${path}"; then
+      scan_result=1
+      break
+    else
+      grep_status=$?
+    fi
+    if [[ "${grep_status}" -ne 1 ]]; then
+      echo "错误：无法读取 SSH 公钥候选源：${relative}" >&2
+      scan_result=2
+      break
+    fi
+  done <"${candidate_list}"
+
+  rm -f "${candidate_list}"
+  return "${scan_result}"
+}
+
+# Focused tests source this file to exercise the real guard function without
+# running the complete gate.
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+  return 0
+fi
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "${TMP_DIR}"' EXIT
@@ -39,6 +96,7 @@ bash -n \
   "${ROOT_DIR}/tests/test-installer.sh" \
   "${ROOT_DIR}/tests/test-release.sh" \
   "${ROOT_DIR}/tests/test-multipass-report.sh" \
+  "${ROOT_DIR}/tests/test-verify-ansible-source-boundary.sh" \
   "${ROOT_DIR}/tests/verify-idempotence.sh" \
   "${ROOT_DIR}/tests/multipass-smoke.sh" \
   "${ROOT_DIR}/AcmeConfig/acme-init.sh" \
@@ -73,9 +131,13 @@ python3 "${ROOT_DIR}/tests/test-user-profile.py"
 python3 "${ROOT_DIR}/tests/test-orchestration.py"
 python3 "${ROOT_DIR}/tests/test-vm-evidence.py"
 python3 "${ROOT_DIR}/tests/test-verify-collection-lock.py"
+python3 "${ROOT_DIR}/tests/test-dependency-audit.py"
+python3 "${ROOT_DIR}/tests/test-ssh-security.py"
 python3 "${ROOT_DIR}/AcmeConfig/tests/test_acme_manager.py"
 bash "${ROOT_DIR}/AcmeConfig/tests/test-log-permissions.sh"
 bash "${ROOT_DIR}/AcmeConfig/tests/test-validate-email.sh"
+bash "${ROOT_DIR}/tests/test-verify-dev.sh"
+bash "${ROOT_DIR}/tests/test-verify-ansible-source-boundary.sh"
 "${ROOT_DIR}/bin/devops-toolkit" --help >/dev/null
 [[ "$("${ROOT_DIR}/bin/devops-toolkit" --version)" == "development" ]]
 # 主推入口是 bash -c "$(curl ... install.sh)"，此时 BASH_SOURCE 为空；
@@ -164,6 +226,8 @@ if command -v shellcheck >/dev/null 2>&1; then
     "${ROOT_DIR}/bin/ansible-playbook" \
     "${ROOT_DIR}/bin/ubuntu-ssh-finalize" \
     "${ROOT_DIR}/scripts/build-release.sh" \
+    "${ROOT_DIR}/tests/verify-ansible.sh" \
+    "${ROOT_DIR}/tests/test-verify-ansible-source-boundary.sh" \
     "${ROOT_DIR}/tests/test-installer.sh" \
     "${ROOT_DIR}/tests/test-release.sh" \
     "${ROOT_DIR}/AcmeConfig/acme-init.sh" \
@@ -285,9 +349,39 @@ if ! grep -Eq 'ListenStream=.*port' \
   echo "错误：ssh_security 未通过 ssh.socket 绑定两阶段端口集合。" >&2
   exit 1
 fi
+# Ubuntu vendor units inherit BindIPv6Only=ipv6-only; the override must bind the
+# IPv4 and IPv6 families explicitly and gate [::] on kernel IPv6 availability,
+# otherwise an IPv6-disabled host fails the whole socket unit. The behavioral
+# regression (prefix ports, mixed listeners, single/dual-stack rendering) lives
+# in tests/test-ssh-security.py, invoked above.
+if ! grep -Eq 'ListenStream=0\.0\.0\.0:' \
+  "${ssh_security_role}/templates/ssh.socket-override.conf.j2" 2>/dev/null || \
+   ! grep -Fq 'ListenStream=[::]:' \
+  "${ssh_security_role}/templates/ssh.socket-override.conf.j2" 2>/dev/null || \
+   ! grep -Fq 'ssh_ipv6_available' \
+  "${ssh_security_role}/templates/ssh.socket-override.conf.j2" 2>/dev/null || \
+   ! grep -Fq 'BindIPv6Only=ipv6-only' \
+  "${ssh_security_role}/templates/ssh.socket-override.conf.j2" 2>/dev/null; then
+  echo "错误：ssh.socket 覆盖未显式绑定 IPv4/IPv6 双栈或缺失 IPv6 可用性门控。" >&2
+  exit 1
+fi
 if ! grep -Fq 'ssh.socket-override.conf.j2' \
   "${ssh_security_role}/tasks/configure.yml" 2>/dev/null; then
   echo "错误：ssh_security 的任务未写入 ssh.socket 端口覆盖文件。" >&2
+  exit 1
+fi
+if ! grep -Fq 'AF_INET6' \
+  "${ssh_security_role}/tasks/configure.yml" 2>/dev/null || \
+   ! grep -Fq 'socket.SOCK_STREAM' \
+  "${ssh_security_role}/tasks/configure.yml" 2>/dev/null; then
+  echo "错误：ssh.socket 的 IPv6 可用性未通过真实 AF_INET6 绑定能力探针校验。" >&2
+  exit 1
+fi
+if ! grep -Fq '/proc/' \
+  "${ssh_security_role}/tasks/main.yml" 2>/dev/null || \
+   ! grep -Fq 'ssh_listener_exe_probe' \
+  "${ssh_security_role}/tasks/main.yml" 2>/dev/null; then
+  echo "错误：SSH 端口占用检查未通过 /proc/PID/exe 正向确认监听进程。" >&2
   exit 1
 fi
 if ! grep -Eq 'name:[[:space:]]*ssh\.socket' \
@@ -333,13 +427,13 @@ if grep -nE 'host_key_checking[[:space:]]*=[[:space:]]*False|become[[:space:]]*=
   exit 1
 fi
 
-if grep -R -nE \
-  --exclude-dir=.git \
-  --exclude='verify-ansible.sh' \
-  --exclude='*.md' \
-  '(ssh-(rsa|ed25519)|ecdsa-sha2-[^[:space:]]+|sk-[^[:space:]]+)[[:space:]]+AAAA[A-Za-z0-9+/]{80,}' \
-  "${ROOT_DIR}"; then
+public_key_scan_status=0
+scan_project_public_key_candidates "${ROOT_DIR}" || public_key_scan_status=$?
+if [[ "${public_key_scan_status}" -eq 1 ]]; then
   echo "错误：仓库中发现疑似真实 SSH 公钥；请改用占位符或环境专用加密变量。" >&2
+  exit 1
+elif [[ "${public_key_scan_status}" -ne 0 ]]; then
+  echo "错误：SSH 公钥候选源扫描未能完成，拒绝静默跳过。" >&2
   exit 1
 fi
 

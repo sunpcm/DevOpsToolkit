@@ -2,6 +2,22 @@
 
 推荐通过 GitHub Release 安装固定构建产物。安装器会校验 SHA256、Sigstore 签名身份、包内路径与版本，再切换统一命令 `devops-toolkit`。
 
+截至 2026-11-11，最新正式 Release 是 `v0.1.10`，来源提交为
+`571a5fef119055470d33ff478c0f69ba0524b1c5`。本文校准时的 `main` 为
+`1c316b84816a87e6b7b6a8dd3ecac58d30943697`，包含正式 Release 之后的提交；
+安装 `v0.1.10` 得到的是不可变签名资产，不包含此后进入 `main` 的改动。
+
+`v0.1.10` 仍包含 uv `0.9.18` 和旧 NVM 固定 commit。独立审计确认这两个旧固定值存在已知漏洞
+记录，因此该版本只是一项历史签名资产，不能无条件作为当前生产安全基线。当前候选源码已固定
+uv `0.13.7`、NVM `v0.41.0`
+（commit `4e8758a801eea9479b32a904f31093e410ddaba4`）、Node `24.22.2` 和 Go `1.27.3`。
+2026-11-11 已在一次性 Ubuntu 22.04/24.04 ARM64 VM 上完成限定的 user-only 组件升级验收：
+第二次运行满足 `changed=0`、`unreachable=0`、`failed=0`，严格主机指纹 SSH 后的新
+Bash/Zsh 登录版本正确，旧 goenv v2 + Go `1.26.7`、插件与自定义 Go 策略 hash 未变，
+旧 Node `24.11.1` 和托管 Go `1.27.1` 仍可运行，NVM 用户文件保留。该结果只覆盖组件升级，
+不替代完整候选或 Release 验收；修复尚未发布，不能把当前源码更新当作对 `v0.1.10`
+已安装资产的修复。
+
 ## 快速安装
 
 新 Ubuntu 或 WSL 已经以 root 登录时：
@@ -42,7 +58,10 @@ Ubuntu 22.04 / Python 3.10 可作为远程受管目标，但不支持本机或 W
 只支持 x86_64/aarch64 的 Ubuntu 24.04；macOS 控制端支持 x86_64/arm64。WSL 初始化只支持
 Ubuntu 24.04 + WSL2，WSL1 会在任何 apt 或系统配置前被拒绝。user-only 的可选系统依赖安装
 只允许 x86_64/aarch64 的 Ubuntu 22.04/24.04；纯 HOME 模式不需要该 apt 边界。
-这项迁移尚未发布；已发布的 `v0.1.7` 仍按其签名包内代码运行，不能把本段当作该版本的运行时保证。
+受支持的 Ansible 控制端迁移已随 `v0.1.9`、`v0.1.10` 正式发布：`v0.1.9` 已提供
+Python 3.12–3.14、隔离 `ansible-core 2.21.4` runtime 和能力输出；`v0.1.10`
+补齐 `current/bin/*` 物理路径解析及完整安装/回滚证据。上述边界适用于最新正式版
+`v0.1.10`，不适用于仍要求旧控制端基线的历史版本。
 
 ## 安装器验证顺序
 
@@ -60,16 +79,16 @@ Ubuntu 24.04 + WSL2，WSL1 会在任何 apt 或系统配置前被拒绝。user-o
 
 ## 固定版本和安装选项
 
-生产环境推荐固定版本：
+历史签名资产安装示例（`v0.1.10` 仍含上述旧依赖，不代表当前安全基线）：
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/sunpcm/DevOpsToolkit/main/install.sh)" -- --version v0.1.7
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/sunpcm/DevOpsToolkit/main/install.sh)" -- --version v0.1.10
 ```
 
 也可以通过环境变量指定：
 
 ```bash
-DEVOPS_TOOLKIT_VERSION=v0.1.7 \
+DEVOPS_TOOLKIT_VERSION=v0.1.10 \
   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/sunpcm/DevOpsToolkit/main/install.sh)"
 ```
 
@@ -93,13 +112,15 @@ DEVOPS_TOOLKIT_VERSION=v0.1.7 \
 
 ## 升级
 
-重新执行安装命令即可升级到 latest。安装器会保留旧版本目录；重复安装相同版本会复用已验证文件，并确保
-该版本的 Ansible collections 已就绪。
+重新执行安装命令可解析当前 latest。此时 latest 仍是含旧依赖的 `v0.1.10`，重复执行不能把它
+升级为尚未发布的源码候选；待包含安全修复的正式 Release 发布并完成安装验收后，才能把 latest
+作为相应修复的分发路径。安装器会保留旧版本目录；重复安装相同版本会复用已验证文件，并确保该版本
+的 Ansible collections 已就绪。
 
-升级到指定版本：
+安装或升级到指定版本：
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/sunpcm/DevOpsToolkit/main/install.sh)" -- --version v0.2.0 --no-run
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/sunpcm/DevOpsToolkit/main/install.sh)" -- --version v0.1.10 --no-run
 devops-toolkit --version
 ```
 
@@ -115,7 +136,8 @@ devops-toolkit --version
 先确认旧版本可执行，再原子替换 `current`。root 安装示例：
 
 ```bash
-test -x /opt/devops-toolkit/releases/v0.1.7/bin/devops-toolkit
+export PREVIOUS_VERSION=v0.1.9
+test -x "/opt/devops-toolkit/releases/${PREVIOUS_VERSION}/bin/devops-toolkit"
 python3 - <<'PY'
 import os
 from pathlib import Path
@@ -123,7 +145,7 @@ from pathlib import Path
 base = Path("/opt/devops-toolkit")
 temporary = base / ".current.rollback"
 temporary.unlink(missing_ok=True)
-temporary.symlink_to("releases/v0.1.7")
+temporary.symlink_to(f"releases/{os.environ['PREVIOUS_VERSION']}")
 os.replace(temporary, base / "current")
 PY
 devops-toolkit --version
@@ -165,13 +187,13 @@ bash install.sh --capabilities-json
 所以 `component=installer` 时 `version=null`；安装后的向导和 Playbook 包装入口从签名包内
 `VERSION` 读取具体 tag，源码 checkout 显示 `development`。包装入口的 `entrypoint` 指出
 具体 Playbook；`collections` 从包内 lock 文件读取。该输出描述**支持能力**，不表示本机
-runtime、collections、SSH 或目标 OS 现状已经通过检查；运行状态须由未来的只读 doctor
+runtime、collections、SSH 或目标 OS 现状已经通过检查；运行状态须由只读 doctor
 和真实环境验收证明。`--version` 在安装器中仍表示选择要安装的 Release，不是查询命令。
 `schema=1` 的字段名与类型保持兼容；如需不兼容变更，必须升级 schema 并同步批量审计脚本。
 
 ## 只读 doctor / preflight
 
-以下功能目前只在未发布的本地开发分支验证；已发布的 `v0.1.7` 不包含它。
+只读 doctor 已包含在 `v0.1.9` 和最新正式版 `v0.1.10` 中。
 安装后运行 `devops-toolkit doctor`；源码 checkout 用 `./bin/devops-toolkit doctor`。
 默认只检查当前控制端的受支持平台、Python、Ansible runtime、锁定 collection 元数据、
 `ansible.cfg` 的 host-key/全局提权设置、可用磁盘和到 GitHub/Docker 官方端点的 TCP/443。
@@ -255,8 +277,9 @@ curl -I https://tuf-repo-cdn.sigstore.dev
 ### 内置 collections 与旧版本兼容
 
 从 `v0.1.5` 起，Release tarball 内置并签名覆盖固定版本的 Ansible collections。
-本次未发布的 2.21 迁移将内置 `ansible.posix`、`community.general` 和其传递依赖
-`community.library_inventory_filtering_v1`。Release 构建先按 `ansible/collections.lock.json` 校验原始
+2.21 控制端迁移已随 `v0.1.9`、`v0.1.10` 正式发布，内置 `ansible.posix`、
+`community.general` 和其传递依赖 `community.library_inventory_filtering_v1`。
+Release 构建先按 `ansible/collections.lock.json` 校验原始
 tarball SHA256，再校验安装后的 manifest；安装器会核对 lock 摘要、manifest 和版本标记。安装阶段不再访问 Ansible Galaxy；
 这消除了 GitHub 可达但 Galaxy 不可达时的安装单点。
 
@@ -278,9 +301,9 @@ curl -fsSL -o /tmp/devops-toolkit-install.sh \
   https://raw.githubusercontent.com/sunpcm/DevOpsToolkit/main/install.sh
 
 sudo env \
-  DEVOPS_TOOLKIT_DOWNLOAD_BASE="https://可信镜像.example/DevOpsToolkit/releases/download/v0.1.4" \
+  DEVOPS_TOOLKIT_DOWNLOAD_BASE="https://可信镜像.example/DevOpsToolkit/releases/download/v0.1.10" \
   DEVOPS_TOOLKIT_COSIGN_BASE="https://可信镜像.example/sigstore/cosign/releases/download/v3.1.1" \
-  bash /tmp/devops-toolkit-install.sh --version v0.1.4
+  bash /tmp/devops-toolkit-install.sh --version v0.1.10
 ```
 
 `DEVOPS_TOOLKIT_DOWNLOAD_BASE` 必须直接包含三个固定名资产；`DEVOPS_TOOLKIT_COSIGN_BASE`

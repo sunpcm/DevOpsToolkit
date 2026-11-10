@@ -5,6 +5,27 @@ DevOpsToolkit 的 Release 使用两层校验：
 1. SHA256 检查下载是否完整，并阻止同版本内容静默变化。
 2. Sigstore/Cosign 验证产物确实由本仓库的 Release workflow 在对应 tag 上通过 GitHub OIDC 签名。
 
+截至 2026-11-11，最新正式 Release 为 `v0.1.10`，来源提交是
+`571a5fef119055470d33ff478c0f69ba0524b1c5`；`main` 为
+`1c316b84816a87e6b7b6a8dd3ecac58d30943697`，含 Release 之后的提交。
+`v0.1.10` 安装器及本手册的固定示例都绑定正式 Release，不能替换成更新的 `main` 后继续沿用旧摘要。
+
+### 当前依赖安全状态
+
+2026-11-11 的独立审计确认，`v0.1.10` 中仍固化的 uv `0.9.18` 命中已知漏洞，
+其中包含官方 critical advisory；旧 NVM 固定 commit 也命中 CNA/CVE 记录。因此
+`v0.1.10` 是带已知依赖风险的历史签名资产，不能继续被无条件描述为当前生产安全基线。
+
+当前候选源码的中央 pin 已落地为 uv `0.13.7`、NVM `v0.41.0`
+（commit `4e8758a801eea9479b32a904f31093e410ddaba4`）、Node `24.22.2` 和 Go `1.27.3`。
+2026-11-11 已在一次性 Ubuntu 22.04/24.04 ARM64 VM 上完成限定的 user-only 组件升级验收：
+旧 uv/NVM/Node/Go 升级后，第二次运行满足 `changed=0`、`unreachable=0`、`failed=0`；
+严格主机指纹 SSH 后的新 Bash/Zsh 登录版本正确，旧 goenv v2 + Go `1.26.7`、插件及
+自定义 Go 策略 hash 未变，旧 Node `24.11.1` 和托管 Go `1.27.1` 仍可运行，NVM 用户文件保留。
+该结果只覆盖双 Ubuntu ARM64 user-only 组件升级，不替代精确候选 SHA 的完整 VM smoke、
+x86_64/WSL2、Release 打包与实际安装验收。源码修复尚未发布；发布 `v0.1.10` 之后的主线更新
+不会追溯修复已有签名资产。
+
 Release 包含三个固定名称资产：
 
 - `devops-toolkit.tar.gz`
@@ -19,7 +40,7 @@ Release 包含三个固定名称资产：
    并确认 tag commit 是当前 `origin/main` 的祖先。不能把另一个并行的 push 检查当作发布门禁。
 2. 在无发布权限的 job 中下载固定版本 Ansible collection 原始归档，按
    `ansible/collections.lock.json` 校验文件名、SHA256 和内部 manifest，再从这些已校验归档安装依赖；
-   原始归档和安装目录一起保存为仅保留一天的 workflow artifact。
+   原始归档和安装目录一起保存为保留 8 天的 workflow artifact。
 3. 验证通过后，等待受保护 `release` Environment 人工审批；审批人核对当次一次性 VM 报告
    原件、SHA256、来源 SHA 与同 SHA CI。通过后在全新 runner 上重新 checkout 同一 tag，
    只恢复上一步验证过的 collections；有发布权限的构建 job 不运行 PyPI 或 Ansible Galaxy 安装。
@@ -50,8 +71,10 @@ Release 包含三个固定名称资产：
 要求来源为 GitHub Actions 的 `quality`、Python 3.12/3.14 三项检查；`v*` tag 禁止
 更新/删除；`release` Environment 只允许 `v*` tag，要求 `sunpcm` 审批且不允许管理员
 强制绕过；immutable releases、仅 GitHub 官方 Action、完整 SHA pin、Dependabot alerts
-和 security updates 均已启用。草稿 PR #2 的检查成功**不能**替代新 tag、Environment
-审批和不可变资产的真实发布验收。详细 API 证据见
+和 security updates 均已启用。这些保护已支撑 `v0.1.9`、`v0.1.10` 的正向发布与审批；
+标签更新/删除、资产替换和审批绕过的破坏性负例仍未在隔离目标执行，因此不能宣称
+所有拒绝路径已经验收。草稿 PR #2 的检查成功也不能替代每次新 tag、Environment 审批和
+不可变资产的当次验收。详细 API 证据见
 [2026-09-24 发布门禁记录](../archive/progress/2026-09-24-release-gate-manual-vm.md)。
 
 以下是维护或重新配置时的清单；账号 2FA/恢复代码不在仓库 API 验证范围内，必须由账户持有人确认。
@@ -109,7 +132,8 @@ GitHub Actions 检查，采用 strict latest-code policy，且无 bypass。待�
 - 禁止更新和删除已经推送的 tag。
 - 保持仓库级 immutable releases 启用；它只保护启用后新发布的 Release，历史版本不能追溯变更。
 
-发布后不要复用版本号。需要修复时创建新版本，例如 `v0.1.1`。
+发布后不要复用版本号。`v0.1.2`–`v0.1.10` 均已占用，`v0.1.8` 的 Release 即使取消，
+对应标签也不能复用；需要修复时必须创建经过授权且当前未占用的新版本号。
 
 ### 5. 收紧 Actions
 
@@ -147,7 +171,25 @@ commit SHA，避免上游移动 tag 后改变执行代码。
 `.github/workflows/dependency-audit.yml` 每月一日及手工触发时运行
 `scripts/dependency-audit.py`，输出 Ansible、collections、Cosign、uv、NVM、goenv、Go、Node LTS 与
 GitHub Actions 的当前固定值、checksum 和官方复核入口。工作流只有 `contents: read`，只上传报告 artifact，
-不会创建 PR、修改依赖或自动合并。
+不会创建 PR、修改依赖或自动合并。手工完整检查使用：
+
+```bash
+python3 scripts/dependency-audit.py --check-security \
+  --output dependency-audit.md
+```
+
+默认模式离线检查固定值一致性；`--check-security` 额外通过 OSV API 查询精确 PyPI pin、
+Go 标准库、Node GIT tag、Cosign 源码 Go module，以及 NVM、goenv、Oh My Zsh、Linuxbrew
+和 Zsh 插件等精确 commit。当前查询**不覆盖** Ansible collections、uv/goenv/Cosign
+预编译二进制、actionlint/gitleaks 的模块坐标、apt/Homebrew、二进制 SBOM 或未登记的传递依赖。
+actionlint `1.7.7` 与 gitleaks `8.24.3` 已在 `requirements-dev.txt` 精确固定，但这不等于
+已完成其模块漏洞查询。
+
+2026-11-11 对当前声明覆盖范围的完整查询已完成并以状态 0 退出，当前 OSV 无匹配；该结果
+只适用于上述覆盖范围。任一网络、HTTP、JSON、响应格式或分页查询失败都会标记为“未完成”，
+发现有效漏洞、固定值一致性错误或任一未完成查询都会使脚本非零退出。报告仍会保留，工作流
+也会上传报告后显式失败；单次零匹配、查询覆盖有限或查询失败都不能外推为“无漏洞”、完整
+Release 安全认证或整机供应链认证。
 
 维护者查看报告后必须在官方来源核对支持周期与变更日志；更新通过独立 PR，重新复核归档 checksum，
 并通过静态门禁、篡改负向测试和一次性 VM smoke 后才能合并。高风险依赖禁止自动合并。
@@ -164,7 +206,7 @@ cosign version
 下载同一版本的三个资产：
 
 ```bash
-VERSION=v0.1.7
+VERSION=v0.1.10
 gh release download "${VERSION}" \
   --repo sunpcm/DevOpsToolkit \
   --pattern 'devops-toolkit.tar.gz*' \
@@ -213,13 +255,22 @@ git log -1 --show-signature
 确认工作区为空、测试通过，并核对 tag 指向：
 
 ```bash
-VERSION=v0.1.8  # 示例；必须换成尚未使用的新版本
-git tag -s "${VERSION}" -m "DevOpsToolkit ${VERSION}"
+VERSION=v0.1.11  # 截至 2026-11-11 核对未占用；实际发布须另行授权并实时查重
+git fetch --tags origin || exit 1
+RELEASE_SHA="$(git rev-parse HEAD)"
+test -z "$(git status --porcelain)" || exit 1
+test "${RELEASE_SHA}" = "$(git rev-parse origin/main)" || exit 1
+if git show-ref --verify --quiet "refs/tags/${VERSION}"; then
+  echo "版本号已经使用：${VERSION}" >&2
+  exit 1
+fi
+git tag -s "${VERSION}" "${RELEASE_SHA}" -m "DevOpsToolkit ${VERSION}"
 git show --show-signature "${VERSION}"
 git push origin "${VERSION}"
 ```
 
 `git tag -s` 需要提前配置 GPG 或 SSH signing key。不要在签名验证失败时改用未签名 tag 绕过规则。
+打标签和推送前必须取得明确授权；`v0.1.2`–`v0.1.10` 均不可复用。
 
 ## 仍然存在的边界
 
@@ -228,15 +279,15 @@ git push origin "${VERSION}"
 - 安装器本身来自可变的 `main`。高安全环境应先固定并审查安装器提交：
 
 ```bash
-INSTALLER_COMMIT="74ef67b11b760a63d53f4f8f975d5e19fcf07405"  # v0.1.7 示例
+INSTALLER_COMMIT="571a5fef119055470d33ff478c0f69ba0524b1c5"  # v0.1.10 来源提交
 curl -fsSLo /tmp/devops-toolkit-install.sh \
   "https://raw.githubusercontent.com/sunpcm/DevOpsToolkit/${INSTALLER_COMMIT}/install.sh"
 printf '%s  %s\n' \
-  '9e2d23881cbee4afbbbcf765000e4d30cbb04451ae1f3394b367a986aa8e9c1d' \
+  '4cc4af56e1a6e828e5386f35488b7e89065b5182a0772951face51cea356101a' \
   /tmp/devops-toolkit-install.sh | sha256sum --check --strict
 less /tmp/devops-toolkit-install.sh
-/bin/bash /tmp/devops-toolkit-install.sh --version v0.1.7
+/bin/bash /tmp/devops-toolkit-install.sh --version v0.1.10
 ```
 
-- 上例 SHA256 来自仓库 `v0.1.7` 的 `install.sh`，仅适用于该示例提交；切换版本或提交必须独立复核。
+- 上例 SHA256 来自 `v0.1.10` 来源提交的 `install.sh`，仅适用于该提交；切换版本或提交必须独立复核。
 - Cosign 信任根和透明日志验证需要网络。网络受限时安装器会安全失败，不会降级为只检查 SHA256。

@@ -15,7 +15,11 @@ Multipass 的 `exec`、`mount` 和常规停止操作依赖虚拟机中的 SSH 22
 
 Ubuntu 22.10 及以后（含 24.04 LTS）默认用 systemd socket 激活 OpenSSH：监听端口由 `ssh.socket`
 的 `ListenStream=` 决定，`sshd_config` 里的 `Port` 会被忽略。因此 `ssh_security` 角色会检测 socket
-激活，并写入 `/etc/systemd/system/ssh.socket.d/99-devops-toolkit.conf` 来收敛端口；22.04 等传统
+激活，并写入 `/etc/systemd/system/ssh.socket.d/zz-devops-toolkit.conf` 来收敛端口。`zz-` 排序必须晚于
+generator 的 `/run/systemd/generator/ssh.socket.d/addresses.conf`，否则 generator 会重置
+`ListenStream=` 并重新引入不可用的 IPv6。升级时，只有首个非空行精确匹配
+`# Managed by DevOpsToolkit` 的旧 `99-devops-toolkit.conf` 才会备份为 `.disabled` 后移除；未知
+用户文件保留。22.04 等传统
 `ssh.service` 系统不受影响。
 
 若这一步缺失，24.04 上改端口不会生效，叠加 UFW 只放行新端口，会把主机锁死——这正是本测试覆盖
@@ -72,11 +76,13 @@ Release 证据。排障结束后应立即运行文末的严格命名清理命令
 验证受控 uv 镜像入口：
 
 ```bash
-DEVOPS_TOOLKIT_UV_RELEASE_BASE_URL="https://可信镜像.example/astral-sh/uv/releases/download/0.9.18" \
+DEVOPS_TOOLKIT_UV_RELEASE_BASE_URL="https://可信镜像.example/astral-sh/uv/releases/download/0.13.7" \
   ./tests/multipass-smoke.sh run --with-uv
 ```
 
 镜像目录必须包含仓库当前 `uv_artifacts` 对应的文件；下载后仍执行固定 SHA256 校验。
+该示例验证当前候选源码的 uv `0.13.7` pin，不代表已发布的 `v0.1.10` 资产已经更新；
+完整候选/发布 smoke 仍按发布门禁要求对精确 SHA 执行。
 
 如果 Mac 使用仅监听本机的代理，且 Multipass VM 受到 Fake-IP DNS 影响，可以先通过临时 TCP 转发
 向 VM 暴露一个无认证的 HTTP 代理，再执行：
@@ -116,6 +122,10 @@ MULTIPASS_TEST_HOSTS="ports.ubuntu.com=<查询到的 IPv4>,download.docker.com=<
 
 `--with-uv` 依赖 VM 能稳定访问 GitHub Release assets；默认系统级测试不启用它，避免下载波动掩盖
 SSH、UFW、Docker、Nginx 和幂等性结果。`--with-faults` 本身不启用 uv。
+
+真实 Ubuntu 24.04 限定路径已验证：IPv6 内核能力被拒绝时只保留 v4 listener，恢复后可恢复双栈；
+第二次运行 `changed=0`，迁移到新端口后严格主机校验的密钥登录成功，未知 socket 配置保留。该结果
+不等于完整候选或正式 Release 已验收。
 
 只读检查未切换 SSH 端口的实例：
 

@@ -9,6 +9,10 @@
 README.md
 *.md
 docs/
+.verify-dev/
+.review/
+.venv/
+collections/
 
 # 示例和模板文件
 *.example
