@@ -1,9 +1,17 @@
 # Managed by DevOpsToolkit
 # On socket-activated OpenSSH (Ubuntu 22.10+, including 24.04 LTS) the listening
 # port is owned by ssh.socket, not by "Port" in sshd_config. Clear the inherited
-# ListenStream and bind the managed transition ports here.
+# ListenStream and bind both address families explicitly. Ubuntu vendor units
+# set BindIPv6Only=ipv6-only, so a bare port would drop IPv4 access.
+# The [::] listener is only emitted when the kernel exposes IPv6 sockets; an
+# unconditional [::] bind would fail the whole socket unit on IPv6-disabled
+# hosts, dropping the trusted IPv4 listener too.
 [Socket]
 ListenStream=
+BindIPv6Only=ipv6-only
 {% for port in ssh_listener_ports | unique %}
-ListenStream={{ port }}
+ListenStream=0.0.0.0:{{ port }}
+{% if ssh_ipv6_available | default(false) | bool %}
+ListenStream=[::]:{{ port }}
+{% endif %}
 {% endfor %}

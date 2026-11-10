@@ -21,13 +21,30 @@ Release workflow 门禁。当前 `main` 规则要求 quality 与 Python 3.12/3.1
 ```bash
 git fetch origin
 git switch main && git pull --ff-only
-./tests/verify-ansible.sh          # release.yml 的门禁就是它
+./scripts/verify-dev.sh             # release.yml 复用同一静态验证入口
 git status --short                 # 应为空
 test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" || exit 1
 ```
 
 `release.yml` 会在同一 tag SHA 上调用完整 `env-check.yml`，quality 与 Ansible/Python 矩阵任一失败都会
 阻止发布；另一个 push 事件触发的 Validate 运行不能替代这条同 SHA 门禁。
+首次使用或 `requirements-dev.txt` 变化后，先显式运行
+`./scripts/verify-dev.sh --bootstrap --python /path/to/python3.12-3.14` 创建仓库内隔离环境。
+
+发布前必须核对目标 SHA 实际引用的依赖 pin 和已确认的 security advisory。源码中的 pin 更新
+只有在进入候选、通过依赖检查与实际安装验收、再打入签名 Release 后才算修复已发布资产；
+不能把主线更新描述为已经修复旧的 `v0.1.10` 签名包，也不能把单次数据库零匹配当作完整安全保证。
+候选依赖审计必须运行：
+
+```bash
+python3 scripts/dependency-audit.py --check-security \
+  --output /tmp/devops-toolkit-dependency-audit.md
+```
+
+脚本会保留报告；退出码非零可能表示发现有效漏洞、固定值不一致，或任一 OSV 查询因网络、
+HTTP、JSON、响应格式或分页上限而未完成。退出 0 只表示脚本声明覆盖的目标均完成查询且当前
+未匹配；它不覆盖 collections、uv/goenv/Cosign 预编译二进制、
+apt/Homebrew、二进制 SBOM 或未登记的传递依赖，不能据此宣称全面无漏洞。
 
 推 tag 前还必须在隔离测试主机上，为将要发布的精确 commit 手工运行一次性 VM 验收。
 该主机须事先具备 Multipass、SSH、Python 3.12–3.14、ansible-core 2.21.4 和已锁定的
@@ -61,15 +78,16 @@ VM 报告和中间产物未过期，不能因其中一项尚在有效期内就�
 证明本地 VM 报告的真实性。
 
 审批前还要检查 `.github/workflows/release.yml` 中已验证 collections 中间产物的
-`retention-days`。历史 `main@de58ca2` 为 1 天，短于 VM 报告的 8 天有效期；
-本修复改为 8 天，但它不延长 VM 报告有效期，也不恢复已经过期的中间产物。
+`retention-days` 为 `8`。它与 VM 报告的 8 天有效期一致，但不会延长过期报告，
+也不恢复已经过期的中间产物。
 若等待审批导致中间产物过期，不要绕过门禁或手工创建 Release，应保留失败现场，
 修复工作流后按新候选 SHA 重做同 SHA VM 验收，并使用未占用的新版本号。
 
 ```bash
-# 版本号遵循 vMAJOR.MINOR.PATCH；v0.1.8 已使用且发布取消，不可复用。
-# v0.1.9 仅是示例，打标签前仍须明确授权并确认未被占用。
-VERSION=v0.1.9
+# 版本号遵循 vMAJOR.MINOR.PATCH。v0.1.2–v0.1.10 均已占用，其中 v0.1.8 的
+# Release 虽取消，标签也不可复用。v0.1.11 截至 2026-11-11 核对未占用，仅作为
+# 下一个 patch 的文档示例；实际打标签和 push 前仍须取得明确授权，并实时重新查重。
+VERSION=v0.1.11
 git fetch --tags origin || exit 1
 if git show-ref --verify --quiet "refs/tags/${VERSION}"; then
   echo "版本号已经使用：${VERSION}" >&2
@@ -137,11 +155,12 @@ curl -fsSL -o /dev/null -w "%{http_code}\n" \
 若 Release 工作流失败或产物缺失（例如误建过同名 Release），先保留失败的 tag、Release、
 Actions 日志和资产现场，确认失败原因。不要删除或重指向已推送的 tag，也不要尝试覆盖已有
 Release；启用 immutable releases 后，这些操作本应被拒绝。修复代码、重新通过同 SHA 的
-质量与 VM 门禁，再使用尚未占用的新 patch 版本。以下 `v0.1.9` 仅为示例：
+质量与 VM 门禁，再取得新版本授权并使用尚未占用的版本。以下 `v0.1.11`
+仅作为相邻 patch 的文档示例；执行前必须再次确认该 tag 仍未占用：
 
 ```bash
 # 在新版本代码已合并到 main，且完成全部发布门禁后执行。
-VERSION=v0.1.9
+VERSION=v0.1.11
 git fetch --tags origin || exit 1
 if git show-ref --verify --quiet "refs/tags/${VERSION}"; then
   echo "版本号已经使用：${VERSION}" >&2
@@ -157,7 +176,7 @@ git push origin "${VERSION}"
 
 ```bash
 sudo /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/sunpcm/DevOpsToolkit/main/install.sh)"
-# 固定版本：追加 -- --version <已审查的 tag>
+# 固定刚发布的版本：在上述命令末尾追加 -- --version "${VERSION}"
 ```
 
 安装器会同时校验 SHA256 与 Sigstore 身份，任一失败都不会降级安装。

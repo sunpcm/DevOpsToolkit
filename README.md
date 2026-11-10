@@ -38,13 +38,27 @@ Release 构建会依据 `ansible/collections.lock.json` 校验原始 tarball SHA
 仓库或 Homebrew formula 等滚动输入，不能把它理解为整机 bit-for-bit 可复现；完整边界见
 [发布供应链安全](docs/SUPPLY_CHAIN_SECURITY.md)。
 
-生产环境建议固定版本：
+可安装的正式版本示例（固定 Release 资产，不代表当前生产安全基线）：
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/sunpcm/DevOpsToolkit/main/install.sh)" -- --version v0.1.7
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/sunpcm/DevOpsToolkit/main/install.sh)" -- --version v0.1.10
 ```
 
-`v0.1.7` 是 2026-09-22 review 时的最新已发布版本；固定版本时应替换为你已审查的实际 tag。
+截至 2026-11-11，最新正式 Release 是 `v0.1.10`，来源提交为
+`571a5fef119055470d33ff478c0f69ba0524b1c5`；本文校准时的 `main` 为
+`1c316b84816a87e6b7b6a8dd3ecac58d30943697`，包含正式 Release 之后的提交。
+`--version v0.1.10` 安装的是签名 Release 资产，不能把更新的 `main` 源码等同于该资产。
+
+> **依赖安全边界：** `v0.1.10` 签名资产仍包含 uv `0.9.18` 和旧 NVM 固定 commit。
+> 独立审计确认这两个旧固定值存在已知漏洞记录，因此不能无条件把 `v0.1.10` 推荐为
+> 当前生产安全基线。当前候选源码已固定 uv `0.13.7`、NVM `v0.41.0`
+> （commit `4e8758a801eea9479b32a904f31093e410ddaba4`）、Node `24.22.2` 和
+> Go `1.27.3`；2026-11-11 已在一次性 Ubuntu 22.04/24.04 ARM64 VM 上完成限定的
+> user-only 组件升级验收，包括二次运行 `changed=0`、`unreachable=0`、`failed=0`、
+> 新 Bash/Zsh 登录版本、旧工具共存和 NVM 用户文件保留。该结果只证明上述组件升级范围，
+> 不代表完整候选或 Release 验收；修复尚未发布，源代码更新不会修复已经发布的
+> `v0.1.10` 资产。
+
 注意：这里只固定了 Release，未固定安装器本身。完整的安装位置、
 `--no-run`、受限网络镜像、升级、回滚和供应链边界见
 [安装、升级与回滚](docs/INSTALLATION.md)。
@@ -208,22 +222,29 @@ vim ansible/inventories/user-only.ini
 - [交互式向导说明](docs/INTERACTIVE.md)
 - [配置、安全与故障排查](docs/CONFIGURATION.md)
 - [Multipass 真实环境测试](docs/MULTIPASS_TESTING.md)
-- [ACME 证书管理（安全重构中，暂勿用于生产）](AcmeConfig/README.md)；[独立维护边界决策](docs/ACME_BOUNDARY.md)
+- [ACME 证书实验组件（暂缓，未进入主线 Release，暂勿用于生产）](AcmeConfig/README.md)；[独立维护边界决策](docs/ACME_BOUNDARY.md)
 - [历史文档](archive/README.md)
 
 ## 验证代码
 
 ```bash
-./tests/verify-ansible.sh
+# 首次或依赖更新后显式创建仓库内隔离环境
+./scripts/verify-dev.sh --bootstrap --python /path/to/python3.12-3.14
+
+# 执行全部静态检查
+./scripts/verify-dev.sh
 ```
 
-该检查覆盖新旧入口的 Bash 语法、全部 Playbook 的 Ansible 语法、安装器失败边界、Release 包内容、Sigstore 身份参数、Action 固定引用，以及全局提权、主机指纹和弃用模块检查。
+该入口使用 `requirements-dev.txt` 中固定的工具版本和 `.verify-dev/` 隔离环境，覆盖 ShellCheck、
+Ansible lint/语法、YAML、Ruff、workflow 语法、secret 扫描、安装器失败边界、Release 包内容、
+Sigstore 身份参数、Action 固定引用，以及全局提权、主机指纹和弃用模块检查。
 
 Ubuntu 22.04/24.04 系统级验证使用严格命名的一次性实例，详见
 [Multipass 真实环境测试](docs/MULTIPASS_TESTING.md)。不要在长期保留的 Multipass 实例上测试 SSH 端口切换。
 
 ## 历史实现
 
-统一实现已完成 22.04/24.04 真实 VM 验证，旧 `wsl-dev/`、`ubuntu-server/` 入口和根目录
-兼容 Playbook 已全部移入 `archive/`。它们仅用于追溯，不能执行、不能作为配置来源，也不会进入
-Release 包。当前只支持 `bin/` 与 `ansible/` 下的入口和实现。
+旧 `wsl-dev/`、`ubuntu-server/` 入口和根目录兼容 Playbook 已全部移入 `archive/`。
+它们仅用于追溯，不能执行、不能作为配置来源，也不会进入 Release 包。历史报告只证明其记录的
+精确提交和平台，不能替代当前候选的全量真实验收。当前只支持 `bin/` 与 `ansible/`
+下的入口和实现；尚未关闭的验收项见 [TODO](TODO.md)。

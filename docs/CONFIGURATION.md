@@ -66,20 +66,20 @@ git_user_email: "you@example.com"
 git_editor: nvim
 ```
 
-工具版本均集中配置并按实际版本校验。uv 不执行远程安装脚本，而是按 CPU 架构下载固定版本的官方发布包，先校验仓库内固定的 SHA256，再复制 `uv`/`uvx`：
+工具版本均集中配置并按实际版本校验。uv 不执行远程安装脚本，而是按 CPU 架构下载固定版本的官方发布包，先校验仓库内固定的 SHA256，再复制 `uv`/`uvx`。下例与当前候选源码中的中央 pin 一致，但候选修复尚未进入 Release，也不代表已发布的 `v0.1.10` 资产；后者仍固化 uv `0.9.18` 和旧 NVM commit：
 
 ```yaml
-uv_version: "0.9.18"
+uv_version: "0.13.7"
 uv_artifacts:
   x86_64:
     archive: uv-x86_64-unknown-linux-gnu.tar.gz
-    sha256: c2def3db178ade63933fa15ffc96e882c196ce53e06173dcee05b36c5f6f68f5
+    sha256: c5221ff41b7892bfc223543883600125f6a47fe845093e0f5bdff4f359196d83
   aarch64:
     archive: uv-aarch64-unknown-linux-gnu.tar.gz
-    sha256: f8e23ec786b18660ade6b033b6191b7e9c283c872eeb8c4531d56a873decf160
+    sha256: 71279f8d3c67241e807b9d8db872d1bf541579fb9f08b7d1eb1682196d1e57dc
 uv_release_base_url_default: "https://github.com/astral-sh/uv/releases/download/{{ uv_version }}"
-nvm_version: bab86d5de571015b63fd8fc30b47bbe072a1290e
-node_version: "24.11.1"
+nvm_version: 4e8758a801eea9479b32a904f31093e410ddaba4
+node_version: "24.22.2"
 goenv_version: "3.1.4"
 goenv_source_commit: 66571a3851c83e1341dce284aba907964c3d6a48
 goenv_artifacts:
@@ -91,8 +91,14 @@ goenv_artifacts:
     archive: goenv_3.1.4_linux_arm64.tar.gz
     sha256: 990847f599b36a8bf6f933cbc6fe475220813db0d805741e2a9a785ab1ecd162
     binary_sha256: a25cb3515c70c71a0be23539522a7d96009d332a558d82f008f3313eb966b81a
-go_version: "1.27.1"
+go_version: "1.27.3"
 ```
+
+2026-11-11 已在一次性 Ubuntu 22.04/24.04 ARM64 VM 上对上述 uv/NVM/Node/Go pin 完成
+限定的 user-only 组件升级验收：二次运行 `changed=0`、`unreachable=0`、`failed=0`，
+严格主机指纹 SSH 后的新 Bash/Zsh 登录版本正确，旧 goenv v2 + Go `1.26.7`、插件、
+自定义 Go 策略 hash、旧 Node `24.11.1`/托管 Go `1.27.1` 可执行文件和 NVM 用户文件均保留。
+该结果不替代完整候选、x86_64、WSL2、Release 资产安装或 SSH 双栈故障注入验收。
 
 goenv v3 使用经 SHA256 校验的官方预编译包，安装到当前用户的
 `~/.local/share/devops-toolkit/goenv-bin`；数据和 Go 版本继续使用
@@ -109,7 +115,7 @@ goenv v3 使用经 SHA256 校验的官方预编译包，安装到当前用户的
 受限网络可以通过控制端环境变量覆盖 uv 的版本目录，所有入口都会继承该值：
 
 ```bash
-DEVOPS_TOOLKIT_UV_RELEASE_BASE_URL="https://可信镜像.example/astral-sh/uv/releases/download/0.9.18" \
+DEVOPS_TOOLKIT_UV_RELEASE_BASE_URL="https://可信镜像.example/astral-sh/uv/releases/download/0.13.7" \
   ./bin/ubuntu-bootstrap ansible/inventories/ubuntu.ini developer
 ```
 

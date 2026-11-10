@@ -24,17 +24,17 @@ git_editor: nvim
 git_default_branch: main
 git_pull_rebase: "false"
 
-nvm_version: bab86d5de571015b63fd8fc30b47bbe072a1290e
-node_version: "24.11.1"
-go_version: "1.27.1"
-uv_version: "0.9.18"
+nvm_version: 4e8758a801eea9479b32a904f31093e410ddaba4
+node_version: "24.22.2"
+go_version: "1.27.3"
+uv_version: "0.13.7"
 uv_artifacts:
   x86_64:
     archive: uv-x86_64-unknown-linux-gnu.tar.gz
-    sha256: c2def3db178ade63933fa15ffc96e882c196ce53e06173dcee05b36c5f6f68f5
+    sha256: c5221ff41b7892bfc223543883600125f6a47fe845093e0f5bdff4f359196d83
   aarch64:
     archive: uv-aarch64-unknown-linux-gnu.tar.gz
-    sha256: f8e23ec786b18660ade6b033b6191b7e9c283c872eeb8c4531d56a873decf160
+    sha256: 71279f8d3c67241e807b9d8db872d1bf541579fb9f08b7d1eb1682196d1e57dc
 uv_release_base_url_default: "https://github.com/astral-sh/uv/releases/download/{{ uv_version }}"
 uv_release_base_url: >-
   {{ lookup('ansible.builtin.env', 'DEVOPS_TOOLKIT_UV_RELEASE_BASE_URL')

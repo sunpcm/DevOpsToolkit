@@ -3,6 +3,11 @@ extends: default
 
 ignore: |
   archive/
+  .verify-dev/
+  .review/
+  .venv/
+  collections/
+  **/__pycache__/
 
 rules:
   braces:
