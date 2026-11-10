@@ -262,9 +262,14 @@ if not base.is_absolute() or ".." in base.parts:
 
 def trusted(path: Path, *, allow_link: bool = False) -> None:
     entry = path.lstat()
-    if entry.st_uid != 0 or entry.st_mode & 0o022:
+    if entry.st_uid != 0:
         raise SystemExit(f"untrusted system install path: {path}")
     if stat.S_ISLNK(entry.st_mode):
+        # A symlink's own mode is 0777 on Linux and is not a writable target;
+        # ownership of the link, its resolved target, and every parent are what
+        # matter. The write-bit check below applies only to regular files and
+        # directories, so a root-owned venv lib64 -> lib link is accepted while
+        # its target and parents are still held to the non-writable rule.
         if not allow_link:
             raise SystemExit(f"symlink in system install path: {path}")
         target = path.resolve(strict=True)
@@ -275,8 +280,11 @@ def trusted(path: Path, *, allow_link: bool = False) -> None:
         for parent in reversed(target.parents):
             trusted(parent)
         trusted(target)
-    elif not (stat.S_ISDIR(entry.st_mode) or stat.S_ISREG(entry.st_mode)):
-        raise SystemExit(f"unsupported system install entry: {path}")
+    else:
+        if entry.st_mode & 0o022:
+            raise SystemExit(f"untrusted system install path: {path}")
+        if not (stat.S_ISDIR(entry.st_mode) or stat.S_ISREG(entry.st_mode)):
+            raise SystemExit(f"unsupported system install entry: {path}")
 
 
 current = Path("/")
