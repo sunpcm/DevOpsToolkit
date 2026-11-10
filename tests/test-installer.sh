@@ -393,6 +393,10 @@ if DEVOPS_TOOLKIT_INSTALL_BASE="${UNTRUSTED_RUNTIME_BASE}" \
 fi
 [[ ! -e "${UNTRUSTED_RUNTIME_MARKER}" ]] || fail "验证权限前执行了不可信系统 runtime"
 
+# Exercise the real validator source with deterministic Linux symlink metadata.
+python3 "${ROOT_DIR}/tests/test-system-runtime.py" "${ROOT_DIR}/install.sh" || \
+  fail "runtime symlink 路径验证回归失败"
+
 # A bundled release must install even when Galaxy is unavailable.
 OFFLINE_HOME="${TMP_DIR}/offline-home"
 mkdir -p "${OFFLINE_HOME}"
