@@ -15,7 +15,7 @@ source "${ROOT_DIR}/tests/verify-ansible.sh"
 set -e
 
 make_public_key_line() {
-  local prefix="${1:-ssh-ed25519}"
+  local prefix="ssh-ed25519"
   local key_tail
   key_tail="$(printf 'A%.0s' {1..90})"
   printf '%s AAAA%s fixture-comment\n' "${prefix}" "${key_tail}"
