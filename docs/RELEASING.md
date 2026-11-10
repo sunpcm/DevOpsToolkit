@@ -43,7 +43,7 @@ python3 scripts/dependency-audit.py --check-security \
 
 脚本会保留报告；退出码非零可能表示发现有效漏洞、固定值不一致，或任一 OSV 查询因网络、
 HTTP、JSON、响应格式或分页上限而未完成。退出 0 只表示脚本声明覆盖的目标均完成查询且当前
-未匹配；它不覆盖 collections、uv/goenv/Cosign 预编译二进制、actionlint/gitleaks 模块坐标、
+未匹配；它不覆盖 collections、uv/goenv/Cosign 预编译二进制、
 apt/Homebrew、二进制 SBOM 或未登记的传递依赖，不能据此宣称全面无漏洞。
 
 推 tag 前还必须在隔离测试主机上，为将要发布的精确 commit 手工运行一次性 VM 验收。

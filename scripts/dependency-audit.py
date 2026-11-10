@@ -288,6 +288,96 @@ def _cosign_go_module(version: str) -> tuple[str, str] | None:
     return "github.com/sigstore/cosign/v3", numeric
 
 
+GO_TOOL_REGISTRY: dict[str, dict[str, str]] = {
+    "actionlint": {
+        "module": "github.com/rhysd/actionlint",
+        "install_path": "github.com/rhysd/actionlint/cmd/actionlint",
+        "version_var": "ACTIONLINT_VERSION",
+    },
+    "gitleaks": {
+        "module": "github.com/zricethezav/gitleaks/v8",
+        "install_path": "github.com/zricethezav/gitleaks/v8",
+        "version_var": "GITLEAKS_VERSION",
+    },
+}
+GO_TOOL_PIN_RE = re.compile(r"^#\s+go-tool\s+(\S+)\s+(\S+)\s*$")
+READ_GO_PIN_RE = re.compile(
+    r'^\s*([A-Z][A-Z0-9_]*_VERSION)="\$\(read_go_pin ([a-z0-9-]+)\)"\s*$', re.MULTILINE
+)
+GO_INSTALL_REF_RE = re.compile(
+    r'^\s*go install "([^"]+)@v\$\{([A-Z][A-Z0-9_]*_VERSION)\}"\s*$', re.MULTILINE
+)
+
+
+def _verify_dev_go_pin_bindings(verify_dev_text: str) -> dict[str, str]:
+    """只读解析 verify-dev.sh 的 `VAR="$(read_go_pin tool_name)"` 精确绑定，返回 {tool_name: VAR}。"""
+    bindings: dict[str, str] = {}
+    for m in READ_GO_PIN_RE.finditer(verify_dev_text):
+        bindings[m.group(2)] = m.group(1)
+    return bindings
+
+
+def _verify_dev_go_install_refs(verify_dev_text: str) -> dict[str, str]:
+    """只读解析 verify-dev.sh 的 `go install "import_path@v${VAR}"` 精确引用，返回 {import_path: VAR}。"""
+    refs: dict[str, str] = {}
+    for m in GO_INSTALL_REF_RE.finditer(verify_dev_text):
+        refs[m.group(1)] = m.group(2)
+    return refs
+
+
+def classify_go_tool_pins(
+    reqs_text: str, verify_dev_text: str
+) -> tuple[list[tuple[str, str, str]], list[str]]:
+    """从 requirements-dev.txt 提取 go-tool pin，并精确核对 verify-dev.sh 引用。
+
+    返回 (可映射的 (label, module, version) 列表, 失败项列表)。失败 = 应覆盖工具漂移
+    （未知 tool、缺失、重复、非精确版本、read_go_pin 绑定漂移、go install 引用漂移），
+    调用方必须计入「未完成」并置非零，不能当作无风险或普通未覆盖。
+    """
+    pins: list[tuple[str, str, str]] = []
+    failures: list[str] = []
+    found: dict[str, list[str]] = {}
+    for line in reqs_text.splitlines():
+        match = GO_TOOL_PIN_RE.match(line.strip())
+        if not match:
+            continue
+        name, version = match.group(1), match.group(2)
+        found.setdefault(name, []).append(version)
+
+    bindings = _verify_dev_go_pin_bindings(verify_dev_text)
+    install_refs = _verify_dev_go_install_refs(verify_dev_text)
+
+    for name, versions in found.items():
+        reg = GO_TOOL_REGISTRY.get(name)
+        if reg is None:
+            failures.append(f"`go-tool {name}` 无已知 Go module 路径。")
+            continue
+        if len(versions) != 1:
+            failures.append(f"`go-tool {name}` 重复声明 {len(versions)} 次。")
+            continue
+        version = versions[0]
+        if not SEMVER_TRIPLET_RE.match(version):
+            failures.append(f"`go-tool {name}` 版本 `{version}` 非完整 `X.Y.Z` 数字版本。")
+            continue
+        if bindings.get(name) != reg["version_var"]:
+            failures.append(
+                f"`go-tool {name}` 的 read_go_pin 未绑定到 `{reg['version_var']}`。"
+            )
+            continue
+        if install_refs.get(reg["install_path"]) != reg["version_var"]:
+            failures.append(
+                f"`go-tool {name}` 的 go install 未精确引用 `{reg['install_path']}@v${{{reg['version_var']}}}`。"
+            )
+            continue
+        pins.append((f"go-tool:{name}", reg["module"], version))
+
+    for name in GO_TOOL_REGISTRY:
+        if name not in found:
+            failures.append(f"`go-tool {name}` 固定定义缺失。")
+
+    return pins, failures
+
+
 def classify_requirements_lines(text: str) -> tuple[list[tuple[str, str]], list[str]]:
     """把 requirements 文本拆成精确 `name==version` pin 与未支持的声明。
 
@@ -374,11 +464,19 @@ def collect_package_refs(root: Path) -> list[PackageRef]:
 
     reqs_path = root / "requirements-dev.txt"
     if reqs_path.exists():
-        for name, version in parse_requirements_pins(reqs_path.read_text(encoding="utf-8")):
+        reqs_text = reqs_path.read_text(encoding="utf-8")
+        verify_dev_path = root / "scripts" / "verify-dev.sh"
+        verify_dev_text = verify_dev_path.read_text(encoding="utf-8") if verify_dev_path.exists() else ""
+        for name, version in parse_requirements_pins(reqs_text):
             if (name, version) in seen:
                 continue
             seen.add((name, version))
             refs.append(PackageRef(f"requirements-dev.txt:{name}", name, version))
+        for label, module, version in classify_go_tool_pins(reqs_text, verify_dev_text)[0]:
+            if (module, version) in seen:
+                continue
+            seen.add((module, version))
+            refs.append(PackageRef(label, module, version, "Go"))
     return refs
 
 
@@ -633,20 +731,29 @@ def collect_unchecked(root: Path) -> list[str]:
     if not reqs_path.exists():
         lines.append("- `requirements-dev.txt` 未提供，无 Python 开发依赖可查。")
     else:
-        _, unsupported = classify_requirements_lines(reqs_path.read_text(encoding="utf-8"))
+        reqs_text = reqs_path.read_text(encoding="utf-8")
+        _, unsupported = classify_requirements_lines(reqs_text)
         if unsupported:
             lines.append(
                 "- `requirements-dev.txt` 中未支持的声明（非精确 `==`、extras、范围/标记、VCS/URL、通配等，未当作准确 PyPI 坐标查询）："
                 + "；".join(f"`{line}`" for line in unsupported)
                 + "。"
             )
-
-    lines.append("- Go 质量工具 actionlint、gitleaks（已固定版本，本次未实现其 Go 模块坐标查询，未查询）。")
     lines.append("- uv/goenv/Cosign 预编译归档二进制：无 OSV 包坐标，未查询（源码坐标已按上方逻辑查询）。")
     lines.append("- apt 系统包与 Homebrew 公式为发行版/滚动输入，未锁定，未查询。")
     lines.append("- 未锁定的传递依赖不在固定值清单内，未查询。")
     lines.append("- 二进制 SBOM 与传递依赖未覆盖，未查询。")
     return lines
+
+
+def collect_go_tool_failures(root: Path) -> list[str]:
+    """收集 go-tool 应覆盖但漂移/失败的项（由调用方计入未完成，非零退出）。"""
+    reqs_path = root / "requirements-dev.txt"
+    verify_dev_path = root / "scripts" / "verify-dev.sh"
+    reqs_text = reqs_path.read_text(encoding="utf-8") if reqs_path.exists() else ""
+    verify_dev_text = verify_dev_path.read_text(encoding="utf-8") if verify_dev_path.exists() else ""
+    _, failures = classify_go_tool_pins(reqs_text, verify_dev_text)
+    return failures
 
 
 def build_security_report(
@@ -661,6 +768,7 @@ def build_security_report(
         package_refs = collect_package_refs(root)
         commit_refs = collect_commit_refs(root)
         unchecked = collect_unchecked(root)
+        go_tool_failures = collect_go_tool_failures(root)
     except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
         section = (
             "\n## 已知漏洞查询（OSV）\n\n"
@@ -670,10 +778,13 @@ def build_security_report(
 
     rows: list[str] = []
     affected_count = 0
-    incomplete_count = 0
+    incomplete_count = len(go_tool_failures)
     checked_count = len(package_refs) + len(commit_refs)
     all_active: list[dict] = []
     all_withdrawn: list[dict] = []
+
+    for failure in go_tool_failures:
+        rows.append(f"| `go-tool` | | 未完成：{failure} |")
 
     for ref in package_refs:
         query = {"package": {"name": ref.name, "ecosystem": ref.ecosystem}, "version": ref.version}

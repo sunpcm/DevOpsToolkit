@@ -180,10 +180,10 @@ python3 scripts/dependency-audit.py --check-security \
 
 默认模式离线检查固定值一致性；`--check-security` 额外通过 OSV API 查询精确 PyPI pin、
 Go 标准库、Node GIT tag、Cosign 源码 Go module，以及 NVM、goenv、Oh My Zsh、Linuxbrew
-和 Zsh 插件等精确 commit。当前查询**不覆盖** Ansible collections、uv/goenv/Cosign
-预编译二进制、actionlint/gitleaks 的模块坐标、apt/Homebrew、二进制 SBOM 或未登记的传递依赖。
-actionlint `1.7.7` 与 gitleaks `8.24.3` 已在 `requirements-dev.txt` 精确固定，但这不等于
-已完成其模块漏洞查询。
+和 Zsh 插件等精确 commit，以及 actionlint/gitleaks 的 Go module。当前查询**不覆盖** Ansible
+collections、uv/goenv/Cosign 预编译二进制、apt/Homebrew、二进制 SBOM 或未登记的传递依赖。
+actionlint `1.7.7` 与 gitleaks `8.24.3` 已在 `requirements-dev.txt` 精确固定，其 Go module
+坐标已纳入查询。
 
 2026-11-11 对当前声明覆盖范围的完整查询已完成并以状态 0 退出，当前 OSV 无匹配；该结果
 只适用于上述覆盖范围。任一网络、HTTP、JSON、响应格式或分页查询失败都会标记为“未完成”，

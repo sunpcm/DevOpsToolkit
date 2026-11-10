@@ -10,6 +10,7 @@ from __future__ import annotations
 import http.client
 import importlib.util
 import json
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -104,6 +105,13 @@ def test_collect_package_refs_real_root() -> None:
     assert by_name["github.com/sigstore/cosign/v3"].ecosystem == "Go"
     assert by_name["github.com/sigstore/cosign/v3"].version == "3.1.1"
 
+    assert "github.com/rhysd/actionlint" in by_name
+    assert by_name["github.com/rhysd/actionlint"].ecosystem == "Go"
+    assert by_name["github.com/rhysd/actionlint"].version == "1.7.7"
+    assert "github.com/zricethezav/gitleaks/v8" in by_name
+    assert by_name["github.com/zricethezav/gitleaks/v8"].ecosystem == "Go"
+    assert by_name["github.com/zricethezav/gitleaks/v8"].version == "8.24.3"
+
 
 def _write_minimal_root(
     tmp_path: Path, *, go_version: str, node_version: str, cosign_version: str
@@ -160,7 +168,35 @@ def test_collect_unchecked_non_semver_reported() -> None:
         assert "Go 版本" in unchecked and "非完整 `X.Y.Z`" in unchecked
         assert "Node 版本" in unchecked and "非完整 `X.Y.Z`" in unchecked
         assert "Cosign 版本" in unchecked and "`v3.X.Y`" in unchecked
-        assert "actionlint" in unchecked and "已固定版本" in unchecked
+
+
+VERIFY_DEV_GO_INSTALL = (
+    'ACTIONLINT_VERSION="$(read_go_pin actionlint)"\n'
+    'GITLEAKS_VERSION="$(read_go_pin gitleaks)"\n'
+    'go install "github.com/rhysd/actionlint/cmd/actionlint@v${ACTIONLINT_VERSION}"\n'
+    'go install "github.com/zricethezav/gitleaks/v8@v${GITLEAKS_VERSION}"\n'
+)
+
+
+def test_classify_go_tool_pins_mapped() -> None:
+    reqs = "# go-tool actionlint 1.7.7\n# go-tool gitleaks 8.24.3\n"
+    pins, failures = da.classify_go_tool_pins(reqs, VERIFY_DEV_GO_INSTALL)
+    assert [(label, module, version) for label, module, version in pins] == [
+        ("go-tool:actionlint", "github.com/rhysd/actionlint", "1.7.7"),
+        ("go-tool:gitleaks", "github.com/zricethezav/gitleaks/v8", "8.24.3"),
+    ]
+    assert failures == []
+
+
+def test_classify_go_tool_pins_drift_reported() -> None:
+    # 非精确版本 + 未知工具名 + 已知工具缺失，均须计入失败（未完成）。
+    reqs = "# go-tool gitleaks 8.24\n# go-tool unknown-tool 1.2.3\n"
+    pins, failures = da.classify_go_tool_pins(reqs, VERIFY_DEV_GO_INSTALL)
+    assert pins == []
+    joined = " ".join(failures)
+    assert "gitleaks" in joined and "非完整" in joined
+    assert "unknown-tool" in joined and "无已知 Go module" in joined
+    assert "actionlint" in joined and "固定定义缺失" in joined
 
 
 def test_collect_commit_refs_real_root() -> None:
@@ -633,6 +669,145 @@ def test_main_check_security_unknown_field_nonzero_report_retained() -> None:
         assert "未发现已知漏洞" not in text
 
 
+_AUDIT_INPUT_FILES = (
+    "install.sh",
+    "requirements-dev.txt",
+    "scripts/verify-dev.sh",
+    "ansible/group_vars/all.yml",
+    "ansible/collections.lock.json",
+    ".github/workflows/dependency-audit.yml",
+    ".github/workflows/env-check.yml",
+    ".github/workflows/release.yml",
+)
+
+
+def _copy_root(tmp_path: Path, source_root: Path | None = None) -> Path:
+    src_root = source_root if source_root is not None else ROOT
+    root = tmp_path / "repo"
+    root.mkdir()
+    for rel in _AUDIT_INPUT_FILES:
+        src = src_root / rel
+        dst = root / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+    return root
+
+
+def _main_rc_for_root(root: Path) -> int:
+    da._http_post = lambda *a, **k: b'{"vulns": []}'
+    saved_argv = sys.argv
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = Path(tmpdir) / "report.md"
+            sys.argv = ["dependency-audit.py", "--check-security", "--root", str(root), "--output", str(out)]
+            return main()
+    finally:
+        sys.argv = saved_argv
+        da._http_post = _ORIG_HTTP_POST
+
+
+def _write_reqs_go_tool(root: Path, go_tool_block: str) -> None:
+    reqs = (
+        "ansible-core==2.21.4\n"
+        "ansible-lint==26.8.0\n"
+        "yamllint==1.38.0\n"
+        "ruff==0.9.10\n"
+        "shellcheck-py==0.11.0.1\n\n"
+        + go_tool_block
+    )
+    (root / "requirements-dev.txt").write_text(reqs, encoding="utf-8")
+
+
+def test_main_go_tool_baseline_17_ok() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _copy_root(Path(tmp))
+        rc = _main_rc_for_root(root)
+    assert rc == 0
+
+
+def test_main_go_tool_drift_nonzero() -> None:
+    cases = {
+        "non-exact": "# go-tool actionlint latest\n# go-tool gitleaks 8.24.3\n",
+        "unknown": "# go-tool actionlint 1.7.7\n# go-tool gitleaks 8.24.3\n# go-tool unknown-tool 1.2.3\n",
+        "missing": "# go-tool gitleaks 8.24.3\n",
+        "duplicate": "# go-tool actionlint 1.7.7\n# go-tool actionlint 1.7.7\n# go-tool gitleaks 8.24.3\n",
+    }
+    for name, block in cases.items():
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_root(Path(tmp))
+            _write_reqs_go_tool(root, block)
+            rc = _main_rc_for_root(root)
+        assert rc == 1, name
+
+
+def test_main_go_tool_module_drift_nonzero() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _copy_root(Path(tmp))
+        vd_path = root / "scripts" / "verify-dev.sh"
+        vd = vd_path.read_text(encoding="utf-8")
+        vd = vd.replace("github.com/rhysd/actionlint/cmd/actionlint", "example.com/unmapped/actionlint")
+        vd_path.write_text(vd, encoding="utf-8")
+        rc = _main_rc_for_root(root)
+    assert rc == 1
+
+
+def test_copy_root_whitelist_only() -> None:
+    # 只在 TemporaryDirectory 假 source_root 内建 sentinel，绝不向真实 ROOT 写 fixture。
+    with tempfile.TemporaryDirectory() as tmp:
+        fake_src = Path(tmp) / "fake-src"
+        fake_src.mkdir()
+        for rel in _AUDIT_INPUT_FILES:
+            dst = fake_src / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / rel, dst)
+        (fake_src / ".verify-dev" / "large-cache.bin").parent.mkdir(parents=True, exist_ok=True)
+        (fake_src / ".verify-dev" / "large-cache.bin").write_bytes(b"x" * 2048)
+        (fake_src / ".git" / "sentinel").parent.mkdir(parents=True, exist_ok=True)
+        (fake_src / ".git" / "sentinel").write_text("x", encoding="utf-8")
+
+        root = _copy_root(Path(tmp), source_root=fake_src)
+        assert not (root / ".verify-dev").exists()
+        assert not (root / ".git").exists()
+        assert (root / "scripts" / "verify-dev.sh").exists()
+        assert (root / "requirements-dev.txt").exists()
+
+
+def test_main_go_tool_reference_drift_nonzero() -> None:
+    cases = {
+        "version-binding": ("read_go_pin actionlint", "read_go_pin gitleaks"),
+        "installer-version": ("@v${ACTIONLINT_VERSION}", "@v1.0.0"),
+        "module-major": ("github.com/rhysd/actionlint/cmd/actionlint", "github.com/rhysd/actionlint/v2/cmd/actionlint"),
+    }
+    for name, (old, new) in cases.items():
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_root(Path(tmp))
+            vd_path = root / "scripts" / "verify-dev.sh"
+            vd = vd_path.read_text(encoding="utf-8")
+            assert old in vd, name
+            vd = vd.replace(old, new)
+            vd_path.write_text(vd, encoding="utf-8")
+            rc = _main_rc_for_root(root)
+        assert rc == 1, name
+
+
+def test_main_go_tool_comment_install_ignored_nonzero() -> None:
+    # 注释保留旧合法 go install，实际命令 @v1.0.0；不能凭注释里的旧引用通过。
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _copy_root(Path(tmp))
+        vd_path = root / "scripts" / "verify-dev.sh"
+        vd = vd_path.read_text(encoding="utf-8")
+        old_ref = 'go install "github.com/rhysd/actionlint/cmd/actionlint@v${ACTIONLINT_VERSION}"'
+        new_ref = (
+            '# go install "github.com/rhysd/actionlint/cmd/actionlint@v${ACTIONLINT_VERSION}"\n'
+            '    go install "github.com/rhysd/actionlint/cmd/actionlint@v1.0.0"'
+        )
+        assert old_ref in vd
+        vd = vd.replace(old_ref, new_ref)
+        vd_path.write_text(vd, encoding="utf-8")
+        rc = _main_rc_for_root(root)
+    assert rc == 1
+
+
 if __name__ == "__main__":
     test_parse_requirements_pins_exact_only()
     test_classify_requirements_lines_unsupported()
@@ -668,4 +843,10 @@ if __name__ == "__main__":
     test_main_check_security_incomplete_nonzero_report_retained()
     test_main_check_security_error_object_nonzero_report_retained()
     test_main_check_security_unknown_field_nonzero_report_retained()
+    test_main_go_tool_baseline_17_ok()
+    test_main_go_tool_drift_nonzero()
+    test_main_go_tool_module_drift_nonzero()
+    test_copy_root_whitelist_only()
+    test_main_go_tool_reference_drift_nonzero()
+    test_main_go_tool_comment_install_ignored_nonzero()
     print("Dependency audit unit tests passed.")
